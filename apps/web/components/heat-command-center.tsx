@@ -11,6 +11,7 @@ import {
   CircleDollarSign,
   Clock3,
   Database,
+  Download,
   Expand,
   FlaskConical,
   History,
@@ -44,11 +45,13 @@ import { Card } from "@/components/ui/card";
 import {
   askAssistant,
   compareScenarios,
+  downloadOptimizationReport,
   loadAreaDetail,
   loadAreaHistory,
   loadDashboardData,
   loadIngestionStatus,
   loadLayerFeatures,
+  loadOptimizationRun,
   runOptimization,
   streamUrl,
   triggerRefresh,
@@ -169,6 +172,7 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
   const [strategy, setStrategy] = useState(initialView === "scenarios" ? "optimized" : "balanced");
   const [interventions, setInterventions] = useState(interventionOptions.map((item) => item.id));
   const [optimizing, setOptimizing] = useState(false);
+  const [exportingReport, setExportingReport] = useState(false);
   const [optimization, setOptimization] = useState<OptimizationResult | null>(null);
   const [scenarioResults, setScenarioResults] = useState<OptimizationResult[]>([]);
   const [refreshJob, setRefreshJob] = useState<{ job_id: string; status: string } | null>(null);
@@ -188,6 +192,16 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
     }
   }, []);
 
+  const reloadOptimizationStatus = useCallback(async () => {
+    if (!optimization?.run_id) return;
+    try {
+      const latest = await loadOptimizationRun(optimization.run_id);
+      setOptimization({ ...latest, strategy: optimization.strategy });
+    } catch {
+      // Keep the historical result visible if status synchronization is temporarily unavailable.
+    }
+  }, [optimization?.run_id, optimization?.strategy]);
+
   useEffect(() => {
     void reload();
     let eventSource: EventSource | null = null;
@@ -195,11 +209,17 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
     try {
       eventSource = new EventSource(streamUrl());
       eventSource.onopen = () => setConnection("live");
-      eventSource.addEventListener("data-update", () => void reload(true));
+      eventSource.addEventListener("data-update", () => {
+        void reload(true);
+        void reloadOptimizationStatus();
+      });
       eventSource.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data) as { type?: string };
-          if (payload.type === "data-update" || payload.type === "dataset_published") void reload(true);
+          if (payload.type === "data-update" || payload.type === "dataset_published") {
+            void reload(true);
+            void reloadOptimizationStatus();
+          }
         } catch {
           // Heartbeat messages may be plain text.
         }
@@ -212,13 +232,16 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
       setConnection("polling");
     }
     pollTimer = setInterval(() => {
-      if (!eventSource || eventSource.readyState === EventSource.CLOSED) void reload();
+      if (!eventSource || eventSource.readyState === EventSource.CLOSED) {
+        void reload();
+        void reloadOptimizationStatus();
+      }
     }, 60_000);
     return () => {
       eventSource?.close();
       if (pollTimer) clearInterval(pollTimer);
     };
-  }, [reload]);
+  }, [reload, reloadOptimizationStatus]);
 
   useEffect(() => {
     if (data.isDemo) return;
@@ -330,6 +353,19 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
       setActionError(error instanceof Error ? error.message : "ผู้ช่วยยังไม่พร้อมใช้งาน");
     } finally {
       setAssistantLoading(false);
+    }
+  }
+
+  async function handleExportReport() {
+    if (!optimization?.run_id) return;
+    setExportingReport(true);
+    setActionError(null);
+    try {
+      await downloadOptimizationReport(optimization.run_id);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "ส่งออกรายงานไม่สำเร็จ");
+    } finally {
+      setExportingReport(false);
     }
   }
 
@@ -483,7 +519,9 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
                 setInterventions={setInterventions}
                 onRun={() => void handleOptimize(false)}
                 onCompare={() => void handleOptimize(true)}
+                onExport={() => void handleExportReport()}
                 loading={optimizing}
+                exporting={exportingReport}
                 result={optimization}
                 scenarios={scenarioResults}
                 disabled={data.isDemo}
@@ -568,7 +606,9 @@ interface OptimizerPanelProps {
   setInterventions: (value: string[]) => void;
   onRun: () => void;
   onCompare: () => void;
+  onExport: () => void;
   loading: boolean;
+  exporting: boolean;
   result: OptimizationResult | null;
   scenarios: OptimizationResult[];
   disabled: boolean;
@@ -604,12 +644,18 @@ function OptimizerPanel(props: OptimizerPanelProps) {
       </Button>
       <Button className="mt-2 w-full" variant="outline" disabled={props.loading || props.disabled} onClick={props.onCompare}><FlaskConical size={15} /> เทียบ 3 ยุทธศาสตร์</Button>
       {props.result && (
-        <Card className="result-card">
-          <div><span>ใช้งบ</span><strong>{formatBaht(props.result.total_cost_thb)}</strong></div>
-          <div><span>ผู้รับประโยชน์โดยประมาณ</span><strong>{formatNumber(props.result.estimated_beneficiaries)}</strong></div>
-          <div><span>โครงการที่เลือก</span><strong>{props.result.allocations.length}</strong></div>
-          {props.result.is_outdated && <p className="inline-warning">มีชุดข้อมูลใหม่กว่า กรุณาคำนวณอีกครั้ง</p>}
-        </Card>
+        <>
+          <Card className="result-card">
+            <div><span>ใช้งบ</span><strong>{formatBaht(props.result.total_cost_thb)}</strong></div>
+            <div><span>ผู้รับประโยชน์โดยประมาณ</span><strong>{formatNumber(props.result.estimated_beneficiaries)}</strong></div>
+            <div><span>โครงการที่เลือก</span><strong>{props.result.allocations.length}</strong></div>
+            {props.result.is_outdated && <p className="inline-warning">มีชุดข้อมูลใหม่กว่า กรุณาคำนวณอีกครั้ง</p>}
+          </Card>
+          <Button className="mt-2 w-full" variant="outline" disabled={props.exporting} onClick={props.onExport}>
+            {props.exporting ? <RefreshCw className="animate-spin" size={15} /> : <Download size={15} />}
+            {props.exporting ? "กำลังสร้างรายงาน…" : "ส่งออกรายงานการตัดสินใจ"}
+          </Button>
+        </>
       )}
       {!!props.scenarios.length && <div className="scenario-mini-list">{props.scenarios.map((item) => <div key={item.run_id}><span>{item.strategy}</span><strong>{formatNumber(item.estimated_beneficiaries)} คน</strong></div>)}</div>}
     </>

@@ -116,7 +116,7 @@ def ingest_asset(db: Session, source: DataSource, connector: SourceConnector, as
         _publish_fixture_indicators(db, version, asset.payload)
     for optimization in db.scalars(select(OptimizationRun).where(OptimizationRun.is_outdated.is_(False))).all():
         recorded = optimization.input_versions.get(source.dataset_id) if optimization.input_versions else None
-        if recorded and recorded.get("version_id") != version.id:
+        if recorded is None or recorded.get("version_id") != version.id:
             optimization.is_outdated = True
     db.add(
         PipelineEvent(

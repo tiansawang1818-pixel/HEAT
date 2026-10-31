@@ -25,6 +25,8 @@ make up
 - Health: <http://localhost:8000/api/health>
 - MinIO console: <http://localhost:9001>
 
+หลังรัน City Optimizer ผู้ใช้สามารถส่งออกรายงาน HTML ที่พิมพ์หรือบันทึกเป็น PDF ได้ รายงานดึงผลจาก optimization run ที่บันทึกใน backend พร้อม dataset versions, หลักฐาน, ความไม่แน่นอน และคำเตือนเมื่อผลลัพธ์ล้าสมัย
+
 ตรวจสอบสถานะด้วย `docker compose ps` หรือ `make smoke` และดู worker ด้วย `make logs`
 
 ## โหมดข้อมูล

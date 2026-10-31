@@ -205,15 +205,20 @@ export async function runOptimization(input: {
       enabled_types: input.intervention_types,
     }),
   });
+  return normalizeOptimizationResult(raw, input.strategy);
+}
+
+function normalizeOptimizationResult(raw: Record<string, unknown>, strategyFallback?: string): OptimizationResult {
   const selected = Array.isArray(raw.selected) ? raw.selected as Array<Record<string, unknown>> : [];
   return {
     run_id: String(raw.run_id),
-    strategy: input.strategy,
-    budget_thb: input.budget_thb,
+    strategy: String(raw.objective || strategyFallback || "balanced"),
+    budget_thb: Number(raw.budget_thb || 0),
     total_cost_thb: Number(raw.allocated_thb || 0),
     estimated_beneficiaries: Number(raw.estimated_beneficiaries || 0),
     objective_score: Number(raw.objective_value || 0),
-    dataset_versions: (raw.input_versions || {}) as Record<string, number | string>,
+    dataset_versions: (raw.input_versions || {}) as Record<string, unknown>,
+    is_outdated: Boolean(raw.is_outdated),
     allocations: selected.map((item) => {
       const geometry = item.geometry as { type?: string; coordinates?: number[] } | undefined;
       return {
@@ -225,11 +230,37 @@ export async function runOptimization(input: {
         priority_score: Number(item.priority_score || 0),
         longitude: geometry?.type === "Point" ? geometry.coordinates?.[0] : undefined,
         latitude: geometry?.type === "Point" ? geometry.coordinates?.[1] : undefined,
-        evidence: typeof item.evidence === "string" ? item.evidence : undefined,
-        uncertainty: typeof item.uncertainty === "string" ? item.uncertainty : undefined,
+        evidence: typeof item.evidence === "string" || (item.evidence && typeof item.evidence === "object")
+          ? item.evidence as string | Record<string, unknown> : undefined,
+        uncertainty: typeof item.uncertainty === "string" || (item.uncertainty && typeof item.uncertainty === "object")
+          ? item.uncertainty as string | Record<string, unknown> : undefined,
       };
     }),
   };
+}
+
+export async function loadOptimizationRun(runId: string): Promise<OptimizationResult> {
+  const raw = await request<Record<string, unknown>>(`/api/optimization/runs/${encodeURIComponent(runId)}`);
+  return normalizeOptimizationResult(raw);
+}
+
+export async function downloadOptimizationReport(runId: string): Promise<void> {
+  const response = await fetch(endpoint(`/api/optimization/runs/${encodeURIComponent(runId)}/report`), { cache: "no-store" });
+  if (!response.ok) {
+    const message = await response.text().catch(() => "");
+    throw new Error(message || `API ${response.status}`);
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  const disposition = response.headers.get("content-disposition") || "";
+  const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || `heat-shift-decision-report-${runId}.html`;
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 export async function compareScenarios(input: {
@@ -248,7 +279,7 @@ export async function compareScenarios(input: {
     total_cost_thb: Number(item.allocated_thb || 0),
     estimated_beneficiaries: Number(item.estimated_beneficiaries || 0),
     objective_score: Number(item.objective_value || 0),
-    dataset_versions: (value.input_versions || {}) as Record<string, number | string>,
+    dataset_versions: (value.input_versions || {}) as Record<string, unknown>,
     allocations: [],
   }));
 }

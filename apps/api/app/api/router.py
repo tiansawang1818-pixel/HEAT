@@ -1,3 +1,4 @@
+import html
 import json
 import re
 from datetime import datetime, timedelta, timezone
@@ -5,7 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from sqlalchemy import desc, func, or_, select
 from sqlalchemy.orm import Session
 
@@ -522,6 +523,60 @@ def _current_versions(db: Session) -> Dict[str, Any]:
     return result
 
 
+def _serialize_optimization_run(db: Session, run: OptimizationRun) -> Dict[str, Any]:
+    allocation_rows = db.scalars(
+        select(OptimizationAllocation)
+        .where(OptimizationAllocation.run_id == run.id)
+        .order_by(OptimizationAllocation.rank)
+    ).all()
+    selected = []
+    estimated_beneficiaries = 0.0
+    for allocation in allocation_rows:
+        candidate = db.get(CandidateIntervention, allocation.candidate_id)
+        if candidate is None:
+            continue
+        estimated_beneficiaries += float(candidate.estimated_beneficiaries or 0)
+        selected.append(
+            {
+                "id": candidate.id,
+                "area_id": candidate.area_id,
+                "name_th": candidate.name_th,
+                "intervention_type": candidate.intervention_type,
+                "geometry": candidate.geometry,
+                "estimated_cost_thb": candidate.estimated_cost_thb,
+                "annual_maintenance_thb": candidate.annual_maintenance_thb,
+                "estimated_beneficiaries": candidate.estimated_beneficiaries,
+                "priority_score": candidate.priority_score,
+                "objective_contribution": allocation.objective_contribution,
+                "feasibility_constraints": candidate.feasibility_constraints,
+                "evidence": candidate.evidence,
+                "uncertainty": candidate.uncertainty,
+                "explanation": allocation.explanation,
+            }
+        )
+    return {
+        "run_id": run.id,
+        "status": run.status,
+        "budget_thb": run.budget_thb,
+        "allocated_thb": run.allocated_thb,
+        "unallocated_thb": max(0, run.budget_thb - run.allocated_thb),
+        "estimated_beneficiaries": estimated_beneficiaries,
+        "objective": run.objective,
+        "objective_weights": run.objective_weights,
+        "objective_value": run.objective_value,
+        "solver": run.solver,
+        "selected": selected,
+        "input_versions": run.input_versions,
+        "is_outdated": run.is_outdated,
+        "created_at": _iso(run.created_at),
+        "limitations": [
+            "ผลประโยชน์เป็นค่าประมาณตามหลักฐานใน candidate แต่ละรายการ",
+            "Heat Exposure Priority ไม่ใช่ข้อสรุปเรื่องรายได้หรือความเหลื่อมล้ำทางเศรษฐกิจ",
+            "ผลลัพธ์นี้ผูกกับ dataset versions ที่บันทึกไว้และจะไม่ถูกแทนที่โดยอัตโนมัติ",
+        ],
+    }
+
+
 @router.post("/optimization/run")
 def optimization_run(request: OptimizationRequest, db: Session = Depends(get_db)) -> Dict[str, Any]:
     rows = _candidate_rows(db, request.candidate_ids)
@@ -589,6 +644,112 @@ def optimization_run(request: OptimizationRequest, db: Session = Depends(get_db)
         "input_versions": versions,
         "limitations": ["ผลประโยชน์เป็นค่าประมาณตามหลักฐานใน candidate แต่ละรายการ", "ไม่ตีความคะแนนความร้อนเป็นฐานะทางเศรษฐกิจ"],
     }
+
+
+@router.get("/optimization/runs/{run_id}")
+def optimization_run_detail(run_id: str, db: Session = Depends(get_db)) -> Dict[str, Any]:
+    run = db.get(OptimizationRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Optimization run not found")
+    return _serialize_optimization_run(db, run)
+
+
+@router.get("/optimization/runs/{run_id}/report", response_class=HTMLResponse)
+def optimization_run_report(run_id: str, db: Session = Depends(get_db)) -> HTMLResponse:
+    run = db.get(OptimizationRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Optimization run not found")
+    report = _serialize_optimization_run(db, run)
+
+    def text(value: Any) -> str:
+        return html.escape(str(value if value is not None else "—"))
+
+    def json_text(value: Any) -> str:
+        return html.escape(json.dumps(value or {}, ensure_ascii=False, indent=2, sort_keys=True))
+
+    project_rows = "".join(
+        """
+        <tr>
+          <td>{rank}</td><td>{name}</td><td>{kind}</td><td class="number">{cost:,.0f}</td>
+          <td class="number">{beneficiaries:,.0f}</td><td class="number">{priority:.1f}</td>
+        </tr>
+        <tr class="detail"><td></td><td colspan="5"><strong>พื้นที่</strong> {area_id}<br><strong>เรขาคณิต</strong><pre>{geometry}</pre><strong>หลักฐาน</strong><pre>{evidence}</pre><strong>ความไม่แน่นอน</strong><pre>{uncertainty}</pre></td></tr>
+        """.format(
+            rank=index,
+            name=text(item["name_th"]),
+            kind=text(item["intervention_type"]),
+            cost=float(item["estimated_cost_thb"] or 0),
+            beneficiaries=float(item["estimated_beneficiaries"] or 0),
+            priority=float(item["priority_score"] or 0),
+            area_id=text(item["area_id"]),
+            geometry=json_text(item["geometry"]),
+            evidence=json_text(item["evidence"]),
+            uncertainty=json_text(item["uncertainty"]),
+        )
+        for index, item in enumerate(report["selected"], start=1)
+    )
+    if not project_rows:
+        project_rows = '<tr><td colspan="6">ไม่มีโครงการที่ผ่านข้อจำกัดภายใต้งบประมาณนี้</td></tr>'
+    outdated_notice = (
+        '<div class="warning"><strong>ผลลัพธ์อาจล้าสมัย</strong> มี dataset version ใหม่กว่าข้อมูลที่ใช้คำนวณ โปรดรัน optimizer อีกครั้งก่อนตัดสินใจ</div>'
+        if report["is_outdated"]
+        else '<div class="ok"><strong>เวอร์ชันข้อมูลยังตรงกัน</strong> ณ เวลาที่ส่งออกรายงาน</div>'
+    )
+    limitations = "".join("<li>%s</li>" % text(item) for item in report["limitations"])
+    content = """<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HEAT//SHIFT Decision Report {run_id}</title>
+<style>
+  :root {{ color-scheme: light; font-family: system-ui, -apple-system, "Noto Sans Thai", sans-serif; color: #14212b; }}
+  body {{ margin: 0 auto; max-width: 1080px; padding: 40px; background: #f4f7f8; }}
+  header {{ padding: 28px; color: white; background: #0a1822; border-top: 5px solid #ff5a36; }}
+  h1 {{ margin: 4px 0; font-size: 30px; }} h2 {{ margin-top: 32px; }} .tag {{ color: #4eeaff; letter-spacing: .14em; }}
+  .meta, table {{ width: 100%; border-collapse: collapse; background: white; }}
+  .meta td, th, td {{ padding: 11px 12px; border: 1px solid #dbe3e6; vertical-align: top; }}
+  th {{ text-align: left; background: #eaf0f2; }} .number {{ text-align: right; font-variant-numeric: tabular-nums; }}
+  .warning, .ok {{ margin: 20px 0; padding: 14px 16px; border-radius: 6px; }}
+  .warning {{ background: #fff1e8; border: 1px solid #f59b68; }} .ok {{ background: #e9f8f1; border: 1px solid #68c99d; }}
+  pre {{ white-space: pre-wrap; word-break: break-word; margin: 5px 0 10px; color: #40515c; }}
+  .detail td {{ background: #f8fafb; font-size: 12px; }} footer {{ margin-top: 36px; color: #5f707a; font-size: 12px; }}
+  @media print {{ body {{ padding: 0; background: white; }} .detail {{ break-inside: avoid; }} }}
+</style></head><body>
+<header><div class="tag">HEAT//SHIFT · DECISION REPORT</div><h1>รายงานพอร์ตการลงทุนลดความร้อน</h1><div>Don't Just Map the Heat. Change the City.</div></header>
+{outdated_notice}
+<table class="meta">
+  <tr><td><strong>Run ID</strong><br>{run_id}</td><td><strong>สร้างเมื่อ</strong><br>{created_at}</td><td><strong>Solver</strong><br>{solver}</td></tr>
+  <tr><td><strong>งบประมาณ</strong><br>฿{budget:,.0f}</td><td><strong>จัดสรรแล้ว</strong><br>฿{allocated:,.0f}</td><td><strong>ผู้รับประโยชน์โดยประมาณ</strong><br>{beneficiaries:,.0f}</td></tr>
+  <tr><td><strong>Objective</strong><br>{objective}</td><td><strong>Objective value</strong><br>{objective_value}</td><td><strong>จำนวนโครงการ</strong><br>{project_count}</td></tr>
+</table>
+<h2>โครงการที่ได้รับเลือก</h2>
+<table><thead><tr><th>#</th><th>โครงการ</th><th>ประเภท</th><th>ต้นทุน (THB)</th><th>ผู้รับประโยชน์</th><th>Priority</th></tr></thead><tbody>{project_rows}</tbody></table>
+<h2>เวอร์ชันข้อมูลที่ใช้</h2><pre>{versions}</pre>
+<h2>น้ำหนัก objective</h2><pre>{weights}</pre>
+<h2>ข้อจำกัดในการตีความ</h2><ul>{limitations}</ul>
+<footer>สร้างโดย HEAT//SHIFT จากผลลัพธ์ backend ที่บันทึกไว้ รายงานนี้ไม่ใช่การรับรองราคาจัดซื้อหรือผลการลดอุณหภูมิจริง</footer>
+</body></html>""".format(
+        run_id=text(report["run_id"]),
+        created_at=text(report["created_at"]),
+        solver=text(report["solver"]),
+        budget=float(report["budget_thb"] or 0),
+        allocated=float(report["allocated_thb"] or 0),
+        beneficiaries=float(report["estimated_beneficiaries"] or 0),
+        objective=text(report["objective"]),
+        objective_value=text(report["objective_value"]),
+        project_count=len(report["selected"]),
+        project_rows=project_rows,
+        versions=json_text(report["input_versions"]),
+        weights=json_text(report["objective_weights"]),
+        limitations=limitations,
+        outdated_notice=outdated_notice,
+    )
+    return HTMLResponse(
+        content=content,
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Disposition": 'attachment; filename="heat-shift-decision-report-%s.html"' % run.id,
+            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'",
+        },
+    )
 
 
 @router.post("/scenarios/compare")

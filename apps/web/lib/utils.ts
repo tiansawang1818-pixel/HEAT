@@ -101,8 +101,8 @@ export interface OptimizationProject {
   priority_score?: number;
   latitude?: number;
   longitude?: number;
-  evidence?: string;
-  uncertainty?: string;
+  evidence?: string | Record<string, unknown>;
+  uncertainty?: string | Record<string, unknown>;
 }
 
 export interface OptimizationResult {
@@ -112,7 +112,7 @@ export interface OptimizationResult {
   total_cost_thb: number;
   estimated_beneficiaries: number;
   objective_score?: number;
-  dataset_versions?: Record<string, number | string>;
+  dataset_versions?: Record<string, unknown>;
   allocations: OptimizationProject[];
   is_outdated?: boolean;
   is_demo?: boolean;

@@ -1,4 +1,4 @@
-from app.models.entities import GeographicArea
+from app.models.entities import CandidateIntervention, GeographicArea, OptimizationAllocation, OptimizationRun
 
 
 def test_health_and_dataset_status(client):
@@ -65,3 +65,67 @@ def test_map_features_applies_viewport_bbox(client, db):
 def test_map_features_rejects_invalid_bbox(client):
     response = client.get("/api/map/features?bbox=100.5,13.7,99.0,14.0")
     assert response.status_code == 422
+
+
+def test_saved_optimization_can_be_retrieved_and_exported(client, db):
+    area = GeographicArea(
+        id="report-area",
+        name_th="พื้นที่รายงาน",
+        name_en="Report area",
+        geometry={"type": "Point", "coordinates": [100.5, 13.75]},
+        source_name="test",
+    )
+    candidate = CandidateIntervention(
+        id="report-candidate",
+        area_id=area.id,
+        name_th="<script>alert('unsafe')</script>",
+        intervention_type="tree_planting",
+        geometry={"type": "Point", "coordinates": [100.5, 13.75]},
+        estimated_cost_thb=500_000,
+        annual_maintenance_thb=25_000,
+        estimated_beneficiaries=1_250,
+        priority_score=82,
+        benefit_score=0.7,
+        evidence={"source": "approved-cost-study-v1"},
+        uncertainty={"level": "medium"},
+    )
+    run = OptimizationRun(
+        budget_thb=1_000_000,
+        allocated_thb=500_000,
+        objective="balanced",
+        objective_weights={"beneficiaries": 0.5, "priority": 0.5},
+        objective_value=91.2,
+        solver="OR-Tools CP-SAT",
+        input_versions={"worldpop/global": {"version_id": "v1", "layer_version": 1}},
+    )
+    db.add_all([area, candidate, run])
+    db.flush()
+    db.add(
+        OptimizationAllocation(
+            run_id=run.id,
+            candidate_id=candidate.id,
+            rank=1,
+            objective_contribution=91.2,
+            explanation={"traceable": True},
+        )
+    )
+    db.commit()
+
+    detail = client.get(f"/api/optimization/runs/{run.id}")
+    assert detail.status_code == 200
+    assert detail.json()["selected"][0]["evidence"]["source"] == "approved-cost-study-v1"
+    assert detail.json()["is_outdated"] is False
+
+    report = client.get(f"/api/optimization/runs/{run.id}/report")
+    assert report.status_code == 200
+    assert report.headers["content-type"].startswith("text/html")
+    assert "attachment;" in report.headers["content-disposition"]
+    assert report.headers["cache-control"] == "no-store"
+    assert "default-src 'none'" in report.headers["content-security-policy"]
+    assert "รายงานพอร์ตการลงทุนลดความร้อน" in report.text
+    assert "&lt;script&gt;" in report.text
+    assert "<script>alert('unsafe')</script>" not in report.text
+
+
+def test_missing_optimization_report_returns_not_found(client):
+    assert client.get("/api/optimization/runs/not-found/report").status_code == 404
