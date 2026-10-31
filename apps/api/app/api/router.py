@@ -447,6 +447,7 @@ def priority_rankings(
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     latest = select(PriorityScore.area_id, func.max(PriorityScore.calculated_at).label("latest")).group_by(PriorityScore.area_id).subquery()
+    total = int(db.scalar(select(func.count()).select_from(latest)) or 0)
     rows = db.execute(
         select(PriorityScore, GeographicArea)
         .join(latest, (PriorityScore.area_id == latest.c.area_id) & (PriorityScore.calculated_at == latest.c.latest))
@@ -464,10 +465,17 @@ def priority_rankings(
                 "score": score.score,
                 "components": score.components,
                 "missing_inputs": score.missing_inputs,
+                "input_versions": score.input_versions,
+                "formula_version": score.formula_version,
                 "calculated_at": _iso(score.calculated_at),
             }
             for index, (score, area) in enumerate(rows)
-        ]
+        ],
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "label": "Heat Exposure Priority",
+        "interpretation_warning_th": "คะแนนนี้แสดงลำดับความสำคัญด้านการสัมผัสความร้อน ไม่ใช่ข้อสรุปเรื่องรายได้หรือความเหลื่อมล้ำทางเศรษฐกิจ",
     }
 
 

@@ -52,6 +52,7 @@ import {
   loadIngestionStatus,
   loadLayerFeatures,
   loadObservatoryStatus,
+  loadPriorityRankings,
   loadOptimizationRun,
   runForecastScenario,
   runOptimization,
@@ -74,6 +75,7 @@ import {
   type MapLayerMeta,
   type ObservatorySnapshot,
   type OptimizationResult,
+  type PriorityRankingResult,
 } from "@/lib/utils";
 
 export type AppView = "explorer" | "insights" | "optimizer" | "scenarios" | "outlook" | "observatory" | "methodology";
@@ -195,6 +197,8 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
   const [forecastHorizon, setForecastHorizon] = useState<1 | 3 | 5>(5);
   const [forecastResult, setForecastResult] = useState<ForecastResult | null>(null);
   const [forecasting, setForecasting] = useState(false);
+  const [priorityRankings, setPriorityRankings] = useState<PriorityRankingResult | null>(null);
+  const [rankingsLoading, setRankingsLoading] = useState(initialView === "insights");
 
   const reload = useCallback(async (notify = false) => {
     try {
@@ -308,6 +312,20 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
       cancelled = true;
       clearInterval(timer);
     };
+  }, [initialView]);
+
+  useEffect(() => {
+    if (initialView !== "insights") return;
+    let cancelled = false;
+    void loadPriorityRankings()
+      .then((rankings) => {
+        if (!cancelled) setPriorityRankings(rankings);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setRankingsLoading(false);
+      });
+    return () => { cancelled = true; };
   }, [initialView]);
 
   const handleSelect = useCallback((feature: GeoFeature) => {
@@ -567,6 +585,16 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
             }}
           />
         )}
+        {initialView === "insights" && (
+          <InsightsOverlay
+            rankings={priorityRankings}
+            loading={rankingsLoading}
+            onSelectArea={(areaId) => {
+              const feature = data.features.features.find((item) => item.properties.id === areaId);
+              if (feature) handleSelect(feature);
+            }}
+          />
+        )}
         <div className="map-title-card">
           <span>{viewCopy[initialView].eyebrow}</span>
           <h1>{viewCopy[initialView].title}</h1>
@@ -671,6 +699,55 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
         )}
       </section>
     </main>
+  );
+}
+
+const priorityComponentLabels: Record<string, string> = {
+  temperature_anomaly: "ความร้อนผิดปกติ",
+  population_exposure: "ประชากรสัมผัส",
+  vegetation_deficit: "การขาดพืชพรรณ",
+  built_intensity: "ความหนาแน่นสิ่งปลูกสร้าง",
+  historical_change: "การเปลี่ยนแปลงย้อนหลัง",
+};
+
+function InsightsOverlay({ rankings, loading, onSelectArea }: {
+  rankings: PriorityRankingResult | null;
+  loading: boolean;
+  onSelectArea: (areaId: string) => void;
+}) {
+  const items = rankings?.items || [];
+  const top = items[0];
+  return (
+    <motion.div className="map-overlay-panel insights-overlay" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }}>
+      <div className="overlay-heading"><div><Badge>HEAT EXPOSURE PRIORITY</Badge><h2>พื้นที่ที่ควรพิจารณาก่อน</h2><p>เรียงจากคะแนนล่าสุดของแต่ละพื้นที่ พร้อมแสดงข้อมูลที่ขาด</p></div></div>
+      <div className="insights-warning"><ShieldCheck size={14} /><span>{rankings?.interpretation_warning_th || "คะแนนนี้ไม่ใช่ข้อสรุปเรื่องรายได้หรือความเหลื่อมล้ำทางเศรษฐกิจ"}</span></div>
+      {loading && <div className="observatory-loading"><RefreshCw className="animate-spin" size={14} /> กำลังโหลดอันดับล่าสุด</div>}
+      {!loading && !items.length && <div className="insights-empty"><Activity /><strong>ยังไม่มีคะแนนที่ผ่านการคำนวณ</strong><span>ระบบจะเผยแพร่อันดับเมื่อ input datasets ผ่าน validation และคำนวณสูตรสำเร็จ</span></div>}
+      {top && (
+        <Card className="top-priority-card">
+          <div><span>อันดับสูงสุด</span><h3>{top.area_name_th}</h3><small>คำนวณ {formatThaiDate(top.calculated_at, true)} · {top.formula_version}</small></div>
+          <strong>{formatNumber(top.score, 1)}<small>/100</small></strong>
+          <div className="component-bars">
+            {Object.entries(top.components).map(([key, value]) => (
+              <div key={key}><span>{priorityComponentLabels[key] || key}</span><i><b style={{ width: `${Math.min(100, Math.max(0, Number(value || 0) * 100))}%` }} /></i><strong>{formatNumber(value, 2)}</strong></div>
+            ))}
+          </div>
+        </Card>
+      )}
+      {!!items.length && (
+        <div className="priority-ranking-list">
+          {items.map((item) => (
+            <button key={item.area_id} onClick={() => onSelectArea(item.area_id)}>
+              <span className="rank-number">{String(item.rank).padStart(2, "0")}</span>
+              <span className="rank-name">{item.area_name_th}<small>{item.missing_inputs.length ? `ขาด ${item.missing_inputs.length} ตัวแปร` : "ข้อมูลครบตามสูตร"}</small></span>
+              <i><b style={{ width: `${Math.min(100, Math.max(0, item.score))}%` }} /></i>
+              <strong>{formatNumber(item.score, 1)}</strong>
+            </button>
+          ))}
+        </div>
+      )}
+      {!!items.length && <div className="insights-footer">แสดง {items.length} จาก {rankings?.total ?? items.length} พื้นที่ · คลิกเพื่อเปิดรายละเอียดบนแผนที่</div>}
+    </motion.div>
   );
 }
 

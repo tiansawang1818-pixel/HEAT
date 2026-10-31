@@ -9,6 +9,7 @@ from app.models.entities import (
     OptimizationAllocation,
     OptimizationRun,
     PipelineEvent,
+    PriorityScore,
     SourceCheck,
 )
 
@@ -71,6 +72,50 @@ def test_priority_calculation_endpoint(client):
     body = response.json()
     assert 0 <= body["score"] <= 100
     assert body["label"] == "Heat Exposure Priority"
+
+
+def test_priority_rankings_use_latest_score_and_expose_formula(client, db):
+    area = GeographicArea(
+        id="priority-area",
+        name_th="พื้นที่ลำดับความสำคัญ",
+        name_en="Priority area",
+        geometry={"type": "Point", "coordinates": [100.52, 13.74]},
+        source_name="test",
+    )
+    db.add(area)
+    db.flush()
+    db.add_all(
+        [
+            PriorityScore(
+                area_id=area.id,
+                score=40,
+                components={"temperature_anomaly": 0.4},
+                weights={"temperature_anomaly": 1.0},
+                missing_inputs=["population_exposure"],
+                input_versions={"landsat": "v1"},
+                formula_version="priority-v1",
+            ),
+            PriorityScore(
+                area_id=area.id,
+                score=78,
+                components={"temperature_anomaly": 0.8, "population_exposure": 0.7},
+                weights={"temperature_anomaly": 0.5, "population_exposure": 0.5},
+                missing_inputs=[],
+                input_versions={"landsat": "v2", "worldpop": "2025"},
+                formula_version="priority-v1",
+            ),
+        ]
+    )
+    db.commit()
+
+    response = client.get("/api/priority/rankings")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    assert body["items"][0]["score"] == 78
+    assert body["items"][0]["formula_version"] == "priority-v1"
+    assert body["label"] == "Heat Exposure Priority"
+    assert "ไม่ใช่ข้อสรุปเรื่องรายได้" in body["interpretation_warning_th"]
 
 
 def test_optimization_rejects_out_of_range_budget(client):

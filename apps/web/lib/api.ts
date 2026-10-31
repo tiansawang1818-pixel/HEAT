@@ -9,6 +9,7 @@ import type {
   MapLayerMeta,
   ObservatorySnapshot,
   OptimizationResult,
+  PriorityRankingResult,
 } from "@/lib/utils";
 
 const configuredBase = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "";
@@ -296,6 +297,10 @@ export async function runForecastScenario(horizonYears: 1 | 3 | 5, areaIds?: str
     method: "POST",
     body: JSON.stringify({ horizon_years: horizonYears, area_ids: areaIds?.length ? areaIds : null }),
   });
+}
+
+export async function loadPriorityRankings(pageSize = 50): Promise<PriorityRankingResult> {
+  return request<PriorityRankingResult>(`/api/priority/rankings?page=1&page_size=${pageSize}`);
 }
 
 export async function triggerRefresh(source: string, operatorToken: string) {

@@ -196,3 +196,20 @@ export interface ForecastResult {
     label: string;
   }>;
 }
+
+export interface PriorityRankingResult {
+  total: number;
+  label: string;
+  interpretation_warning_th: string;
+  items: Array<{
+    rank: number;
+    area_id: string;
+    area_name_th: string;
+    score: number;
+    components: Record<string, number | null>;
+    missing_inputs: string[];
+    input_versions: Record<string, unknown>;
+    formula_version: string;
+    calculated_at?: string | null;
+  }>;
+}
