@@ -1,5 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { compareScenarios } from "./api";
 import { formatBaht, formatNumber, freshnessLabel } from "./utils";
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe("Thai presentation helpers", () => {
   it("formats a million-baht budget compactly", () => {
@@ -13,5 +16,31 @@ describe("Thai presentation helpers", () => {
 
   it("translates freshness states", () => {
     expect(freshnessLabel("stale")).toBe("ข้อมูลเก่า");
+  });
+
+  it("keeps scenario allocation geometry for map comparison", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      input_versions: { worldpop: { version_id: "v1", layer_version: 1 } },
+      scenarios: [{
+        strategy: "heatshift_optimized",
+        label_th: "HEAT//SHIFT สมดุล",
+        allocated_thb: 400_000,
+        estimated_beneficiaries: 750,
+        objective_value: 0.8,
+        allocations: [{
+          id: "candidate-1",
+          name_th: "จุดปลูกต้นไม้",
+          intervention_type: "tree_planting",
+          estimated_cost_thb: 400_000,
+          estimated_beneficiaries: 750,
+          priority_score: 81,
+          geometry: { type: "Point", coordinates: [100.51, 13.75] },
+        }],
+      }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    const [scenario] = await compareScenarios({ budget_thb: 1_000_000, intervention_types: ["tree_planting"] });
+    expect(scenario.run_id).toBe("scenario:heatshift_optimized");
+    expect(scenario.allocations[0]).toMatchObject({ longitude: 100.51, latitude: 13.75, cost_thb: 400_000 });
   });
 });

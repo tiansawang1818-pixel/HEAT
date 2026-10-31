@@ -219,23 +219,25 @@ function normalizeOptimizationResult(raw: Record<string, unknown>, strategyFallb
     objective_score: Number(raw.objective_value || 0),
     dataset_versions: (raw.input_versions || {}) as Record<string, unknown>,
     is_outdated: Boolean(raw.is_outdated),
-    allocations: selected.map((item) => {
-      const geometry = item.geometry as { type?: string; coordinates?: number[] } | undefined;
-      return {
-        id: String(item.id),
-        name: String(item.name_th || item.id),
-        intervention_type: String(item.intervention_type || "unknown"),
-        cost_thb: Number(item.estimated_cost_thb || 0),
-        estimated_beneficiaries: Number(item.estimated_beneficiaries || 0),
-        priority_score: Number(item.priority_score || 0),
-        longitude: geometry?.type === "Point" ? geometry.coordinates?.[0] : undefined,
-        latitude: geometry?.type === "Point" ? geometry.coordinates?.[1] : undefined,
-        evidence: typeof item.evidence === "string" || (item.evidence && typeof item.evidence === "object")
-          ? item.evidence as string | Record<string, unknown> : undefined,
-        uncertainty: typeof item.uncertainty === "string" || (item.uncertainty && typeof item.uncertainty === "object")
-          ? item.uncertainty as string | Record<string, unknown> : undefined,
-      };
-    }),
+    allocations: selected.map(normalizeOptimizationProject),
+  };
+}
+
+function normalizeOptimizationProject(item: Record<string, unknown>) {
+  const geometry = item.geometry as { type?: string; coordinates?: number[] } | undefined;
+  return {
+    id: String(item.id),
+    name: String(item.name_th || item.id),
+    intervention_type: String(item.intervention_type || "unknown"),
+    cost_thb: Number(item.estimated_cost_thb || 0),
+    estimated_beneficiaries: Number(item.estimated_beneficiaries || 0),
+    priority_score: Number(item.priority_score || 0),
+    longitude: geometry?.type === "Point" ? geometry.coordinates?.[0] : undefined,
+    latitude: geometry?.type === "Point" ? geometry.coordinates?.[1] : undefined,
+    evidence: typeof item.evidence === "string" || (item.evidence && typeof item.evidence === "object")
+      ? item.evidence as string | Record<string, unknown> : undefined,
+    uncertainty: typeof item.uncertainty === "string" || (item.uncertainty && typeof item.uncertainty === "object")
+      ? item.uncertainty as string | Record<string, unknown> : undefined,
   };
 }
 
@@ -273,14 +275,16 @@ export async function compareScenarios(input: {
   });
   const scenarios = Array.isArray(value.scenarios) ? value.scenarios as Array<Record<string, unknown>> : [];
   return scenarios.map((item) => ({
-    run_id: String(item.strategy),
+    run_id: `scenario:${String(item.strategy)}`,
     strategy: String(item.label_th || item.strategy),
     budget_thb: input.budget_thb,
     total_cost_thb: Number(item.allocated_thb || 0),
     estimated_beneficiaries: Number(item.estimated_beneficiaries || 0),
     objective_score: Number(item.objective_value || 0),
     dataset_versions: (value.input_versions || {}) as Record<string, unknown>,
-    allocations: [],
+    allocations: Array.isArray(item.allocations)
+      ? (item.allocations as Array<Record<string, unknown>>).map(normalizeOptimizationProject)
+      : [],
   }));
 }
 

@@ -50,20 +50,53 @@ interface HeatMapProps {
   projects?: OptimizationProject[];
   onSelect: (feature: GeoFeature) => void;
   onMapReady?: () => void;
+  viewport?: MapViewport;
+  onViewportChange?: (viewport: MapViewport) => void;
+  compact?: boolean;
+  mapLabel?: string;
 }
 
-export function HeatMap({ data, activeLayer, selectedId, projects = [], onSelect, onMapReady }: HeatMapProps) {
+export interface MapViewport {
+  center: [number, number];
+  zoom: number;
+  bearing: number;
+  pitch: number;
+}
+
+export function HeatMap({
+  data,
+  activeLayer,
+  selectedId,
+  projects = [],
+  onSelect,
+  onMapReady,
+  viewport,
+  onViewportChange,
+  compact = false,
+  mapLabel = "แผนที่เชิงโต้ตอบกรุงเทพมหานคร",
+}: HeatMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const overlayRef = useRef<MapboxOverlay | null>(null);
+  const readyCallbackRef = useRef(onMapReady);
+  const viewportCallbackRef = useRef(onViewportChange);
+  const initialViewportRef = useRef(viewport);
+
+  useEffect(() => {
+    readyCallbackRef.current = onMapReady;
+    viewportCallbackRef.current = onViewportChange;
+  }, [onMapReady, onViewportChange]);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
     maplibregl.setWorkerUrl("/maplibre-gl-worker.mjs");
+    const initialViewport = initialViewportRef.current;
     const map = new maplibregl.Map({
       container: containerRef.current,
-      center: BANGKOK,
-      zoom: 10.4,
+      center: initialViewport?.center || BANGKOK,
+      zoom: initialViewport?.zoom || 10.4,
+      bearing: initialViewport?.bearing || 0,
+      pitch: initialViewport?.pitch || 0,
       minZoom: 8.5,
       maxZoom: 18,
       attributionControl: false,
@@ -88,11 +121,20 @@ export function HeatMap({ data, activeLayer, selectedId, projects = [], onSelect
         ],
       },
     });
-    map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bottom-left");
+    if (!compact) map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bottom-left");
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
     const overlay = new MapboxOverlay({ interleaved: false, layers: [] });
     map.addControl(overlay as unknown as maplibregl.IControl);
-    map.on("load", () => onMapReady?.());
+    map.on("load", () => readyCallbackRef.current?.());
+    map.on("moveend", () => {
+      const center = map.getCenter();
+      viewportCallbackRef.current?.({
+        center: [center.lng, center.lat],
+        zoom: map.getZoom(),
+        bearing: map.getBearing(),
+        pitch: map.getPitch(),
+      });
+    });
     mapRef.current = map;
     overlayRef.current = overlay;
     return () => {
@@ -101,7 +143,21 @@ export function HeatMap({ data, activeLayer, selectedId, projects = [], onSelect
       mapRef.current = null;
       overlayRef.current = null;
     };
-  }, [onMapReady]);
+  }, [compact]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !viewport) return;
+    const center = map.getCenter();
+    const isSame = Math.abs(center.lng - viewport.center[0]) < 0.00001
+      && Math.abs(center.lat - viewport.center[1]) < 0.00001
+      && Math.abs(map.getZoom() - viewport.zoom) < 0.001
+      && Math.abs(map.getBearing() - viewport.bearing) < 0.01
+      && Math.abs(map.getPitch() - viewport.pitch) < 0.01;
+    if (!isSame) {
+      map.jumpTo({ center: viewport.center, zoom: viewport.zoom, bearing: viewport.bearing, pitch: viewport.pitch });
+    }
+  }, [viewport]);
 
   useEffect(() => {
     const overlay = overlayRef.current;
@@ -154,10 +210,12 @@ export function HeatMap({ data, activeLayer, selectedId, projects = [], onSelect
 
   return (
     <div className="absolute inset-0">
-      <div ref={containerRef} className="h-full w-full" aria-label="แผนที่เชิงโต้ตอบกรุงเทพมหานคร" />
-      <div className="pointer-events-none absolute bottom-7 left-1/2 z-10 -translate-x-1/2 rounded-full border border-white/10 bg-ink/85 px-3 py-1.5 font-mono text-[9px] uppercase tracking-[.16em] text-slate-400 backdrop-blur">
-        MapLibre GL · deck.gl · WGS84
-      </div>
+      <div ref={containerRef} className="h-full w-full" aria-label={mapLabel} />
+      {!compact && (
+        <div className="pointer-events-none absolute bottom-7 left-1/2 z-10 -translate-x-1/2 rounded-full border border-white/10 bg-ink/85 px-3 py-1.5 font-mono text-[9px] uppercase tracking-[.16em] text-slate-400 backdrop-blur">
+          MapLibre GL · deck.gl · WGS84
+        </div>
+      )}
     </div>
   );
 }

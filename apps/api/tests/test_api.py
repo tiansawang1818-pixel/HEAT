@@ -116,6 +116,16 @@ def test_saved_optimization_can_be_retrieved_and_exported(client, db):
     assert detail.json()["selected"][0]["evidence"]["source"] == "approved-cost-study-v1"
     assert detail.json()["is_outdated"] is False
 
+    comparison = client.post(
+        "/api/scenarios/compare",
+        json={"budget_thb": 1_000_000, "enabled_types": ["tree_planting"]},
+    )
+    assert comparison.status_code == 200
+    assert comparison.json()["eligibility_consistent"] is True
+    assert len(comparison.json()["scenarios"]) == 3
+    assert all(item["allocations"][0]["geometry"]["type"] == "Point" for item in comparison.json()["scenarios"])
+    assert all(item["covered_area_ids"] == [area.id] for item in comparison.json()["scenarios"])
+
     report = client.get(f"/api/optimization/runs/{run.id}/report")
     assert report.status_code == 200
     assert report.headers["content-type"].startswith("text/html")

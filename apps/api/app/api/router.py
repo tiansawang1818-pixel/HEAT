@@ -754,7 +754,9 @@ def optimization_run_report(run_id: str, db: Session = Depends(get_db)) -> HTMLR
 
 @router.post("/scenarios/compare")
 def scenarios_compare(request: ScenarioCompareRequest, db: Session = Depends(get_db)) -> Dict[str, Any]:
-    candidates = _to_optimizer_candidates(_candidate_rows(db, request.candidate_ids))
+    candidate_rows = _candidate_rows(db, request.candidate_ids)
+    candidates = _to_optimizer_candidates(candidate_rows)
+    candidates_by_id = {candidate.id: candidate for candidate in candidate_rows}
     definitions = [
         ("hottest_first", "ร้อนที่สุดก่อน", {"beneficiaries": 0.05, "priority": 0.85, "benefit": 0.05, "cost_effectiveness": 0.05}),
         ("population_first", "ประชากรก่อน", {"beneficiaries": 0.85, "priority": 0.05, "benefit": 0.05, "cost_effectiveness": 0.05}),
@@ -763,19 +765,48 @@ def scenarios_compare(request: ScenarioCompareRequest, db: Session = Depends(get
     results = []
     for key, label, weights in definitions:
         portfolio = optimize_portfolio(candidates, request.budget_thb, weights, request.enabled_types)
+        allocations = []
+        for rank, candidate_id in enumerate(portfolio.selected_ids, start=1):
+            candidate = candidates_by_id[candidate_id]
+            allocations.append(
+                {
+                    "rank": rank,
+                    "id": candidate.id,
+                    "area_id": candidate.area_id,
+                    "name_th": candidate.name_th,
+                    "intervention_type": candidate.intervention_type,
+                    "geometry": candidate.geometry,
+                    "estimated_cost_thb": candidate.estimated_cost_thb,
+                    "annual_maintenance_thb": candidate.annual_maintenance_thb,
+                    "estimated_beneficiaries": candidate.estimated_beneficiaries,
+                    "priority_score": candidate.priority_score,
+                    "objective_contribution": portfolio.contributions[candidate.id],
+                    "evidence": candidate.evidence,
+                    "uncertainty": candidate.uncertainty,
+                }
+            )
         results.append(
             {
                 "strategy": key,
                 "label_th": label,
                 "selected_ids": portfolio.selected_ids,
+                "allocations": allocations,
                 "allocated_thb": portfolio.allocated_thb,
+                "unallocated_thb": request.budget_thb - portfolio.allocated_thb,
                 "estimated_beneficiaries": portfolio.beneficiaries,
+                "covered_area_ids": sorted({item["area_id"] for item in allocations}),
                 "objective_value": portfolio.objective_value,
                 "solver": portfolio.solver,
                 "weights": weights,
             }
         )
-    return {"budget_thb": request.budget_thb, "scenarios": results, "input_versions": _current_versions(db), "eligibility_consistent": True}
+    return {
+        "budget_thb": request.budget_thb,
+        "scenarios": results,
+        "input_versions": _current_versions(db),
+        "eligibility_consistent": True,
+        "comparison_note_th": "ทุกยุทธศาสตร์ใช้ candidate, feasibility และเพดานงบชุดเดียวกัน ต่างกันเฉพาะน้ำหนัก objective",
+    }
 
 
 @router.post("/forecast/run")

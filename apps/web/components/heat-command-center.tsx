@@ -37,7 +37,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { HeatMap } from "@/components/heat-map";
+import { HeatMap, type MapViewport } from "@/components/heat-map";
 import { StatusDot } from "@/components/status-dot";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -175,6 +175,7 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
   const [exportingReport, setExportingReport] = useState(false);
   const [optimization, setOptimization] = useState<OptimizationResult | null>(null);
   const [scenarioResults, setScenarioResults] = useState<OptimizationResult[]>([]);
+  const [activeScenarioId, setActiveScenarioId] = useState<string | null>(null);
   const [refreshJob, setRefreshJob] = useState<{ job_id: string; status: string } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -317,6 +318,7 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
       if (compare) {
         const results = await compareScenarios({ budget_thb: budget, intervention_types: interventions });
         setScenarioResults(results);
+        setActiveScenarioId(results.at(-1)?.run_id || null);
       } else {
         const result = await runOptimization({ budget_thb: budget, strategy, intervention_types: interventions });
         setOptimization(result);
@@ -370,6 +372,8 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
   }
 
   const currentLayer = data.layers.find((layer) => layer.id === activeLayer) || defaultLayers.find((layer) => layer.id === activeLayer);
+  const activeScenario = scenarioResults.find((item) => item.run_id === activeScenarioId) || scenarioResults.at(-1);
+  const displayedProjects = initialView === "scenarios" && activeScenario ? activeScenario.allocations : optimization?.allocations;
 
   return (
     <main className="command-center">
@@ -465,9 +469,20 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
           data={data.features}
           activeLayer={activeLayer}
           selectedId={selected?.properties.id}
-          projects={optimization?.allocations}
+          projects={displayedProjects}
           onSelect={handleSelect}
         />
+        {initialView === "scenarios" && scenarioResults.length > 0 && (
+          <ScenarioComparisonMaps
+            data={data.features}
+            activeLayer={activeLayer}
+            selectedId={selected?.properties.id}
+            scenarios={scenarioResults}
+            activeScenarioId={activeScenario?.run_id || null}
+            onScenarioSelect={setActiveScenarioId}
+            onAreaSelect={handleSelect}
+          />
+        )}
         <div className="map-title-card">
           <span>{viewCopy[initialView].eyebrow}</span>
           <h1>{viewCopy[initialView].title}</h1>
@@ -524,6 +539,8 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
                 exporting={exportingReport}
                 result={optimization}
                 scenarios={scenarioResults}
+                activeScenarioId={activeScenario?.run_id || null}
+                onScenarioSelect={setActiveScenarioId}
                 disabled={data.isDemo}
                 error={actionError}
               />
@@ -562,6 +579,66 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
         )}
       </section>
     </main>
+  );
+}
+
+function ScenarioComparisonMaps({
+  data,
+  activeLayer,
+  selectedId,
+  scenarios,
+  activeScenarioId,
+  onScenarioSelect,
+  onAreaSelect,
+}: {
+  data: FeatureCollection;
+  activeLayer: string;
+  selectedId?: string;
+  scenarios: OptimizationResult[];
+  activeScenarioId: string | null;
+  onScenarioSelect: (runId: string) => void;
+  onAreaSelect: (feature: GeoFeature) => void;
+}) {
+  const [viewport, setViewport] = useState<MapViewport>({ center: [100.5018, 13.7563], zoom: 10.4, bearing: 0, pitch: 0 });
+  const synchronizeViewport = useCallback((next: MapViewport) => {
+    setViewport((current) => {
+      const unchanged = Math.abs(current.center[0] - next.center[0]) < 0.00001
+        && Math.abs(current.center[1] - next.center[1]) < 0.00001
+        && Math.abs(current.zoom - next.zoom) < 0.001
+        && Math.abs(current.bearing - next.bearing) < 0.01
+        && Math.abs(current.pitch - next.pitch) < 0.01;
+      return unchanged ? current : next;
+    });
+  }, []);
+  return (
+    <motion.div className="scenario-map-grid" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+      {scenarios.map((scenario) => (
+        <article className={cn("scenario-map-card", scenario.run_id === activeScenarioId && "active")} key={scenario.run_id}>
+          <button className="scenario-map-header" onClick={() => onScenarioSelect(scenario.run_id)}>
+            <span>{scenario.strategy}</span>
+            <Badge>{scenario.allocations.length} โครงการ</Badge>
+          </button>
+          <div className="scenario-map-canvas">
+            <HeatMap
+              compact
+              data={data}
+              activeLayer={activeLayer}
+              selectedId={selectedId}
+              projects={scenario.allocations}
+              viewport={viewport}
+              onViewportChange={synchronizeViewport}
+              onSelect={onAreaSelect}
+              mapLabel={`แผนที่เปรียบเทียบ ${scenario.strategy}`}
+            />
+          </div>
+          <div className="scenario-map-stats">
+            <span>ใช้งบ <strong>{formatBaht(scenario.total_cost_thb)}</strong></span>
+            <span>ผู้รับประโยชน์ <strong>{formatNumber(scenario.estimated_beneficiaries)}</strong></span>
+          </div>
+        </article>
+      ))}
+      <div className="scenario-sync-note"><Activity size={12} /> เลื่อนหรือซูมแผนที่ใดก็ได้ — มุมมองทั้งสามจะซิงก์กัน</div>
+    </motion.div>
   );
 }
 
@@ -611,6 +688,8 @@ interface OptimizerPanelProps {
   exporting: boolean;
   result: OptimizationResult | null;
   scenarios: OptimizationResult[];
+  activeScenarioId: string | null;
+  onScenarioSelect: (runId: string) => void;
   disabled: boolean;
   error: string | null;
 }
@@ -657,7 +736,16 @@ function OptimizerPanel(props: OptimizerPanelProps) {
           </Button>
         </>
       )}
-      {!!props.scenarios.length && <div className="scenario-mini-list">{props.scenarios.map((item) => <div key={item.run_id}><span>{item.strategy}</span><strong>{formatNumber(item.estimated_beneficiaries)} คน</strong></div>)}</div>}
+      {!!props.scenarios.length && (
+        <div className="scenario-mini-list">
+          {props.scenarios.map((item) => (
+            <button className={cn(item.run_id === props.activeScenarioId && "active")} key={item.run_id} onClick={() => props.onScenarioSelect(item.run_id)}>
+              <span>{item.strategy}<small>{item.allocations.length} โครงการ · {formatBaht(item.total_cost_thb)}</small></span>
+              <strong>{formatNumber(item.estimated_beneficiaries)} คน</strong>
+            </button>
+          ))}
+        </div>
+      )}
     </>
   );
 }
