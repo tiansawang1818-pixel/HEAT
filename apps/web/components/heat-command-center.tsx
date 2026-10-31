@@ -10,8 +10,10 @@ import {
   ChevronDown,
   CircleDollarSign,
   Clock3,
+  CloudSun,
   Database,
   Download,
+  Droplets,
   Expand,
   FlaskConical,
   History,
@@ -26,6 +28,7 @@ import {
   ThermometerSun,
   TreePine,
   TrendingUp,
+  Wind,
   X,
 } from "lucide-react";
 import {
@@ -76,6 +79,7 @@ import {
   type ObservatorySnapshot,
   type OptimizationResult,
   type PriorityRankingResult,
+  type WeatherContext,
 } from "@/lib/utils";
 
 export type AppView = "explorer" | "insights" | "optimizer" | "scenarios" | "outlook" | "observatory" | "methodology";
@@ -138,6 +142,7 @@ interface DashboardState {
   datasets: DatasetStatus[];
   layers: MapLayerMeta[];
   features: FeatureCollection;
+  weather: WeatherContext | null;
   isDemo: boolean;
 }
 
@@ -145,6 +150,7 @@ const initialState: DashboardState = {
   datasets: demoDatasets,
   layers: defaultLayers,
   features: demoFeatures,
+  weather: null,
   isDemo: true,
 };
 
@@ -595,6 +601,9 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
             }}
           />
         )}
+        {initialView === "explorer" && data.weather?.current && (
+          <WeatherContextCard weather={data.weather} />
+        )}
         <div className="map-title-card">
           <span>{viewCopy[initialView].eyebrow}</span>
           <h1>{viewCopy[initialView].title}</h1>
@@ -700,6 +709,52 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
       </section>
     </main>
   );
+}
+
+function WeatherContextCard({ weather }: { weather: WeatherContext }) {
+  const current = weather.current;
+  if (!current) return null;
+  const times = weather.hourly?.time || [];
+  const reference = Date.parse(weather.reference_time || weather.last_source_observation || "");
+  const forecastIndices = times
+    .map((time, index) => ({ index, timestamp: Date.parse(asUtcWeatherTime(time)) }))
+    .filter((item) => Number.isNaN(reference) || item.timestamp > reference)
+    .slice(0, 3);
+  return (
+    <div className="weather-context-card" aria-label="บริบทอากาศจากแบบจำลอง Open-Meteo">
+      <div className="weather-card-head">
+        <span><CloudSun size={14} /> บริบทอากาศ</span>
+        <StatusDot status={weather.status} label={false} />
+      </div>
+      <div className="weather-primary">
+        <strong>{formatNumber(current.temperature_2m, 1)}<small>{weather.current_units.temperature_2m || "°C"}</small></strong>
+        <span>รู้สึกเหมือน {formatNumber(current.apparent_temperature, 1)}{weather.current_units.apparent_temperature || "°C"}</span>
+      </div>
+      <div className="weather-metrics">
+        <span><Droplets size={11} /> ความชื้น <strong>{formatNumber(current.relative_humidity_2m)}{weather.current_units.relative_humidity_2m || "%"}</strong></span>
+        <span><Wind size={11} /> ลม <strong>{formatNumber(current.wind_speed_10m, 1)} {weather.current_units.wind_speed_10m || "km/h"}</strong></span>
+      </div>
+      {!!forecastIndices.length && (
+        <div className="weather-forecast">
+          {forecastIndices.map(({ index }) => (
+            <div key={`${times[index]}-${index}`}>
+              <time>{formatThaiDate(asUtcWeatherTime(times[index]), true)}</time>
+              <strong>{formatNumber(weather.hourly?.temperature_2m?.[index], 1)}°</strong>
+              <span>ฝน {formatNumber(weather.hourly?.precipitation_probability?.[index])}%</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="weather-provenance">
+        <span>อ้างอิง {formatThaiDate(weather.reference_time || weather.last_source_observation, true)} · v{weather.layer_version || 0}</span>
+        <strong>แบบจำลองอากาศ/พยากรณ์ — ไม่ใช่ LST ดาวเทียม</strong>
+      </div>
+    </div>
+  );
+}
+
+function asUtcWeatherTime(value: string) {
+  return /(?:Z|[+-]\d\d:\d\d)$/.test(value) ? value : `${value}Z`;
 }
 
 const priorityComponentLabels: Record<string, string> = {

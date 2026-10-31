@@ -24,6 +24,7 @@ from app.models.entities import (
     OptimizationAllocation,
     OptimizationRun,
     PipelineEvent,
+    ProcessingStatus,
     PriorityScore,
     SourceCheck,
     TemperatureObservation,
@@ -164,6 +165,69 @@ def dataset_status(db: Session = Depends(get_db)) -> Dict[str, Any]:
     return {
         "items": items,
         "summary": {status: sum(1 for item in items if item["status"] == status) for status in ["up_to_date", "updating", "stale", "unavailable", "error"]},
+    }
+
+
+@router.get("/weather/context")
+def weather_context(db: Session = Depends(get_db)) -> Dict[str, Any]:
+    """Return only the latest validated Open-Meteo context.
+
+    Values are model estimates and forecasts, not satellite land-surface
+    temperature observations or ground-station measurements.
+    """
+    source = db.scalar(select(DataSource).where(DataSource.dataset_id == OpenMeteoConnector.dataset_id))
+    if source is None:
+        return {
+            "status": "unavailable",
+            "status_reason": "ยังไม่ได้ตั้งค่าแหล่งข้อมูล Open-Meteo",
+            "source_name": "Open-Meteo",
+            "dataset_id": OpenMeteoConnector.dataset_id,
+            "data_class": "model_estimate_and_forecast",
+            "current": None,
+            "current_units": {},
+            "hourly": None,
+            "hourly_units": {},
+            "reference_time": None,
+            "provider_model": None,
+            "provider_timezone": None,
+            "layer_version": 0,
+            "limitations_th": "ข้อมูลนี้เป็นค่าประมาณจากแบบจำลองและพยากรณ์ ไม่ใช่อุณหภูมิพื้นผิวจากดาวเทียมหรือสถานีภาคพื้นดิน",
+        }
+    status = _source_status(db, source)
+    version = db.scalar(
+        select(DatasetVersion)
+        .where(DatasetVersion.source_id == source.id, DatasetVersion.status == ProcessingStatus.published.value)
+        .order_by(desc(DatasetVersion.observed_at))
+        .limit(1)
+    )
+    if version is None:
+        return {
+            **status,
+            "data_class": "model_estimate_and_forecast",
+            "current": None,
+            "current_units": {},
+            "hourly": None,
+            "hourly_units": {},
+            "reference_time": None,
+            "provider_model": None,
+            "provider_timezone": None,
+            "limitations_th": "ข้อมูลนี้เป็นค่าประมาณจากแบบจำลองและพยากรณ์ ไม่ใช่อุณหภูมิพื้นผิวจากดาวเทียมหรือสถานีภาคพื้นดิน",
+        }
+    metadata = version.metadata_json if isinstance(version.metadata_json, dict) else {}
+    payload = metadata.get("provider_payload", {})
+    if not isinstance(payload, dict):
+        payload = {}
+    return {
+        **status,
+        "data_class": metadata.get("data_class", "model_estimate_and_forecast"),
+        "reference_time": metadata.get("reference_time") or _iso(version.observed_at),
+        "provider_model": metadata.get("provider_model"),
+        "provider_timezone": metadata.get("provider_timezone"),
+        "current": payload.get("current") if isinstance(payload.get("current"), dict) else None,
+        "current_units": payload.get("current_units") if isinstance(payload.get("current_units"), dict) else {},
+        "hourly": payload.get("hourly") if isinstance(payload.get("hourly"), dict) else None,
+        "hourly_units": payload.get("hourly_units") if isinstance(payload.get("hourly_units"), dict) else {},
+        "limitations_th": "ข้อมูลนี้เป็นค่าประมาณจากแบบจำลองและพยากรณ์ ไม่ใช่อุณหภูมิพื้นผิวจากดาวเทียมหรือสถานีภาคพื้นดิน",
     }
 
 

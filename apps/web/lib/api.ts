@@ -10,6 +10,7 @@ import type {
   ObservatorySnapshot,
   OptimizationResult,
   PriorityRankingResult,
+  WeatherContext,
 } from "@/lib/utils";
 
 const configuredBase = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "";
@@ -99,10 +100,11 @@ function normalizeLayers(value: unknown, datasets: DatasetStatus[]): MapLayerMet
   const statusOrder = ["error", "updating", "stale", "up_to_date", "unavailable"] as const;
   const fallbackStatus = statusOrder.find((status) => datasets.some((dataset) => dataset.status === status)) || "unavailable";
   return rawLayers.map((raw) => {
-    const sourceStatus = raw.source_status && typeof raw.source_status === "object"
+    const hasDeclaredSources = raw.source_status != null && typeof raw.source_status === "object";
+    const sourceStatus = hasDeclaredSources
       ? Object.values(raw.source_status as Record<string, Record<string, unknown>>).map(normalizeDataset)
       : [];
-    const relevant = sourceStatus.length ? sourceStatus : datasets;
+    const relevant = hasDeclaredSources ? sourceStatus : datasets;
     const declaredStatus = typeof raw.status === "string" && statusOrder.includes(raw.status as typeof statusOrder[number])
       ? raw.status as typeof statusOrder[number]
       : null;
@@ -124,11 +126,39 @@ function normalizeLayers(value: unknown, datasets: DatasetStatus[]): MapLayerMet
   });
 }
 
+function normalizeWeather(value: unknown): WeatherContext | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  const current = raw.current && typeof raw.current === "object" ? raw.current as WeatherContext["current"] : null;
+  const hourly = raw.hourly && typeof raw.hourly === "object" ? raw.hourly as WeatherContext["hourly"] : null;
+  const allowed = ["up_to_date", "updating", "stale", "unavailable", "error"] as const;
+  return {
+    status: allowed.includes(raw.status as typeof allowed[number]) ? raw.status as WeatherContext["status"] : "unavailable",
+    status_reason: typeof raw.status_reason === "string" ? raw.status_reason : undefined,
+    source_name: String(raw.source_name || "Open-Meteo"),
+    dataset_id: String(raw.dataset_id || "open-meteo/weather-context"),
+    data_class: "model_estimate_and_forecast",
+    reference_time: typeof raw.reference_time === "string" ? raw.reference_time : null,
+    last_source_observation: typeof raw.last_source_observation === "string" ? raw.last_source_observation : null,
+    last_system_check: typeof raw.last_system_check === "string" ? raw.last_system_check : null,
+    provider_model: typeof raw.provider_model === "string" ? raw.provider_model : null,
+    layer_version: typeof raw.layer_version === "number" ? raw.layer_version : 0,
+    limitations_th: typeof raw.limitations_th === "string"
+      ? raw.limitations_th
+      : "ข้อมูลนี้เป็นค่าประมาณจากแบบจำลองและพยากรณ์ ไม่ใช่อุณหภูมิพื้นผิวจากดาวเทียม",
+    current,
+    current_units: raw.current_units && typeof raw.current_units === "object" ? raw.current_units as Record<string, string> : {},
+    hourly,
+    hourly_units: raw.hourly_units && typeof raw.hourly_units === "object" ? raw.hourly_units as Record<string, string> : {},
+  };
+}
+
 export async function loadDashboardData() {
-  const [datasets, layers, features] = await Promise.allSettled([
+  const [datasets, layers, features, weather] = await Promise.allSettled([
     request<unknown>("/api/datasets/status"),
     request<unknown>("/api/map/layers"),
     request<FeatureCollection>("/api/map/features?limit=250&bbox=100.30,13.45,100.95,14.05"),
+    request<unknown>("/api/weather/context"),
   ]);
   const apiReachable = datasets.status === "fulfilled" || layers.status === "fulfilled" || features.status === "fulfilled";
   const normalizedDatasets = datasets.status === "fulfilled"
@@ -141,6 +171,7 @@ export async function loadDashboardData() {
     datasets: normalizedDatasets,
     layers: layers.status === "fulfilled" ? normalizeLayers(layers.value, normalizedDatasets) : defaultLayers,
     features: normalizedFeatures,
+    weather: weather.status === "fulfilled" ? normalizeWeather(weather.value) : null,
     isDemo: !apiReachable || normalizedFeatures === demoFeatures,
   };
 }

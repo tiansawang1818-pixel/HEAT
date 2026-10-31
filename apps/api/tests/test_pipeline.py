@@ -4,6 +4,7 @@ from sqlalchemy import select
 
 from app.models.entities import DataSource, DatasetVersion, OptimizationRun
 from app.services.connectors.base import SourceAsset, SourceConnector
+from app.services.connectors.open_meteo import OpenMeteoConnector
 from app.services.pipeline import run_monitor
 
 
@@ -18,7 +19,16 @@ class StaticConnector(SourceConnector):
     def discover(self, latest_asset_id=None, checkpoint=None):
         if latest_asset_id == "asset-1":
             return []
-        return [SourceAsset.with_checksum("asset-1", "v1", datetime(2026, 1, 1, tzinfo=timezone.utc), EXTENT)]
+        return [
+            SourceAsset.with_checksum(
+                "asset-1",
+                "v1",
+                datetime(2026, 1, 1, tzinfo=timezone.utc),
+                EXTENT,
+                metadata={"data_class": "test"},
+                payload={"marker": "validated"},
+            )
+        ]
 
 
 class InvalidConnector(StaticConnector):
@@ -45,6 +55,51 @@ def test_new_asset_publishes_and_duplicate_is_skipped(db):
     assert len(versions) == 1
     assert versions[0].status == "published"
     assert versions[0].layer_version == 1
+    assert versions[0].metadata_json["provider_payload"] == {"marker": "validated"}
+
+
+def test_open_meteo_validation_requires_complete_current_and_hourly_payload():
+    connector = OpenMeteoConnector()
+    valid = SourceAsset.with_checksum(
+        "weather-1",
+        "v1",
+        datetime(2026, 1, 1, tzinfo=timezone.utc),
+        EXTENT,
+        metadata={"data_class": "model_estimate_and_forecast"},
+        payload={
+            "current": {
+                "time": "2026-01-01T00:00",
+                "temperature_2m": 31.4,
+                "relative_humidity_2m": 62,
+                "apparent_temperature": 36.1,
+                "wind_speed_10m": 8.2,
+            },
+            "current_units": {"temperature_2m": "°C", "wind_speed_10m": "km/h"},
+            "hourly": {
+                "time": ["2026-01-01T00:00", "2026-01-01T01:00"],
+                "temperature_2m": [31.4, 30.9],
+                "apparent_temperature": [36.1, 35.2],
+                "relative_humidity_2m": [62, 65],
+                "precipitation_probability": [10, 20],
+            },
+            "hourly_units": {"temperature_2m": "°C", "precipitation_probability": "%"},
+        },
+    )
+    report = connector.validate(valid)
+    assert report["passed"] is True
+    assert report["metrics"]["forecast_hours"] == 2
+
+    invalid = SourceAsset.with_checksum(
+        "weather-2",
+        "v1",
+        datetime(2026, 1, 1, tzinfo=timezone.utc),
+        EXTENT,
+        payload={"current": {"time": "2026-01-01T00:00"}},
+    )
+    rejected = connector.validate(invalid)
+    assert rejected["passed"] is False
+    assert any("current fields" in error for error in rejected["errors"])
+    assert any("hourly fields" in error for error in rejected["errors"])
 
 
 def test_invalid_asset_never_replaces_published_version(db):

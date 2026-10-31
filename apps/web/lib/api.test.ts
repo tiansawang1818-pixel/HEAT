@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { compareScenarios, runForecastScenario } from "./api";
+import { compareScenarios, loadDashboardData, runForecastScenario } from "./api";
 import { formatBaht, formatNumber, freshnessLabel } from "./utils";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -60,5 +60,40 @@ describe("Thai presentation helpers", () => {
     const result = await runForecastScenario(3);
     expect(result.mode).toBe("scenario_only");
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({ horizon_years: 3, area_ids: null });
+  });
+
+  it("loads validated model weather context without treating it as satellite LST", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.includes("/api/datasets/status")) return Response.json({ items: [] });
+      if (url.includes("/api/map/layers")) return Response.json({ items: [{
+        id: "priority",
+        name_th: "ลำดับความสำคัญการรับความร้อน",
+        status: "unavailable",
+        source_name: "HEAT//SHIFT derived score",
+        source_status: {},
+      }] });
+      if (url.includes("/api/map/features")) return Response.json({ type: "FeatureCollection", features: [] });
+      if (url.includes("/api/weather/context")) return Response.json({
+        status: "up_to_date",
+        source_name: "Open-Meteo",
+        dataset_id: "open-meteo/weather-context",
+        data_class: "model_estimate_and_forecast",
+        reference_time: "2026-10-31T04:00:00+00:00",
+        layer_version: 3,
+        current: { temperature_2m: 31.2, apparent_temperature: 35.4, relative_humidity_2m: 63, wind_speed_10m: 7.1 },
+        current_units: { temperature_2m: "°C" },
+        hourly: { time: ["2026-10-31T05:00"], temperature_2m: [31.8], precipitation_probability: [20] },
+        hourly_units: { temperature_2m: "°C", precipitation_probability: "%" },
+        limitations_th: "แบบจำลองและพยากรณ์ ไม่ใช่ LST ดาวเทียม",
+      });
+      return new Response(null, { status: 404 });
+    }));
+
+    const dashboard = await loadDashboardData();
+    expect(dashboard.weather?.current?.temperature_2m).toBe(31.2);
+    expect(dashboard.weather?.data_class).toBe("model_estimate_and_forecast");
+    expect(dashboard.weather?.limitations_th).toContain("ไม่ใช่ LST");
+    expect(dashboard.layers[0]).toMatchObject({ id: "priority", layer_version: 0, observation_date: null });
+    expect(dashboard.isDemo).toBe(false);
   });
 });

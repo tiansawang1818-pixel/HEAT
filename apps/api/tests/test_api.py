@@ -1,8 +1,11 @@
+from datetime import datetime, timedelta, timezone
+
 from sqlalchemy import select
 
 from app.models.entities import (
     CandidateIntervention,
     DataSource,
+    DatasetVersion,
     GeographicArea,
     ForecastRun,
     IngestionJob,
@@ -21,6 +24,65 @@ def test_health_and_dataset_status(client):
     assert response.json()["items"]
     assert all("last_source_observation" in item and "last_system_check" in item for item in response.json()["items"])
     assert all(item["dataset_id"] != "local/integration-fixture" for item in response.json()["items"])
+
+
+def test_weather_context_returns_only_latest_published_provider_payload(client, db):
+    source = db.scalar(select(DataSource).where(DataSource.dataset_id == "open-meteo/weather-context"))
+    observed_at = datetime(2026, 10, 31, 4, 0, tzinfo=timezone.utc)
+    published = DatasetVersion(
+        source_id=source.id,
+        source_asset_id="weather:published",
+        source_version="forecast-api-v1",
+        observed_at=observed_at,
+        published_at=observed_at + timedelta(minutes=1),
+        status="published",
+        quality_status="valid",
+        layer_version=4,
+        geographic_extent={"type": "Point", "coordinates": [100.5018, 13.7563]},
+        metadata_json={
+            "data_class": "model_estimate_and_forecast",
+            "provider_model": "best_match",
+            "provider_timezone": "UTC",
+            "reference_time": observed_at.isoformat(),
+            "provider_payload": {
+                "current": {"temperature_2m": 31.2, "apparent_temperature": 35.4, "relative_humidity_2m": 63, "wind_speed_10m": 7.1},
+                "current_units": {"temperature_2m": "°C", "apparent_temperature": "°C", "relative_humidity_2m": "%", "wind_speed_10m": "km/h"},
+                "hourly": {"time": ["2026-10-31T04:00"], "temperature_2m": [31.2]},
+                "hourly_units": {"temperature_2m": "°C"},
+            },
+        },
+    )
+    failed = DatasetVersion(
+        source_id=source.id,
+        source_asset_id="weather:failed",
+        source_version="forecast-api-v1",
+        observed_at=observed_at + timedelta(hours=1),
+        status="failed",
+        quality_status="rejected",
+        geographic_extent={"type": "Point", "coordinates": [100.5018, 13.7563]},
+        metadata_json={"provider_payload": {"current": {"temperature_2m": 999}}},
+    )
+    db.add_all([published, failed])
+    db.commit()
+
+    response = client.get("/api/weather/context")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["current"]["temperature_2m"] == 31.2
+    assert body["current"]["temperature_2m"] != 999
+    assert body["data_class"] == "model_estimate_and_forecast"
+    assert body["provider_model"] == "best_match"
+    assert body["layer_version"] == 4
+    assert "ไม่ใช่อุณหภูมิพื้นผิวจากดาวเทียม" in body["limitations_th"]
+
+
+def test_weather_context_is_transparently_unavailable_before_publication(client):
+    response = client.get("/api/weather/context")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "unavailable"
+    assert body["current"] is None
+    assert body["reference_time"] is None
 
 
 def test_manual_ingestion_requires_admin(client):

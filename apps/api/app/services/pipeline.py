@@ -73,7 +73,10 @@ def ingest_asset(db: Session, source: DataSource, connector: SourceConnector, as
         checksum=asset.checksum,
         observed_at=asset.observed_at,
         geographic_extent=asset.geographic_extent,
-        metadata_json=asset.metadata,
+        metadata_json={
+            **asset.metadata,
+            **({"provider_payload": asset.payload} if asset.payload else {}),
+        },
         status=ProcessingStatus.staged.value,
     )
     db.add(version)

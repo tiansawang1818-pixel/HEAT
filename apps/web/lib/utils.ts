@@ -52,6 +52,37 @@ export interface DatasetStatus {
   status_reason?: string;
 }
 
+export interface WeatherContext {
+  status: FreshnessState;
+  status_reason?: string;
+  source_name: string;
+  dataset_id: string;
+  data_class: "model_estimate_and_forecast";
+  reference_time?: string | null;
+  last_source_observation?: string | null;
+  last_system_check?: string | null;
+  provider_model?: string | null;
+  layer_version?: number;
+  limitations_th: string;
+  current: {
+    time?: string;
+    temperature_2m?: number;
+    apparent_temperature?: number;
+    relative_humidity_2m?: number;
+    wind_speed_10m?: number;
+    weather_code?: number;
+  } | null;
+  current_units: Record<string, string>;
+  hourly: {
+    time?: string[];
+    temperature_2m?: Array<number | null>;
+    apparent_temperature?: Array<number | null>;
+    relative_humidity_2m?: Array<number | null>;
+    precipitation_probability?: Array<number | null>;
+  } | null;
+  hourly_units: Record<string, string>;
+}
+
 export interface AreaProperties {
   id: string;
   name_th: string;
