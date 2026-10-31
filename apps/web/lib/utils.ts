@@ -67,6 +67,9 @@ export interface AreaProperties {
   quality_status?: string;
   observation_date?: string | null;
   priority_explanation?: string[];
+  scenario_change_c?: number | null;
+  scenario_uncertainty_c?: number | null;
+  scenario_horizon_years?: number | null;
 }
 
 export interface GeoFeature {
@@ -170,5 +173,26 @@ export interface ObservatorySnapshot {
     layer_version?: number | null;
     created_at?: string | null;
     payload: Record<string, unknown>;
+  }>;
+}
+
+export interface ForecastResult {
+  run_id: string;
+  status: "completed" | "insufficient_data";
+  mode: "trend_scenario" | "scenario_only";
+  message_th?: string;
+  available_years?: number;
+  required_years?: number;
+  method: string;
+  model_version: string;
+  training_versions: Record<string, unknown>;
+  assumptions: Record<string, unknown>;
+  created_at?: string | null;
+  projections: Array<{
+    area_id: string;
+    horizon_years: number;
+    scenario_change_c: number;
+    uncertainty_c: number;
+    label: string;
   }>;
 }

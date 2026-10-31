@@ -53,6 +53,7 @@ import {
   loadLayerFeatures,
   loadObservatoryStatus,
   loadOptimizationRun,
+  runForecastScenario,
   runOptimization,
   streamUrl,
   triggerRefresh,
@@ -67,6 +68,7 @@ import {
   type AreaProperties,
   type DatasetStatus,
   type FeatureCollection,
+  type ForecastResult,
   type GeoFeature,
   type HistoryPoint,
   type MapLayerMeta,
@@ -95,6 +97,8 @@ const layerIcons: Record<string, typeof ThermometerSun> = {
   built: Layers3,
   built_up: Layers3,
   candidates: Sparkles,
+  historical: History,
+  "future-risk": TrendingUp,
 };
 
 const layerColors: Record<string, string> = {
@@ -106,6 +110,8 @@ const layerColors: Record<string, string> = {
   built: "#aa8cff",
   built_up: "#aa8cff",
   candidates: "#4eeaff",
+  historical: "#ff8b6d",
+  "future-risk": "#ff5a36",
 };
 
 const interventionOptions = [
@@ -158,7 +164,7 @@ function LoadingLine() {
 export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: AppView }) {
   const [data, setData] = useState<DashboardState>(initialState);
   const [loading, setLoading] = useState(true);
-  const [activeLayer, setActiveLayer] = useState("priority");
+  const [activeLayer, setActiveLayer] = useState(initialView === "outlook" ? "future-risk" : "priority");
   const [selected, setSelected] = useState<GeoFeature | null>(null);
   const [history, setHistory] = useState<HistoryPoint[]>(emptyHistory);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -186,6 +192,9 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
   const [assistantLoading, setAssistantLoading] = useState(false);
   const [observatory, setObservatory] = useState<ObservatorySnapshot | null>(null);
   const [observatoryLoading, setObservatoryLoading] = useState(initialView === "observatory");
+  const [forecastHorizon, setForecastHorizon] = useState<1 | 3 | 5>(5);
+  const [forecastResult, setForecastResult] = useState<ForecastResult | null>(null);
+  const [forecasting, setForecasting] = useState(false);
 
   const reload = useCallback(async (notify = false) => {
     try {
@@ -396,9 +405,43 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
     }
   }
 
+  async function handleForecast() {
+    setForecasting(true);
+    setActionError(null);
+    setActiveLayer("future-risk");
+    try {
+      setForecastResult(await runForecastScenario(forecastHorizon));
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "ยังไม่สามารถคำนวณฉากทัศน์ได้");
+    } finally {
+      setForecasting(false);
+    }
+  }
+
   const currentLayer = data.layers.find((layer) => layer.id === activeLayer) || defaultLayers.find((layer) => layer.id === activeLayer);
   const activeScenario = scenarioResults.find((item) => item.run_id === activeScenarioId) || scenarioResults.at(-1);
   const displayedProjects = initialView === "scenarios" && activeScenario ? activeScenario.allocations : optimization?.allocations;
+  const displayedFeatures = useMemo<FeatureCollection>(() => {
+    if (initialView !== "outlook" || !forecastResult?.projections.length) return data.features;
+    const projections = new Map(forecastResult.projections.map((item) => [item.area_id, item]));
+    return {
+      type: "FeatureCollection",
+      features: data.features.features.map((feature) => {
+        const projection = projections.get(feature.properties.id);
+        if (!projection) return feature;
+        return {
+          ...feature,
+          properties: {
+            ...feature.properties,
+            scenario_change_c: projection.scenario_change_c,
+            scenario_uncertainty_c: projection.uncertainty_c,
+            scenario_horizon_years: projection.horizon_years,
+            quality_status: "scenario_projection",
+          },
+        };
+      }),
+    };
+  }, [data.features, forecastResult, initialView]);
 
   return (
     <main className="command-center">
@@ -491,7 +534,7 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
 
       <section className="map-stage">
         <HeatMap
-          data={data.features}
+          data={displayedFeatures}
           activeLayer={activeLayer}
           selectedId={selected?.properties.id}
           projects={displayedProjects}
@@ -506,6 +549,22 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
             activeScenarioId={activeScenario?.run_id || null}
             onScenarioSelect={setActiveScenarioId}
             onAreaSelect={handleSelect}
+          />
+        )}
+        {initialView === "outlook" && (
+          <FutureOutlookOverlay
+            horizon={forecastHorizon}
+            setHorizon={setForecastHorizon}
+            result={forecastResult}
+            loading={forecasting}
+            disabled={data.isDemo}
+            error={actionError}
+            areas={data.features}
+            onRun={() => void handleForecast()}
+            onBaseline={() => {
+              setForecastResult(null);
+              setActiveLayer("temperature");
+            }}
           />
         )}
         <div className="map-title-card">
@@ -612,6 +671,77 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
         )}
       </section>
     </main>
+  );
+}
+
+function FutureOutlookOverlay({
+  horizon,
+  setHorizon,
+  result,
+  loading,
+  disabled,
+  error,
+  areas,
+  onRun,
+  onBaseline,
+}: {
+  horizon: 1 | 3 | 5;
+  setHorizon: (value: 1 | 3 | 5) => void;
+  result: ForecastResult | null;
+  loading: boolean;
+  disabled: boolean;
+  error: string | null;
+  areas: FeatureCollection;
+  onRun: () => void;
+  onBaseline: () => void;
+}) {
+  const names = useMemo(() => new Map(areas.features.map((feature) => [feature.properties.id, feature.properties.name_th])), [areas.features]);
+  return (
+    <motion.div className="map-overlay-panel future-outlook" initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }}>
+      <div className="overlay-heading">
+        <div><Badge>SCENARIO · NOT A FORECAST</Badge><h2>ภาพความเสี่ยงระยะ 5 ปี</h2><p>ใช้ข้อมูลย้อนหลังที่ผ่าน validation และแสดง uncertainty ทุกครั้ง</p></div>
+      </div>
+      <div className="outlook-baseline">
+        <button onClick={onBaseline}><History size={13} /><span>Current baseline<small>ข้อมูลสังเกตการณ์</small></span></button>
+        {[1, 3, 5].map((year) => (
+          <button className={cn(horizon === year && "active")} key={year} onClick={() => setHorizon(year as 1 | 3 | 5)}>
+            +{year} ปี
+          </button>
+        ))}
+      </div>
+      <Button className="w-full" variant="thermal" onClick={onRun} disabled={loading || disabled}>
+        {loading ? <RefreshCw className="animate-spin" size={15} /> : <TrendingUp size={15} />}
+        {loading ? "กำลังคำนวณฉากทัศน์…" : `คำนวณฉากทัศน์ +${horizon} ปี`}
+      </Button>
+      {disabled && <div className="inline-warning">ต้องเชื่อม backend และข้อมูลย้อนหลังที่ผ่าน validation ก่อน</div>}
+      {error && <div className="error-box">{error}</div>}
+      {result?.status === "insufficient_data" && (
+        <div className="outlook-guardrail">
+          <ShieldCheck size={17} /><div><strong>ยังไม่เผยแพร่คำพยากรณ์</strong><p>{result.message_th}</p><small>มีข้อมูล {result.available_years ?? 0} ปี · ต้องการอย่างน้อย {result.required_years ?? 5} ปี</small></div>
+        </div>
+      )}
+      {result?.status === "completed" && (
+        <>
+          <div className="outlook-result-head"><span>ผลฉากทัศน์</span><strong>{result.projections.length} พื้นที่</strong></div>
+          <div className="outlook-projections">
+            {result.projections.slice(0, 12).map((projection) => (
+              <div key={projection.area_id}>
+                <span>{names.get(projection.area_id) || projection.area_id}</span>
+                <strong>{projection.scenario_change_c >= 0 ? "+" : ""}{formatNumber(projection.scenario_change_c, 2)}°C</strong>
+                <small>±{formatNumber(projection.uncertainty_c, 2)}°C</small>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      {result && (
+        <div className="outlook-provenance">
+          <span>Method</span><strong>{result.method || "scenario method not reported"}</strong>
+          <span>Model version</span><strong>{result.model_version || "not reported"}</strong>
+          <span>สร้างเมื่อ</span><strong>{formatThaiDate(result.created_at, true)}</strong>
+        </div>
+      )}
+    </motion.div>
   );
 }
 

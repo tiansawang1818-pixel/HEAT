@@ -294,7 +294,7 @@ LAYER_DEFINITIONS = [
     ("priority", "ลำดับความสำคัญการรับความร้อน", "priority_score", "0–100"),
     ("candidates", "พื้นที่แทรกแซงที่เป็นไปได้", "candidate", "project"),
     ("historical", "การเปลี่ยนแปลงย้อนหลัง", "temperature_trend", "°C/ปี"),
-    ("future-risk", "สถานการณ์ความเสี่ยงอนาคต", "scenario_risk", "0–100"),
+    ("future-risk", "สถานการณ์ความเสี่ยงอนาคต", "scenario_change_c", "°C change"),
 ]
 
 
@@ -332,7 +332,8 @@ def map_layers(db: Session = Depends(get_db)) -> Dict[str, Any]:
         if layer == "historical":
             return bool(db.scalar(select(func.count()).select_from(TemperatureObservation)))
         if layer == "future-risk":
-            return bool(db.scalar(select(func.count()).select_from(ForecastRun)))
+            latest_forecast = db.scalar(select(ForecastRun).order_by(desc(ForecastRun.created_at)).limit(1))
+            return bool(latest_forecast and latest_forecast.results and latest_forecast.results.get("projections"))
         return bool(db.scalar(select(func.count()).select_from(AreaIndicator).where(AreaIndicator.indicator_key == indicator)))
 
     return {
@@ -397,6 +398,15 @@ def map_features(
             if layer == "priority":
                 score = db.scalar(select(PriorityScore).where(PriorityScore.area_id == area.id).order_by(desc(PriorityScore.calculated_at)).limit(1))
                 value, observed_at, quality = (score.score, score.calculated_at, "derived") if score else (None, None, "unavailable")
+            elif layer == "future-risk":
+                forecast = db.scalar(select(ForecastRun).order_by(desc(ForecastRun.created_at)).limit(1))
+                projections = forecast.results.get("projections", []) if forecast and forecast.results else []
+                projection = next((item for item in projections if item.get("area_id") == area.id), None)
+                value, observed_at, quality = (
+                    (projection.get("scenario_change_c"), forecast.created_at, "scenario_projection")
+                    if projection
+                    else (None, None, "unavailable")
+                )
             else:
                 observation = db.scalar(
                     select(AreaIndicator)
@@ -420,6 +430,8 @@ def map_features(
                         "unit": known[layer][3],
                         "observed_at": _iso(observed_at),
                         "quality_status": quality,
+                        "scenario_horizon_years": forecast.horizon_years if layer == "future-risk" and forecast and projection else None,
+                        "scenario_uncertainty_c": projection.get("uncertainty_c") if layer == "future-risk" and projection else None,
                     },
                 }
             )
@@ -856,7 +868,15 @@ def forecast_run(request: ForecastRequest, db: Session = Depends(get_db)) -> Dic
     )
     db.add(run)
     db.commit()
-    return {"run_id": run.id, **result, "assumptions": run.assumptions}
+    return {
+        "run_id": run.id,
+        **result,
+        "method": run.method,
+        "model_version": run.model_version,
+        "training_versions": run.training_versions,
+        "assumptions": run.assumptions,
+        "created_at": _iso(run.created_at),
+    }
 
 
 @router.post("/assistant/query")

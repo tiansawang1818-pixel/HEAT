@@ -4,6 +4,7 @@ from app.models.entities import (
     CandidateIntervention,
     DataSource,
     GeographicArea,
+    ForecastRun,
     IngestionJob,
     OptimizationAllocation,
     OptimizationRun,
@@ -105,6 +106,51 @@ def test_map_features_applies_viewport_bbox(client, db):
 def test_map_features_rejects_invalid_bbox(client):
     response = client.get("/api/map/features?bbox=100.5,13.7,99.0,14.0")
     assert response.status_code == 422
+
+
+def test_future_risk_layer_uses_recorded_scenario_projection(client, db):
+    area = GeographicArea(
+        id="future-area",
+        name_th="พื้นที่อนาคต",
+        name_en="Future area",
+        geometry={"type": "Point", "coordinates": [100.55, 13.76]},
+        source_name="test",
+    )
+    forecast = ForecastRun(
+        horizon_years=3,
+        method="transparent-linear-trend-scenario-v1",
+        model_version="scenario-v1",
+        training_versions={"landsat": "v1"},
+        assumptions={"not_a_forecast": True},
+        results={
+            "status": "completed",
+            "mode": "trend_scenario",
+            "projections": [
+                {"area_id": area.id, "scenario_change_c": 1.2, "uncertainty_c": 0.6, "label": "scenario_projection_not_forecast"}
+            ],
+        },
+    )
+    db.add_all([area, forecast])
+    db.commit()
+
+    response = client.get("/api/map/features?layer=future-risk")
+    assert response.status_code == 200
+    properties = response.json()["features"][0]["properties"]
+    assert properties["value"] == 1.2
+    assert properties["quality_status"] == "scenario_projection"
+    assert properties["scenario_horizon_years"] == 3
+    assert properties["scenario_uncertainty_c"] == 0.6
+
+
+def test_forecast_guardrail_returns_versioned_scenario_metadata(client):
+    response = client.post("/api/forecast/run", json={"horizon_years": 5})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "insufficient_data"
+    assert body["mode"] == "scenario_only"
+    assert body["model_version"] == "scenario-v1"
+    assert body["method"] == "guardrail-insufficient-data"
+    assert body["assumptions"]["spatial_holdout_required_for_model"] is True
 
 
 def test_saved_optimization_can_be_retrieved_and_exported(client, db):

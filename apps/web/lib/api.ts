@@ -3,6 +3,7 @@ import type {
   AreaProperties,
   DatasetStatus,
   FeatureCollection,
+  ForecastResult,
   GeoFeature,
   HistoryPoint,
   MapLayerMeta,
@@ -47,6 +48,7 @@ const layerProperty: Record<string, keyof AreaProperties> = {
   ndvi: "ndvi",
   population: "population",
   built: "built_up_pct",
+  "future-risk": "scenario_change_c",
 };
 
 function normalizeDataset(raw: Record<string, unknown>): DatasetStatus {
@@ -287,6 +289,13 @@ export async function compareScenarios(input: {
       ? (item.allocations as Array<Record<string, unknown>>).map(normalizeOptimizationProject)
       : [],
   }));
+}
+
+export async function runForecastScenario(horizonYears: 1 | 3 | 5, areaIds?: string[]): Promise<ForecastResult> {
+  return request<ForecastResult>("/api/forecast/run", {
+    method: "POST",
+    body: JSON.stringify({ horizon_years: horizonYears, area_ids: areaIds?.length ? areaIds : null }),
+  });
 }
 
 export async function triggerRefresh(source: string, operatorToken: string) {

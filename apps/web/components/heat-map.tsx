@@ -24,7 +24,7 @@ function ramp(value: number | null | undefined, layer: string): [number, number,
     const t = Math.min(1, value / 100);
     return [96 + 110 * t, 90 - 25 * t, 130 - 35 * t, 200];
   }
-  const normalized = layer === "temperature" ? (value - 25) / 20 : value / 100;
+  const normalized = layer === "temperature" ? (value - 25) / 20 : layer === "future-risk" ? (value + 0.5) / 4 : value / 100;
   const t = Math.min(1, Math.max(0, normalized));
   return [255, 185 - 145 * t, 45 - 25 * t, 205];
 }
@@ -39,6 +39,7 @@ function layerValue(feature: { properties: AreaProperties }, layer: string) {
     population: p.population,
     built: p.built_up_pct,
     built_up: p.built_up_pct,
+    "future-risk": p.scenario_change_c,
   };
   return valueByLayer[layer];
 }

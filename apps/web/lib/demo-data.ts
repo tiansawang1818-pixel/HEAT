@@ -75,6 +75,8 @@ export const defaultLayers: MapLayerMeta[] = [
   { id: "population", name_th: "ความหนาแน่นประชากร", unit: "คน/กม²", status: "unavailable", source_name: "WorldPop" },
   { id: "built", name_th: "พื้นที่สิ่งปลูกสร้าง", unit: "%", status: "unavailable", source_name: "Dynamic World" },
   { id: "candidates", name_th: "จุดแทรกแซงที่เหมาะสม", status: "unavailable", source_name: "HEAT//SHIFT" },
+  { id: "historical", name_th: "การเปลี่ยนแปลงย้อนหลัง", unit: "°C/ปี", status: "unavailable", source_name: "Landsat 8/9" },
+  { id: "future-risk", name_th: "สถานการณ์ความเสี่ยงอนาคต", unit: "°C change", status: "unavailable", source_name: "HEAT//SHIFT scenario model" },
 ];
 
 export const emptyHistory: HistoryPoint[] = [];

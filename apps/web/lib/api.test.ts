@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { compareScenarios } from "./api";
+import { compareScenarios, runForecastScenario } from "./api";
 import { formatBaht, formatNumber, freshnessLabel } from "./utils";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -42,5 +42,23 @@ describe("Thai presentation helpers", () => {
     const [scenario] = await compareScenarios({ budget_thb: 1_000_000, intervention_types: ["tree_planting"] });
     expect(scenario.run_id).toBe("scenario:heatshift_optimized");
     expect(scenario.allocations[0]).toMatchObject({ longitude: 100.51, latitude: 13.75, cost_thb: 400_000 });
+  });
+
+  it("sends an explicit supported forecast horizon", async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => new Response(JSON.stringify({
+      run_id: "forecast-1",
+      status: "insufficient_data",
+      mode: "scenario_only",
+      projections: [],
+      method: "guardrail-insufficient-data",
+      model_version: "scenario-v1",
+      training_versions: {},
+      assumptions: {},
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await runForecastScenario(3);
+    expect(result.mode).toBe("scenario_only");
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({ horizon_years: 3, area_ids: null });
   });
 });
