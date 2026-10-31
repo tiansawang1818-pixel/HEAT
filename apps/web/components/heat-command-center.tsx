@@ -51,6 +51,7 @@ import {
   loadDashboardData,
   loadIngestionStatus,
   loadLayerFeatures,
+  loadObservatoryStatus,
   loadOptimizationRun,
   runOptimization,
   streamUrl,
@@ -69,6 +70,7 @@ import {
   type GeoFeature,
   type HistoryPoint,
   type MapLayerMeta,
+  type ObservatorySnapshot,
   type OptimizationResult,
 } from "@/lib/utils";
 
@@ -182,6 +184,8 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
   const [assistantQuestion, setAssistantQuestion] = useState("");
   const [assistantAnswer, setAssistantAnswer] = useState<string | null>(null);
   const [assistantLoading, setAssistantLoading] = useState(false);
+  const [observatory, setObservatory] = useState<ObservatorySnapshot | null>(null);
+  const [observatoryLoading, setObservatoryLoading] = useState(initialView === "observatory");
 
   const reload = useCallback(async (notify = false) => {
     try {
@@ -275,6 +279,27 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
     }, 2_000);
     return () => clearInterval(timer);
   }, [refreshJob, reload]);
+
+  useEffect(() => {
+    if (initialView !== "observatory") return;
+    let cancelled = false;
+    const refresh = () => {
+      void loadObservatoryStatus()
+        .then((snapshot) => {
+          if (!cancelled) setObservatory(snapshot);
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          if (!cancelled) setObservatoryLoading(false);
+        });
+    };
+    refresh();
+    const timer = setInterval(refresh, 10_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [initialView]);
 
   const handleSelect = useCallback((feature: GeoFeature) => {
     setSelected(feature);
@@ -503,7 +528,15 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
           )}
         </AnimatePresence>
         {initialView === "observatory" && (
-          <ObservatoryOverlay datasets={data.datasets} onRefresh={handleRefresh} refreshing={refreshing} job={refreshJob} error={actionError} />
+          <ObservatoryOverlay
+            datasets={data.datasets}
+            snapshot={observatory}
+            loading={observatoryLoading}
+            onRefresh={handleRefresh}
+            refreshing={refreshing}
+            job={refreshJob}
+            error={actionError}
+          />
         )}
         {initialView === "methodology" && <MethodologyOverlay />}
       </section>
@@ -796,8 +829,10 @@ function HistoryChart({ history, loading, areaName }: { history: HistoryPoint[];
   );
 }
 
-function ObservatoryOverlay({ datasets, onRefresh, refreshing, job, error }: {
+function ObservatoryOverlay({ datasets, snapshot, loading, onRefresh, refreshing, job, error }: {
   datasets: DatasetStatus[];
+  snapshot: ObservatorySnapshot | null;
+  loading: boolean;
   onRefresh: (source: string, operatorToken: string) => void;
   refreshing: boolean;
   job: { job_id: string; status: string } | null;
@@ -805,9 +840,31 @@ function ObservatoryOverlay({ datasets, onRefresh, refreshing, job, error }: {
 }) {
   const [source, setSource] = useState("open-meteo");
   const [operatorToken, setOperatorToken] = useState("");
+  const queue = {
+    queued: snapshot?.queue?.queued ?? 0,
+    running: snapshot?.queue?.running ?? 0,
+    completed: snapshot?.queue?.completed ?? 0,
+    failed: snapshot?.queue?.failed ?? 0,
+  };
+  const summary = snapshot?.summary || {
+    discovered_assets_latest_checks: 0,
+    processed_assets_latest_checks: 0,
+    failed_jobs_total: 0,
+    sources_with_errors: 0,
+  };
+  const coverage = snapshot?.coverage || { geographic_areas: 0, areas_with_indicators: 0, percent: 0 };
+  const sourceChecks = snapshot?.source_checks || [];
+  const recentJobs = snapshot?.recent_jobs || [];
+  const recentEvents = snapshot?.recent_events || [];
   return (
     <motion.div className="map-overlay-panel observatory" initial={{ opacity: 0, scale: .98 }} animate={{ opacity: 1, scale: 1 }}>
       <div className="overlay-heading"><div><Badge>PIPELINE MONITOR</Badge><h2>สุขภาพระบบข้อมูล</h2><p>เวลาสังเกตการณ์และเวลาที่ระบบตรวจสอบถูกแสดงแยกกันเสมอ</p></div></div>
+      <div className="pipeline-summary-grid">
+        <Card><span>กำลังรอ / ทำงาน</span><strong>{queue.queued} / {queue.running}</strong><small>durable job queue</small></Card>
+        <Card><span>Asset ที่พบ / ประมวลผล</span><strong>{summary.discovered_assets_latest_checks} / {summary.processed_assets_latest_checks}</strong><small>จาก source check ล่าสุด</small></Card>
+        <Card className={summary.failed_jobs_total ? "has-error" : ""}><span>งานล้มเหลว</span><strong>{summary.failed_jobs_total}</strong><small>เก็บเหตุผลไว้ตรวจสอบ</small></Card>
+        <Card><span>พื้นที่ที่มี indicator</span><strong>{formatNumber(coverage.percent, 1)}%</strong><small>{coverage.areas_with_indicators} / {coverage.geographic_areas} พื้นที่</small></Card>
+      </div>
       <div className="refresh-controls">
         <label><span>แหล่งข้อมูล</span><select value={source} onChange={(event) => setSource(event.target.value)}><option value="open-meteo">Open-Meteo</option><option value="landsat">Landsat 8/9</option><option value="sentinel">Sentinel-2</option><option value="dynamic-world">Dynamic World</option><option value="worldpop">WorldPop</option><option value="osm">OpenStreetMap</option></select></label>
         <label><span>รหัสผู้ดูแล (ส่งเฉพาะ server)</span><input type="password" autoComplete="current-password" value={operatorToken} onChange={(event) => setOperatorToken(event.target.value)} placeholder="DASHBOARD_ADMIN_TOKEN" /></label>
@@ -815,6 +872,7 @@ function ObservatoryOverlay({ datasets, onRefresh, refreshing, job, error }: {
       </div>
       {error && <div className="error-box">{error}</div>}
       {job && <div className="job-box"><Activity size={14} /><span>Job {job.job_id}</span><strong>{job.status}</strong></div>}
+      {loading && <div className="observatory-loading"><RefreshCw className="animate-spin" size={14} /> กำลังโหลดสถานะ pipeline</div>}
       <div className="dataset-grid">
         {datasets.map((item) => (
           <Card key={item.dataset_id} className="dataset-card">
@@ -829,6 +887,46 @@ function ObservatoryOverlay({ datasets, onRefresh, refreshing, job, error }: {
           </Card>
         ))}
       </div>
+      {snapshot && (
+        <div className="observatory-details">
+          <section>
+            <div className="section-label"><span>Source checks และ quota</span><Database size={13} /></div>
+            <div className="source-check-table">
+              {sourceChecks.map((check) => (
+                <div key={check.source_id}>
+                  <span><strong>{check.source_name}</strong><small>{formatThaiDate(check.checked_at, true)}</small></span>
+                  <span>พบ {check.discovered_count} · ส่งประมวลผล {check.processed_count}</span>
+                  <span className={cn(check.status === "failed" && "text-red-300")}>{check.status}</span>
+                  <span>{check.provider_quota.status === "not_reported" ? "quota: ยังไม่รายงาน" : `quota: ${String(check.provider_quota.status || "reported")}`}</span>
+                </div>
+              ))}
+              {!sourceChecks.length && <p className="timeline-empty">backend รุ่นนี้ยังไม่ส่งรายละเอียด source check</p>}
+            </div>
+          </section>
+          <section>
+            <div className="section-label"><span>Ingestion activity</span><History size={13} /></div>
+            <div className="activity-timeline">
+              {recentJobs.map((item) => (
+                <div key={item.id} className={cn("activity-item", item.status === "failed" && "failed")}>
+                  <StatusDot status={item.status === "failed" ? "error" : item.status === "completed" ? "up_to_date" : "updating"} label={false} />
+                  <span><strong>{item.job_type} · {item.stage}</strong><small>{formatThaiDate(item.created_at, true)} · attempt {item.attempts}</small></span>
+                  <span>{formatNumber(item.progress * 100)}%</span>
+                </div>
+              ))}
+              {!recentJobs.length && <p className="timeline-empty">ยังไม่มี ingestion job</p>}
+            </div>
+          </section>
+          <section>
+            <div className="section-label"><span>Publication events</span><Activity size={13} /></div>
+            <div className="event-list">
+              {recentEvents.map((event) => (
+                <div key={event.id}><span>{event.type}</span><strong>{event.layer || "system"} {event.layer_version != null ? `v${event.layer_version}` : ""}</strong><time>{formatThaiDate(event.created_at, true)}</time></div>
+              ))}
+              {!recentEvents.length && <p className="timeline-empty">ยังไม่มี publication event</p>}
+            </div>
+          </section>
+        </div>
+      )}
     </motion.div>
   );
 }

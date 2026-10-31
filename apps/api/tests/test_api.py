@@ -1,4 +1,15 @@
-from app.models.entities import CandidateIntervention, GeographicArea, OptimizationAllocation, OptimizationRun
+from sqlalchemy import select
+
+from app.models.entities import (
+    CandidateIntervention,
+    DataSource,
+    GeographicArea,
+    IngestionJob,
+    OptimizationAllocation,
+    OptimizationRun,
+    PipelineEvent,
+    SourceCheck,
+)
 
 
 def test_health_and_dataset_status(client):
@@ -13,6 +24,35 @@ def test_health_and_dataset_status(client):
 def test_manual_ingestion_requires_admin(client):
     response = client.post("/api/ingestion/run", json={"source": "open-meteo"})
     assert response.status_code == 401
+
+
+def test_ingestion_status_exposes_observability_snapshot(client, db):
+    source = db.scalar(select(DataSource).where(DataSource.source_type != "test_fixture").limit(1))
+    db.add_all(
+        [
+            SourceCheck(
+                source_id=source.id,
+                status="success",
+                discovered_count=2,
+                queued_count=1,
+                provider_quota={"status": "available", "remaining": 80},
+            ),
+            IngestionJob(source_id=source.id, status="running", stage="validation", progress=0.4, attempts=1),
+            PipelineEvent(event_type="monitor.completed", source_id=source.id, payload={"discovered": 2}),
+        ]
+    )
+    db.commit()
+
+    response = client.get("/api/ingestion/status")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["queue"]["running"] == 1
+    assert body["summary"]["discovered_assets_latest_checks"] == 2
+    source_status = next(item for item in body["source_checks"] if item["source_id"] == source.id)
+    assert source_status["provider_quota"]["remaining"] == 80
+    assert body["recent_jobs"][0]["stage"] == "validation"
+    assert body["recent_events"][0]["type"] == "monitor.completed"
+    assert all(item["dataset_id"] != "local/integration-fixture" for item in body["source_checks"])
 
 
 def test_priority_calculation_endpoint(client):

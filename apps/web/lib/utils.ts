@@ -126,3 +126,49 @@ export interface HistoryPoint {
   lower_bound?: number | null;
   upper_bound?: number | null;
 }
+
+export interface ObservatorySnapshot {
+  queue: Record<"queued" | "running" | "completed" | "failed", number>;
+  summary: {
+    discovered_assets_latest_checks: number;
+    processed_assets_latest_checks: number;
+    failed_jobs_total: number;
+    sources_with_errors: number;
+  };
+  coverage: {
+    geographic_areas: number;
+    areas_with_indicators: number;
+    percent: number;
+  };
+  source_checks: Array<{
+    source_id: string;
+    source_name: string;
+    dataset_id: string;
+    status: string;
+    checked_at?: string | null;
+    completed_at?: string | null;
+    discovered_count: number;
+    processed_count: number;
+    provider_quota: Record<string, unknown>;
+    error_message?: string | null;
+  }>;
+  recent_jobs: Array<{
+    id: string;
+    job_type: string;
+    status: string;
+    stage: string;
+    progress: number;
+    attempts: number;
+    requested_by: string;
+    created_at?: string | null;
+    error_message?: string | null;
+  }>;
+  recent_events: Array<{
+    id: string;
+    type: string;
+    layer?: string | null;
+    layer_version?: number | null;
+    created_at?: string | null;
+    payload: Record<string, unknown>;
+  }>;
+}

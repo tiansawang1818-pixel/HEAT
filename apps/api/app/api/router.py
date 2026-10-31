@@ -984,11 +984,79 @@ def ingestion_jobs(
 
 @router.get("/ingestion/status")
 def ingestion_status(job_id: Optional[str] = None, db: Session = Depends(get_db)) -> Dict[str, Any]:
-    counts = dict(db.execute(select(IngestionJob.status, func.count()).group_by(IngestionJob.status)).all())
+    raw_counts = dict(db.execute(select(IngestionJob.status, func.count()).group_by(IngestionJob.status)).all())
+    counts = {status: int(raw_counts.get(status, 0)) for status in ["queued", "running", "completed", "failed"]}
     last_event = db.scalar(select(PipelineEvent).order_by(desc(PipelineEvent.created_at)).limit(1))
     job = db.get(IngestionJob, job_id) if job_id else None
+    recent_jobs = db.scalars(select(IngestionJob).order_by(desc(IngestionJob.created_at)).limit(20)).all()
+    recent_events = db.scalars(select(PipelineEvent).order_by(desc(PipelineEvent.created_at)).limit(30)).all()
+    sources = db.scalars(
+        select(DataSource).where(DataSource.source_type != "test_fixture").order_by(DataSource.name)
+    ).all()
+    source_checks = []
+    for source in sources:
+        check = db.scalar(
+            select(SourceCheck).where(SourceCheck.source_id == source.id).order_by(desc(SourceCheck.checked_at)).limit(1)
+        )
+        source_checks.append(
+            {
+                "source_id": source.id,
+                "source_name": source.name,
+                "dataset_id": source.dataset_id,
+                "status": check.status if check else "never_checked",
+                "checked_at": _iso(check.checked_at) if check else None,
+                "completed_at": _iso(check.completed_at) if check else None,
+                "discovered_count": check.discovered_count if check else 0,
+                "processed_count": check.queued_count if check else 0,
+                "provider_quota": check.provider_quota if check and check.provider_quota else {"status": "not_reported"},
+                "error_message": check.error_message if check else None,
+            }
+        )
+    area_count = int(db.scalar(select(func.count()).select_from(GeographicArea)) or 0)
+    covered_area_count = int(db.scalar(select(func.count(func.distinct(AreaIndicator.area_id)))) or 0)
     return {
         "queue": counts,
+        "summary": {
+            "discovered_assets_latest_checks": sum(item["discovered_count"] for item in source_checks),
+            "processed_assets_latest_checks": sum(item["processed_count"] for item in source_checks),
+            "failed_jobs_total": counts["failed"],
+            "sources_with_errors": sum(1 for item in source_checks if item["status"] == "failed"),
+        },
+        "coverage": {
+            "geographic_areas": area_count,
+            "areas_with_indicators": covered_area_count,
+            "percent": round((covered_area_count / area_count) * 100, 1) if area_count else 0.0,
+        },
+        "source_checks": source_checks,
+        "recent_jobs": [
+            {
+                "id": item.id,
+                "source_id": item.source_id,
+                "job_type": item.job_type,
+                "status": item.status,
+                "stage": item.stage,
+                "progress": item.progress,
+                "attempts": item.attempts,
+                "requested_by": item.requested_by,
+                "created_at": _iso(item.created_at),
+                "finished_at": _iso(item.finished_at),
+                "error_message": item.error_message,
+            }
+            for item in recent_jobs
+        ],
+        "recent_events": [
+            {
+                "id": item.id,
+                "type": item.event_type,
+                "source_id": item.source_id,
+                "dataset_version_id": item.dataset_version_id,
+                "layer": item.layer_key,
+                "layer_version": item.layer_version,
+                "payload": item.payload,
+                "created_at": _iso(item.created_at),
+            }
+            for item in recent_events
+        ],
         "job": None
         if not job
         else {

@@ -6,6 +6,7 @@ import type {
   GeoFeature,
   HistoryPoint,
   MapLayerMeta,
+  ObservatorySnapshot,
   OptimizationResult,
 } from "@/lib/utils";
 
@@ -305,6 +306,10 @@ export async function loadIngestionStatus(jobId: string) {
   return request<{
     job: { id: string; status: string; stage: string; progress: number; error_message?: string | null } | null;
   }>(`/api/ingestion/status?job_id=${encodeURIComponent(jobId)}`);
+}
+
+export async function loadObservatoryStatus(): Promise<ObservatorySnapshot> {
+  return request<ObservatorySnapshot>("/api/ingestion/status");
 }
 
 export async function askAssistant(question: string, areaId?: string) {
