@@ -1,0 +1,188 @@
+name: heatshift
+
+x-api-environment: &api-environment
+  APP_ENV: ${APP_ENV:-development}
+  ENVIRONMENT: ${ENVIRONMENT:-development}
+  DEMO_MODE: ${DEMO_MODE:-true}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Bangkok}
+  DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://heatshift:heatshift@postgres:5432/heatshift}
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+  CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
+  CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
+  S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-http://minio:9000}
+  S3_REGION: ${S3_REGION:-ap-southeast-1}
+  S3_BUCKET: ${S3_BUCKET:-heatshift-rasters}
+  S3_ACCESS_KEY: ${S3_ACCESS_KEY:-heatshift}
+  S3_SECRET_KEY: ${S3_SECRET_KEY:-heatshift-local-only}
+  ADMIN_API_KEY: ${ADMIN_API_KEY:-local-admin-key-change-me}
+  ALLOW_FIXTURE_INGESTION: ${ALLOW_FIXTURE_INGESTION:-false}
+  FIXTURE_ROOT: ${FIXTURE_ROOT:-/workspace/data/fixtures}
+  CORS_ORIGINS: '${CORS_ORIGINS:-["http://localhost:3000"]}'
+  GEE_PROJECT: ${GEE_PROJECT:-}
+  GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+  GEE_SERVICE_ACCOUNT: ${GEE_SERVICE_ACCOUNT:-}
+  OPEN_METEO_BASE_URL: ${OPEN_METEO_BASE_URL:-https://api.open-meteo.com/v1/forecast}
+  OVERPASS_API_URL: ${OVERPASS_API_URL:-https://overpass-api.de/api/interpreter}
+  WORLDPOP_BASE_URL: ${WORLDPOP_BASE_URL:-https://data.worldpop.org}
+  WORLDPOP_CATALOG_URL: ${WORLDPOP_CATALOG_URL:-https://hub.worldpop.org/rest/data/pop}
+  OSM_REPLICATION_STATE_URL: ${OSM_REPLICATION_STATE_URL:-https://planet.openstreetmap.org/replication/day/state.txt}
+  SOURCE_REQUEST_TIMEOUT_SECONDS: ${SOURCE_REQUEST_TIMEOUT_SECONDS:-60}
+
+x-api-base: &api-base
+  build:
+    context: .
+    dockerfile: infra/docker/api.Dockerfile
+  env_file:
+    - path: .env
+      required: false
+  environment: *api-environment
+  volumes:
+    - ./data:/workspace/data
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    minio-init:
+      condition: service_completed_successfully
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-heatshift}
+      POSTGRES_USER: ${POSTGRES_USER:-heatshift}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-heatshift}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/10-heatshift.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2024-10-29T16-01-48Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-heatshift}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-heatshift-local-only}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  minio-init:
+    image: minio/mc:RELEASE.2024-10-29T15-34-59Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "/init/create-bucket.sh"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-heatshift}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-heatshift-local-only}
+      S3_BUCKET: ${S3_BUCKET:-heatshift-rasters}
+    volumes:
+      - ./infra/minio/create-bucket.sh:/init/create-bucket.sh:ro
+    restart: "no"
+
+  migrate:
+    <<: *api-base
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+
+  api:
+    <<: *api-base
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  worker:
+    <<: *api-base
+    command: ["celery", "-A", "app.worker.celery_app", "worker", "--loglevel=INFO", "--concurrency=2"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    stop_grace_period: 30s
+
+  beat:
+    <<: *api-base
+    command: ["celery", "-A", "app.worker.celery_app", "beat", "--loglevel=INFO", "--schedule=/tmp/celerybeat-schedule"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
+  web:
+    build:
+      context: .
+      dockerfile: infra/docker/web.Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+        NEXT_PUBLIC_MAP_STYLE_URL: ${NEXT_PUBLIC_MAP_STYLE_URL:-https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json}
+        NEXT_PUBLIC_DEMO_MODE: ${NEXT_PUBLIC_DEMO_MODE:-true}
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      NEXT_PUBLIC_MAP_STYLE_URL: ${NEXT_PUBLIC_MAP_STYLE_URL:-https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json}
+      NEXT_PUBLIC_DEMO_MODE: ${NEXT_PUBLIC_DEMO_MODE:-true}
+      BACKEND_INTERNAL_URL: http://api:8000
+      API_INTERNAL_URL: http://api:8000
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-local-admin-key-change-me}
+      DASHBOARD_ADMIN_TOKEN: ${DASHBOARD_ADMIN_TOKEN:-local-dashboard-admin-change-me}
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:

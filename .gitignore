@@ -1,0 +1,44 @@
+# Environment and credentials
+.env
+.env.local
+*.pem
+*.key
+service-account*.json
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+htmlcov/
+.coverage
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+npm-debug.log*
+apps/web/public/maplibre-gl-worker.mjs
+
+# Runtime data
+data/raw/
+data/staging/
+data/processed/
+data/cache/
+data/exports/
+data/minio/
+postgres-data/
+redis-data/
+*.tif
+*.tiff
+*.gpkg
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/

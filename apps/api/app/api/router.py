@@ -1,0 +1,900 @@
+import json
+import re
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
+from sqlalchemy import desc, func, or_, select
+from sqlalchemy.orm import Session
+
+from app.api.deps import require_admin
+from app.core.config import settings
+from app.db.session import get_db
+from app.models.entities import (
+    AreaIndicator,
+    CandidateIntervention,
+    DataSource,
+    DatasetVersion,
+    ForecastRun,
+    GeographicArea,
+    IngestionJob,
+    OptimizationAllocation,
+    OptimizationRun,
+    PipelineEvent,
+    PriorityScore,
+    SourceCheck,
+    TemperatureObservation,
+)
+from app.schemas.api import AssistantQuery, ForecastRequest, IngestionRequest, OptimizationRequest, PriorityCalculateRequest, ScenarioCompareRequest
+from app.services.connectors import (
+    DynamicWorldConnector,
+    FixtureConnector,
+    LandsatConnector,
+    OpenMeteoConnector,
+    OpenStreetMapConnector,
+    SentinelConnector,
+    WorldPopConnector,
+)
+from app.services.optimizer import Candidate, optimize_portfolio
+from app.services.pipeline import run_monitor
+from app.services.priority import calculate_priority, sensitivity_range
+
+
+router = APIRouter()
+
+
+def _aware(value: Optional[datetime]) -> Optional[datetime]:
+    if value is None:
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def _iso(value: Optional[datetime]) -> Optional[str]:
+    return _aware(value).isoformat() if value else None
+
+
+def _parse_bbox(value: Optional[str]) -> Optional[tuple[float, float, float, float]]:
+    if not value:
+        return None
+    try:
+        west, south, east, north = (float(part.strip()) for part in value.split(","))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="bbox must be west,south,east,north")
+    if not (-180 <= west < east <= 180 and -90 <= south < north <= 90):
+        raise HTTPException(status_code=422, detail="bbox coordinates are invalid or out of order")
+    return west, south, east, north
+
+
+def _geometry_intersects_bbox(geometry: Optional[Dict[str, Any]], bbox: Optional[tuple[float, float, float, float]]) -> bool:
+    """Bounds check used by SQLite fixtures and the Bangkok pilot API.
+
+    A large production deployment should push the equivalent predicate down to
+    PostGIS with ST_Intersects or serve MVTs instead of loading all geometries.
+    """
+    if bbox is None:
+        return True
+    if not geometry or "coordinates" not in geometry:
+        return False
+    points: List[tuple[float, float]] = []
+
+    def visit(value: Any) -> None:
+        if isinstance(value, (list, tuple)):
+            if len(value) >= 2 and all(isinstance(item, (int, float)) for item in value[:2]):
+                points.append((float(value[0]), float(value[1])))
+            else:
+                for item in value:
+                    visit(item)
+
+    visit(geometry["coordinates"])
+    if not points:
+        return False
+    geom_west = min(point[0] for point in points)
+    geom_south = min(point[1] for point in points)
+    geom_east = max(point[0] for point in points)
+    geom_north = max(point[1] for point in points)
+    west, south, east, north = bbox
+    return geom_west <= east and geom_east >= west and geom_south <= north and geom_north >= south
+
+
+def _source_status(db: Session, source: DataSource) -> Dict[str, Any]:
+    latest_any = db.scalar(select(DatasetVersion).where(DatasetVersion.source_id == source.id).order_by(desc(DatasetVersion.discovered_at)).limit(1))
+    latest = db.scalar(
+        select(DatasetVersion)
+        .where(DatasetVersion.source_id == source.id, DatasetVersion.status == "published")
+        .order_by(desc(DatasetVersion.observed_at))
+        .limit(1)
+    )
+    check = db.scalar(select(SourceCheck).where(SourceCheck.source_id == source.id).order_by(desc(SourceCheck.checked_at)).limit(1))
+    now = datetime.now(timezone.utc)
+    reason = "ยังไม่มีข้อมูลที่ผ่านการตรวจสอบ"
+    status = "unavailable"
+    if latest_any and latest_any.status in {"staged", "validating", "processing", "publishing"}:
+        status, reason = "updating", "กำลังตรวจสอบและประมวลผลเวอร์ชันใหม่"
+    elif latest_any and latest_any.status == "failed" and (not latest or _aware(latest_any.discovered_at) > _aware(latest.published_at)):
+        status, reason = "error", "เวอร์ชันล่าสุดไม่ผ่านการตรวจสอบ; ระบบยังคงใช้เวอร์ชันก่อนหน้า"
+    elif latest and latest.observed_at:
+        age = (now - _aware(latest.observed_at)).total_seconds()
+        if age > source.stale_after_seconds:
+            status, reason = "stale", "อายุข้อมูลเกินเกณฑ์ %s ชั่วโมง" % round(source.stale_after_seconds / 3600)
+        else:
+            status, reason = "up_to_date", "เป็นเวอร์ชันล่าสุดที่ตรวจสอบและเผยแพร่แล้ว"
+    elif check and check.status == "failed":
+        status, reason = "error", check.error_message or "เชื่อมต่อผู้ให้บริการไม่สำเร็จ"
+    next_check = _aware(check.checked_at) + timedelta(seconds=source.check_interval_seconds) if check and source.check_interval_seconds else None
+    return {
+        "id": source.id,
+        "source_name": source.name,
+        "provider": source.provider,
+        "dataset_id": source.dataset_id,
+        "status": status,
+        "status_reason": reason,
+        "last_source_observation": _iso(latest.observed_at) if latest else None,
+        "last_system_check": _iso(check.checked_at) if check else None,
+        "last_ingested_at": _iso(latest.ingested_at) if latest else None,
+        "last_validated_at": _iso(latest.validated_at) if latest else None,
+        "last_published_at": _iso(latest.published_at) if latest else None,
+        "next_check_at": _iso(next_check),
+        "processing_status": latest_any.status if latest_any else "idle",
+        "quality_status": latest.quality_status if latest else "unavailable",
+        "geographic_extent": latest.geographic_extent if latest else None,
+        "layer_version": latest.layer_version if latest else 0,
+        "source_version": latest.source_version if latest else None,
+    }
+
+
+@router.get("/health")
+def health(db: Session = Depends(get_db)) -> Dict[str, Any]:
+    db.execute(select(1))
+    return {"status": "ok", "service": settings.app_name, "time": datetime.now(timezone.utc).isoformat()}
+
+
+@router.get("/datasets")
+def datasets(db: Session = Depends(get_db)) -> Dict[str, Any]:
+    sources = db.scalars(select(DataSource).where(DataSource.source_type != "test_fixture").order_by(DataSource.name)).all()
+    return {"items": [_source_status(db, source) for source in sources], "count": len(sources)}
+
+
+@router.get("/datasets/status")
+def dataset_status(db: Session = Depends(get_db)) -> Dict[str, Any]:
+    sources = db.scalars(select(DataSource).where(DataSource.source_type != "test_fixture").order_by(DataSource.name)).all()
+    items = [_source_status(db, source) for source in sources]
+    return {
+        "items": items,
+        "summary": {status: sum(1 for item in items if item["status"] == status) for status in ["up_to_date", "updating", "stale", "unavailable", "error"]},
+    }
+
+
+@router.get("/areas")
+def areas(
+    search: Optional[str] = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=500),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    query = select(GeographicArea)
+    count_query = select(func.count()).select_from(GeographicArea)
+    if search:
+        condition = or_(GeographicArea.name_th.ilike("%%%s%%" % search), GeographicArea.name_en.ilike("%%%s%%" % search))
+        query, count_query = query.where(condition), count_query.where(condition)
+    total = db.scalar(count_query) or 0
+    rows = db.scalars(query.order_by(GeographicArea.name_th).offset((page - 1) * page_size).limit(page_size)).all()
+    return {
+        "items": [
+            {
+                "id": row.id,
+                "name_th": row.name_th,
+                "name_en": row.name_en,
+                "area_type": row.area_type,
+                "centroid": row.centroid,
+                "area_sq_km": row.area_sq_km,
+                "quality_status": row.quality_status,
+            }
+            for row in rows
+        ],
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+    }
+
+
+def _latest_indicators(db: Session, area_id: str) -> Dict[str, Dict[str, Any]]:
+    rows = db.scalars(select(AreaIndicator).where(AreaIndicator.area_id == area_id).order_by(desc(AreaIndicator.observed_at))).all()
+    result: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        if row.indicator_key not in result:
+            result[row.indicator_key] = {
+                "value": row.value,
+                "unit": row.unit,
+                "observed_at": _iso(row.observed_at),
+                "quality_status": row.quality_status,
+                "dataset_version_id": row.dataset_version_id,
+            }
+    return result
+
+
+@router.get("/areas/{area_id}")
+def area_detail(area_id: str, db: Session = Depends(get_db)) -> Dict[str, Any]:
+    area = db.get(GeographicArea, area_id)
+    if not area:
+        raise HTTPException(status_code=404, detail="Area not found")
+    score = db.scalar(select(PriorityScore).where(PriorityScore.area_id == area_id).order_by(desc(PriorityScore.calculated_at)).limit(1))
+    candidates = db.scalars(select(CandidateIntervention).where(CandidateIntervention.area_id == area_id, CandidateIntervention.active.is_(True))).all()
+    return {
+        "id": area.id,
+        "name_th": area.name_th,
+        "name_en": area.name_en,
+        "geometry": area.geometry,
+        "centroid": area.centroid,
+        "boundary_provenance": {"source": area.source_name, "version": area.source_version, "quality_status": area.quality_status},
+        "indicators": _latest_indicators(db, area_id),
+        "priority": None
+        if not score
+        else {
+            "score": score.score,
+            "components": score.components,
+            "weights": score.weights,
+            "missing_inputs": score.missing_inputs,
+            "formula_version": score.formula_version,
+            "calculated_at": _iso(score.calculated_at),
+        },
+        "candidate_interventions": [
+            {
+                "id": item.id,
+                "name_th": item.name_th,
+                "intervention_type": item.intervention_type,
+                "estimated_cost_thb": item.estimated_cost_thb,
+                "estimated_beneficiaries": item.estimated_beneficiaries,
+                "feasibility_status": item.feasibility_status,
+                "evidence": item.evidence,
+                "uncertainty": item.uncertainty,
+            }
+            for item in candidates
+        ],
+    }
+
+
+@router.get("/areas/{area_id}/history")
+def area_history(
+    area_id: str,
+    indicator: Optional[str] = None,
+    limit: int = Query(default=200, ge=1, le=2000),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    if not db.get(GeographicArea, area_id):
+        raise HTTPException(status_code=404, detail="Area not found")
+    query = select(AreaIndicator).where(AreaIndicator.area_id == area_id)
+    if indicator:
+        query = query.where(AreaIndicator.indicator_key == indicator)
+    rows = db.scalars(query.order_by(desc(AreaIndicator.observed_at)).limit(limit)).all()
+    return {
+        "area_id": area_id,
+        "items": [
+            {
+                "indicator": row.indicator_key,
+                "value": row.value,
+                "unit": row.unit,
+                "observed_at": _iso(row.observed_at),
+                "quality_status": row.quality_status,
+                "dataset_version_id": row.dataset_version_id,
+            }
+            for row in rows
+        ],
+    }
+
+
+LAYER_DEFINITIONS = [
+    ("temperature", "อุณหภูมิพื้นผิว", "lst_c_mean", "°C"),
+    ("population", "ความหนาแน่นประชากร", "population_density", "คน/ตร.กม."),
+    ("vegetation", "พื้นที่พืชพรรณ", "tree_cover_fraction", "%"),
+    ("ndvi", "ดัชนีพืชพรรณ NDVI", "ndvi", "index"),
+    ("built", "พื้นที่สิ่งปลูกสร้าง", "built_fraction", "%"),
+    ("priority", "ลำดับความสำคัญการรับความร้อน", "priority_score", "0–100"),
+    ("candidates", "พื้นที่แทรกแซงที่เป็นไปได้", "candidate", "project"),
+    ("historical", "การเปลี่ยนแปลงย้อนหลัง", "temperature_trend", "°C/ปี"),
+    ("future-risk", "สถานการณ์ความเสี่ยงอนาคต", "scenario_risk", "0–100"),
+]
+
+
+@router.get("/map/layers")
+def map_layers(db: Session = Depends(get_db)) -> Dict[str, Any]:
+    versions = {item["dataset_id"]: item for item in datasets(db)["items"]}
+    source_ids = {
+        "temperature": ["LANDSAT/LC08_C02_T1_L2+LANDSAT/LC09_C02_T1_L2"],
+        "population": ["worldpop/global"],
+        "vegetation": ["GOOGLE/DYNAMICWORLD/V1"],
+        "ndvi": ["COPERNICUS/S2_SR_HARMONIZED"],
+        "built": ["GOOGLE/DYNAMICWORLD/V1"],
+        "priority": [],
+        "candidates": ["osm/bangkok"],
+        "historical": ["LANDSAT/LC08_C02_T1_L2+LANDSAT/LC09_C02_T1_L2"],
+        "future-risk": [],
+    }
+    source_labels = {
+        "temperature": "Landsat 8/9",
+        "population": "WorldPop",
+        "vegetation": "Google Dynamic World",
+        "ndvi": "Sentinel-2",
+        "built": "Google Dynamic World",
+        "priority": "HEAT//SHIFT derived score",
+        "candidates": "OpenStreetMap / approved candidate evidence",
+        "historical": "Landsat 8/9",
+        "future-risk": "HEAT//SHIFT scenario model",
+    }
+
+    def layer_has_data(layer: str, indicator: str) -> bool:
+        if layer == "priority":
+            return bool(db.scalar(select(func.count()).select_from(PriorityScore)))
+        if layer == "candidates":
+            return bool(db.scalar(select(func.count()).select_from(CandidateIntervention).where(CandidateIntervention.active.is_(True))))
+        if layer == "historical":
+            return bool(db.scalar(select(func.count()).select_from(TemperatureObservation)))
+        if layer == "future-risk":
+            return bool(db.scalar(select(func.count()).select_from(ForecastRun)))
+        return bool(db.scalar(select(func.count()).select_from(AreaIndicator).where(AreaIndicator.indicator_key == indicator)))
+
+    return {
+        "items": [
+            {
+                "id": key,
+                "name_th": name,
+                "indicator_key": indicator,
+                "unit": unit,
+                "feature_url": "/api/map/features?layer=%s" % key,
+                "delivery": "viewport_geojson",
+                "source_name": source_labels[key],
+                "status": "up_to_date" if layer_has_data(key, indicator) else "unavailable",
+                "status_reason": "มี geographic records ที่ผ่านการเผยแพร่" if layer_has_data(key, indicator) else "ยังไม่มี geographic records ที่ผ่านการเผยแพร่สำหรับชั้นนี้",
+                "source_status": {dataset_id: versions[dataset_id] for dataset_id in source_ids[key] if dataset_id in versions},
+            }
+            for key, name, indicator, unit in LAYER_DEFINITIONS
+        ]
+    }
+
+
+@router.get("/map/features")
+def map_features(
+    layer: str = Query(default="priority"),
+    bbox: Optional[str] = None,
+    limit: int = Query(default=500, ge=1, le=5000),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    known = {item[0]: item for item in LAYER_DEFINITIONS}
+    if layer not in known:
+        raise HTTPException(status_code=400, detail="Unknown layer")
+    parsed_bbox = _parse_bbox(bbox)
+    features: List[Dict[str, Any]] = []
+    if layer == "candidates":
+        rows = db.scalars(select(CandidateIntervention).where(CandidateIntervention.active.is_(True))).all()
+        for row in rows:
+            if not _geometry_intersects_bbox(row.geometry, parsed_bbox):
+                continue
+            features.append(
+                {
+                    "type": "Feature",
+                    "id": row.id,
+                    "geometry": row.geometry,
+                    "properties": {
+                        "area_id": row.area_id,
+                        "name_th": row.name_th,
+                        "intervention_type": row.intervention_type,
+                        "estimated_cost_thb": row.estimated_cost_thb,
+                        "priority_score": row.priority_score,
+                        "feasibility_status": row.feasibility_status,
+                    },
+                }
+            )
+            if len(features) >= limit:
+                break
+    else:
+        indicator_key = known[layer][2]
+        areas_rows = db.scalars(select(GeographicArea)).all()
+        for area in areas_rows:
+            if not _geometry_intersects_bbox(area.geometry, parsed_bbox):
+                continue
+            if layer == "priority":
+                score = db.scalar(select(PriorityScore).where(PriorityScore.area_id == area.id).order_by(desc(PriorityScore.calculated_at)).limit(1))
+                value, observed_at, quality = (score.score, score.calculated_at, "derived") if score else (None, None, "unavailable")
+            else:
+                observation = db.scalar(
+                    select(AreaIndicator)
+                    .where(AreaIndicator.area_id == area.id, AreaIndicator.indicator_key == indicator_key)
+                    .order_by(desc(AreaIndicator.observed_at))
+                    .limit(1)
+                )
+                value, observed_at, quality = (
+                    (observation.value, observation.observed_at, observation.quality_status) if observation else (None, None, "unavailable")
+                )
+            features.append(
+                {
+                    "type": "Feature",
+                    "id": area.id,
+                    "geometry": area.geometry,
+                    "properties": {
+                        "area_id": area.id,
+                        "name_th": area.name_th,
+                        "name_en": area.name_en,
+                        "value": value,
+                        "unit": known[layer][3],
+                        "observed_at": _iso(observed_at),
+                        "quality_status": quality,
+                    },
+                }
+            )
+            if len(features) >= limit:
+                break
+    return {"type": "FeatureCollection", "features": features, "metadata": {"layer": layer, "bbox_filter": list(parsed_bbox) if parsed_bbox else None, "count": len(features)}}
+
+
+@router.get("/priority/rankings")
+def priority_rankings(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=500),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    latest = select(PriorityScore.area_id, func.max(PriorityScore.calculated_at).label("latest")).group_by(PriorityScore.area_id).subquery()
+    rows = db.execute(
+        select(PriorityScore, GeographicArea)
+        .join(latest, (PriorityScore.area_id == latest.c.area_id) & (PriorityScore.calculated_at == latest.c.latest))
+        .join(GeographicArea, GeographicArea.id == PriorityScore.area_id)
+        .order_by(desc(PriorityScore.score))
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    ).all()
+    return {
+        "items": [
+            {
+                "rank": (page - 1) * page_size + index + 1,
+                "area_id": area.id,
+                "area_name_th": area.name_th,
+                "score": score.score,
+                "components": score.components,
+                "missing_inputs": score.missing_inputs,
+                "calculated_at": _iso(score.calculated_at),
+            }
+            for index, (score, area) in enumerate(rows)
+        ]
+    }
+
+
+@router.post("/priority/calculate")
+def priority_calculate(request: PriorityCalculateRequest) -> Dict[str, Any]:
+    components = request.model_dump(exclude={"weights"})
+    result = calculate_priority(components, request.weights)
+    return {
+        "score": result.score,
+        "components": result.components,
+        "normalized_components": result.normalized_components,
+        "effective_weights": result.effective_weights,
+        "missing_inputs": result.missing_inputs,
+        "formula_version": result.formula_version,
+        "sensitivity": sensitivity_range(result),
+        "label": "Heat Exposure Priority",
+    }
+
+
+def _candidate_rows(db: Session, ids: Optional[List[str]] = None) -> List[CandidateIntervention]:
+    query = select(CandidateIntervention).where(CandidateIntervention.active.is_(True))
+    if ids:
+        query = query.where(CandidateIntervention.id.in_(ids))
+    return list(db.scalars(query).all())
+
+
+def _to_optimizer_candidates(rows: List[CandidateIntervention]) -> List[Candidate]:
+    return [
+        Candidate(
+            id=row.id,
+            cost_thb=int(round(row.estimated_cost_thb)),
+            beneficiaries=float(row.estimated_beneficiaries or 0),
+            priority_score=float(row.priority_score),
+            benefit_score=float(row.benefit_score or 0),
+            intervention_type=row.intervention_type,
+            feasible=row.feasibility_status == "eligible",
+        )
+        for row in rows
+    ]
+
+
+def _objective_weights(objective: str, custom: Optional[Dict[str, float]]) -> Dict[str, float]:
+    if custom:
+        total = sum(custom.values())
+        return {key: value / total for key, value in custom.items()}
+    return {
+        "balanced": {"beneficiaries": 0.35, "priority": 0.30, "benefit": 0.20, "cost_effectiveness": 0.15},
+        "beneficiaries": {"beneficiaries": 0.65, "priority": 0.15, "benefit": 0.10, "cost_effectiveness": 0.10},
+        "priority": {"beneficiaries": 0.15, "priority": 0.65, "benefit": 0.10, "cost_effectiveness": 0.10},
+        "cost_effectiveness": {"beneficiaries": 0.20, "priority": 0.15, "benefit": 0.15, "cost_effectiveness": 0.50},
+    }[objective]
+
+
+def _current_versions(db: Session) -> Dict[str, Any]:
+    result = {}
+    for source in db.scalars(select(DataSource)).all():
+        latest = db.scalar(
+            select(DatasetVersion)
+            .where(DatasetVersion.source_id == source.id, DatasetVersion.status == "published")
+            .order_by(desc(DatasetVersion.published_at))
+            .limit(1)
+        )
+        if latest:
+            result[source.dataset_id] = {"version_id": latest.id, "source_version": latest.source_version, "layer_version": latest.layer_version}
+    return result
+
+
+@router.post("/optimization/run")
+def optimization_run(request: OptimizationRequest, db: Session = Depends(get_db)) -> Dict[str, Any]:
+    rows = _candidate_rows(db, request.candidate_ids)
+    weights = _objective_weights(request.objective, request.weights)
+    portfolio = optimize_portfolio(_to_optimizer_candidates(rows), request.budget_thb, weights, request.enabled_types)
+    versions = _current_versions(db)
+    run = OptimizationRun(
+        budget_thb=request.budget_thb,
+        allocated_thb=portfolio.allocated_thb,
+        objective=request.objective,
+        objective_weights=weights,
+        objective_value=portfolio.objective_value,
+        solver=portfolio.solver,
+        input_versions=versions,
+    )
+    db.add(run)
+    db.flush()
+    by_id = {row.id: row for row in rows}
+    selected = []
+    for rank, candidate_id in enumerate(portfolio.selected_ids, start=1):
+        row = by_id[candidate_id]
+        explanation = {
+            "priority_score": row.priority_score,
+            "estimated_beneficiaries": row.estimated_beneficiaries,
+            "estimated_cost_thb": row.estimated_cost_thb,
+            "evidence": row.evidence,
+            "uncertainty": row.uncertainty,
+        }
+        db.add(
+            OptimizationAllocation(
+                run_id=run.id,
+                candidate_id=row.id,
+                rank=rank,
+                objective_contribution=portfolio.contributions[row.id],
+                explanation=explanation,
+            )
+        )
+        selected.append(
+            {
+                "id": row.id,
+                "area_id": row.area_id,
+                "name_th": row.name_th,
+                "intervention_type": row.intervention_type,
+                "geometry": row.geometry,
+                "estimated_cost_thb": row.estimated_cost_thb,
+                "annual_maintenance_thb": row.annual_maintenance_thb,
+                "estimated_beneficiaries": row.estimated_beneficiaries,
+                "priority_score": row.priority_score,
+                "objective_contribution": portfolio.contributions[row.id],
+                "evidence": row.evidence,
+                "uncertainty": row.uncertainty,
+            }
+        )
+    db.commit()
+    return {
+        "run_id": run.id,
+        "status": "completed",
+        "budget_thb": request.budget_thb,
+        "allocated_thb": portfolio.allocated_thb,
+        "unallocated_thb": request.budget_thb - portfolio.allocated_thb,
+        "estimated_beneficiaries": portfolio.beneficiaries,
+        "objective_value": portfolio.objective_value,
+        "solver": portfolio.solver,
+        "selected": selected,
+        "input_versions": versions,
+        "limitations": ["ผลประโยชน์เป็นค่าประมาณตามหลักฐานใน candidate แต่ละรายการ", "ไม่ตีความคะแนนความร้อนเป็นฐานะทางเศรษฐกิจ"],
+    }
+
+
+@router.post("/scenarios/compare")
+def scenarios_compare(request: ScenarioCompareRequest, db: Session = Depends(get_db)) -> Dict[str, Any]:
+    candidates = _to_optimizer_candidates(_candidate_rows(db, request.candidate_ids))
+    definitions = [
+        ("hottest_first", "ร้อนที่สุดก่อน", {"beneficiaries": 0.05, "priority": 0.85, "benefit": 0.05, "cost_effectiveness": 0.05}),
+        ("population_first", "ประชากรก่อน", {"beneficiaries": 0.85, "priority": 0.05, "benefit": 0.05, "cost_effectiveness": 0.05}),
+        ("heatshift_optimized", "HEAT//SHIFT สมดุล", _objective_weights("balanced", None)),
+    ]
+    results = []
+    for key, label, weights in definitions:
+        portfolio = optimize_portfolio(candidates, request.budget_thb, weights, request.enabled_types)
+        results.append(
+            {
+                "strategy": key,
+                "label_th": label,
+                "selected_ids": portfolio.selected_ids,
+                "allocated_thb": portfolio.allocated_thb,
+                "estimated_beneficiaries": portfolio.beneficiaries,
+                "objective_value": portfolio.objective_value,
+                "solver": portfolio.solver,
+                "weights": weights,
+            }
+        )
+    return {"budget_thb": request.budget_thb, "scenarios": results, "input_versions": _current_versions(db), "eligibility_consistent": True}
+
+
+@router.post("/forecast/run")
+def forecast_run(request: ForecastRequest, db: Session = Depends(get_db)) -> Dict[str, Any]:
+    query = select(TemperatureObservation).order_by(TemperatureObservation.observed_at)
+    if request.area_ids:
+        query = query.where(TemperatureObservation.area_id.in_(request.area_ids))
+    rows = db.scalars(query).all()
+    years = len({row.observed_at.year for row in rows})
+    if years < 5:
+        result = {
+            "status": "insufficient_data",
+            "mode": "scenario_only",
+            "message_th": "ยังมีข้อมูลย้อนหลังไม่เพียงพอสำหรับพยากรณ์ห้าปีอย่างน่าเชื่อถือ",
+            "available_years": years,
+            "required_years": 5,
+            "projections": [],
+        }
+        method = "guardrail-insufficient-data"
+    else:
+        grouped: Dict[str, List[TemperatureObservation]] = {}
+        for row in rows:
+            grouped.setdefault(row.area_id, []).append(row)
+        projections = []
+        for area_id, observations in grouped.items():
+            first, last = observations[0], observations[-1]
+            elapsed = max((last.observed_at - first.observed_at).days / 365.25, 1.0)
+            slope = ((last.lst_c_mean or 0) - (first.lst_c_mean or 0)) / elapsed
+            projections.append(
+                {
+                    "area_id": area_id,
+                    "horizon_years": request.horizon_years,
+                    "scenario_change_c": round(slope * request.horizon_years, 2),
+                    "uncertainty_c": round(max(0.5, abs(slope) * request.horizon_years), 2),
+                    "label": "scenario_projection_not_forecast",
+                }
+            )
+        result = {"status": "completed", "mode": "trend_scenario", "projections": projections}
+        method = "transparent-linear-trend-scenario-v1"
+    run = ForecastRun(
+        horizon_years=request.horizon_years,
+        method=method,
+        model_version="scenario-v1",
+        training_versions=_current_versions(db),
+        assumptions={"temporal_holdout_required_for_model": True, "spatial_holdout_required_for_model": True},
+        results=result,
+    )
+    db.add(run)
+    db.commit()
+    return {"run_id": run.id, **result, "assumptions": run.assumptions}
+
+
+@router.post("/assistant/query")
+def assistant_query(request: AssistantQuery, db: Session = Depends(get_db)) -> Dict[str, Any]:
+    question = request.question.lower()
+    grounding: List[Dict[str, Any]] = []
+    if "ล่าสุด" in question or "ข้อมูลใหม่" in question or "ดาวเทียม" in question:
+        sources = [_source_status(db, source) for source in db.scalars(select(DataSource)).all()]
+        observed = [item for item in sources if item["last_source_observation"]]
+        if not observed:
+            answer = "ขณะนี้ยังไม่มีข้อมูลที่ผ่านการตรวจสอบและเผยแพร่ จึงไม่ควรระบุวันที่สังเกตการณ์"
+        else:
+            latest = max(observed, key=lambda item: item["last_source_observation"])
+            answer = "ข้อมูลที่มีเวลาสังเกตการณ์ล่าสุดมาจาก %s เมื่อ %s สถานะ %s" % (
+                latest["source_name"], latest["last_source_observation"], latest["status"]
+            )
+            grounding.append({"type": "dataset", "id": latest["id"], "layer_version": latest["layer_version"]})
+    elif request.area_id or "ทำไม" in question:
+        if not request.area_id:
+            answer = "กรุณาเลือกพื้นที่บนแผนที่ก่อน เพื่ออธิบายจากข้อมูลของพื้นที่นั้นโดยตรง"
+        else:
+            area = db.get(GeographicArea, request.area_id)
+            score = db.scalar(select(PriorityScore).where(PriorityScore.area_id == request.area_id).order_by(desc(PriorityScore.calculated_at)).limit(1))
+            if not area or not score:
+                answer = "พื้นที่ที่เลือกยังไม่มีคะแนน Heat Exposure Priority ที่ผ่านการคำนวณ"
+            else:
+                component_text = ", ".join("%s=%s" % (key, value) for key, value in score.components.items() if value is not None)
+                answer = "%s มีคะแนน Heat Exposure Priority %.1f จากองค์ประกอบ %s ไม่ใช่ข้อสรุปเรื่องรายได้หรือความเหลื่อมล้ำทางเศรษฐกิจ" % (
+                    area.name_th, score.score, component_text or "ข้อมูลที่มีอยู่"
+                )
+                grounding.append({"type": "priority_score", "id": score.id, "formula_version": score.formula_version})
+    elif request.budget_thb or re.search(r"\d+\s*(ล้าน|บาท)", question):
+        answer = "โปรดส่งงบประมาณผ่าน City Optimizer เพื่อให้ OR-Tools คำนวณจาก candidate ที่มีหลักฐานและข้อจำกัดจริง ระบบจะไม่สร้างตำแหน่งหรือผลประโยชน์ขึ้นเอง"
+    else:
+        top = db.execute(
+            select(PriorityScore, GeographicArea)
+            .join(GeographicArea, GeographicArea.id == PriorityScore.area_id)
+            .order_by(desc(PriorityScore.score))
+            .limit(1)
+        ).first()
+        if not top:
+            answer = "ยังไม่มีคะแนน Heat Exposure Priority ที่ผ่านการคำนวณ จึงไม่สามารถระบุพื้นที่เสี่ยงสูงสุดได้"
+        else:
+            score, area = top
+            answer = "จากคะแนนที่มีอยู่ %s มี Heat Exposure Priority สูงสุดที่ %.1f (คำนวณเมื่อ %s)" % (
+                area.name_th, score.score, _iso(score.calculated_at)
+            )
+            grounding.append({"type": "priority_score", "id": score.id, "area_id": area.id})
+    return {"answer_th": answer, "grounding": grounding, "mode": "deterministic", "invented_values": False}
+
+
+def _connector_for(source: str, fixture_path: Optional[str] = None):
+    if source == "landsat":
+        return LandsatConnector()
+    if source == "sentinel":
+        return SentinelConnector()
+    if source == "dynamic-world":
+        return DynamicWorldConnector()
+    if source == "open-meteo":
+        return OpenMeteoConnector()
+    if source == "worldpop":
+        return WorldPopConnector()
+    if source == "osm":
+        return OpenStreetMapConnector()
+    if source == "fixture":
+        return FixtureConnector(Path(fixture_path or ""))
+    raise ValueError("Unsupported source")
+
+
+def _run_manual_job(job_id: str, source: str, fixture_path: Optional[str]) -> None:
+    from app.db.session import SessionLocal
+
+    db = SessionLocal()
+    try:
+        job = db.get(IngestionJob, job_id)
+        job.status, job.stage, job.started_at, job.progress = "running", "source_check", datetime.now(timezone.utc), 0.1
+        db.commit()
+        result = run_monitor(db, _connector_for(source, fixture_path), requested_by="admin")
+        job = db.get(IngestionJob, job_id)
+        job.status, job.stage, job.finished_at, job.progress = "completed", "completed", datetime.now(timezone.utc), 1.0
+        job.checkpoint = result
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        job = db.get(IngestionJob, job_id)
+        if job:
+            job.status, job.stage, job.finished_at, job.error_message = "failed", "failed", datetime.now(timezone.utc), str(exc)
+            db.commit()
+    finally:
+        db.close()
+
+
+@router.get("/ingestion/jobs")
+def ingestion_jobs(
+    status: Optional[str] = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=500),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    query = select(IngestionJob)
+    if status:
+        query = query.where(IngestionJob.status == status)
+    rows = db.scalars(query.order_by(desc(IngestionJob.created_at)).offset((page - 1) * page_size).limit(page_size)).all()
+    return {
+        "items": [
+            {
+                "id": row.id,
+                "source_id": row.source_id,
+                "dataset_version_id": row.dataset_version_id,
+                "job_type": row.job_type,
+                "status": row.status,
+                "stage": row.stage,
+                "progress": row.progress,
+                "attempts": row.attempts,
+                "checkpoint": row.checkpoint,
+                "created_at": _iso(row.created_at),
+                "started_at": _iso(row.started_at),
+                "finished_at": _iso(row.finished_at),
+                "error_message": row.error_message,
+            }
+            for row in rows
+        ]
+    }
+
+
+@router.get("/ingestion/status")
+def ingestion_status(job_id: Optional[str] = None, db: Session = Depends(get_db)) -> Dict[str, Any]:
+    counts = dict(db.execute(select(IngestionJob.status, func.count()).group_by(IngestionJob.status)).all())
+    last_event = db.scalar(select(PipelineEvent).order_by(desc(PipelineEvent.created_at)).limit(1))
+    job = db.get(IngestionJob, job_id) if job_id else None
+    return {
+        "queue": counts,
+        "job": None
+        if not job
+        else {
+            "id": job.id,
+            "status": job.status,
+            "stage": job.stage,
+            "progress": job.progress,
+            "checkpoint": job.checkpoint,
+            "error_message": job.error_message,
+            "finished_at": _iso(job.finished_at),
+        },
+        "last_event": None
+        if not last_event
+        else {"type": last_event.event_type, "layer": last_event.layer_key, "layer_version": last_event.layer_version, "created_at": _iso(last_event.created_at)},
+    }
+
+
+@router.post("/ingestion/run", dependencies=[Depends(require_admin)], status_code=202)
+def ingestion_run(request: IngestionRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)) -> Dict[str, Any]:
+    fixture_path = request.fixture_path
+    if request.source == "fixture":
+        if not settings.allow_fixture_ingestion:
+            raise HTTPException(status_code=403, detail="Fixture ingestion is disabled")
+        if not fixture_path:
+            raise HTTPException(status_code=422, detail="fixture_path is required")
+        root = settings.fixture_root.resolve()
+        path = Path(fixture_path).resolve()
+        if root not in path.parents or not path.is_file():
+            raise HTTPException(status_code=400, detail="fixture_path must be an existing file below FIXTURE_ROOT")
+        fixture_path = str(path)
+    job = IngestionJob(job_type="manual_refresh", status="queued", stage="queued", requested_by="admin")
+    db.add(job)
+    db.commit()
+    dispatch_mode = "api-background-fallback"
+    try:
+        import redis
+
+        client = redis.Redis.from_url(settings.redis_url, socket_connect_timeout=0.5, socket_timeout=0.5)
+        client.ping()
+        client.close()
+        from app.worker import run_manual_ingestion
+
+        run_manual_ingestion.delay(job.id, request.source, fixture_path)
+        dispatch_mode = "celery-durable-queue"
+    except Exception:
+        if settings.environment == "production":
+            job.status = "failed"
+            job.stage = "dispatch_failed"
+            job.error_message = "Durable queue is unavailable; job was not executed"
+            db.commit()
+            raise HTTPException(status_code=503, detail="Durable ingestion queue is unavailable")
+        background_tasks.add_task(_run_manual_job, job.id, request.source, fixture_path)
+    return {"job_id": job.id, "status": "queued", "status_url": "/api/ingestion/status?job_id=%s" % job.id, "dispatch_mode": dispatch_mode}
+
+
+@router.get("/events/stream")
+async def events_stream(request: Request, after: Optional[str] = None, db: Session = Depends(get_db)) -> StreamingResponse:
+    async def generate():
+        cursor = after
+        while not await request.is_disconnected():
+            query = select(PipelineEvent).order_by(PipelineEvent.created_at).limit(50)
+            if cursor:
+                query = query.where(PipelineEvent.id != cursor, PipelineEvent.created_at >= select(PipelineEvent.created_at).where(PipelineEvent.id == cursor).scalar_subquery())
+            rows = db.scalars(query).all()
+            if rows:
+                for event in rows:
+                    cursor = event.id
+                    payload = {
+                        "id": event.id,
+                        "type": event.event_type,
+                        "layer": event.layer_key,
+                        "layer_version": event.layer_version,
+                        "created_at": _iso(event.created_at),
+                        **event.payload,
+                    }
+                    wire_event = "data-update" if event.event_type == "layer.published" else event.event_type
+                    yield "id: %s\nevent: %s\ndata: %s\n\n" % (event.id, wire_event, json.dumps(payload, ensure_ascii=False))
+            else:
+                yield ": heartbeat\n\n"
+            import asyncio
+
+            await asyncio.sleep(5)
+
+    return StreamingResponse(generate(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@router.get("/system/refresh-schedule")
+def refresh_schedule(db: Session = Depends(get_db)) -> Dict[str, Any]:
+    sources = db.scalars(select(DataSource).where(DataSource.enabled.is_(True)).order_by(DataSource.check_interval_seconds)).all()
+    return {
+        "timezone": "UTC",
+        "items": [
+            {
+                "source_name": source.name,
+                "interval_seconds": source.check_interval_seconds,
+                "stale_after_seconds": source.stale_after_seconds,
+                "schedule_managed_by": "Celery Beat",
+            }
+            for source in sources
+        ],
+    }

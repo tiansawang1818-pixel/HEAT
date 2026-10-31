@@ -1,0 +1,65 @@
+# วิธีคำนวณและข้อจำกัดทางวิทยาศาสตร์
+
+## Heat Exposure Priority
+
+คะแนน 0–100 เป็นลำดับความสำคัญด้านการสัมผัสความร้อน ไม่ใช่หลักฐาน socioeconomic inequality โดยอัตโนมัติ ตัวอย่างสูตรที่ตรวจสอบย้อนกลับได้:
+
+```text
+available_weight_sum = Σ weight_i for indicators that pass quality gates
+score = 100 × Σ(weight_i × normalized_i) / available_weight_sum
+```
+
+Indicators ที่รองรับ:
+
+- LST anomaly ภายในฤดูกาล/ช่วงเวลาเดียวกัน
+- population exposure พร้อม reference year
+- vegetation deficit (ทิศทางกลับของ NDVI/tree cover)
+- built-up intensity
+- historical change เมื่อมี observation ที่เปรียบเทียบกันได้
+- verified vulnerability indicator เฉพาะเมื่อมี provenance/permission/definition ที่ชัดเจน
+
+Normalization parameters และ weight ต้อง versioned การขาดข้อมูลต้องลด `available_weight_sum` และตั้ง quality/confidence flag; ห้ามเติมค่าที่ขาดอย่างเงียบ ๆ
+
+Sensitivity analysis ควรรัน weight perturbation และรายงาน rank stability เช่น percentile/range ของอันดับ ไม่ใช่แสดงคะแนนเป็นความจริงเชิงเด็ดขาด
+
+## Land Surface Temperature
+
+- LST เป็นอุณหภูมิพื้นผิวที่ sensor/model ประเมิน ณ เวลาผ่าน ไม่ใช่อุณหภูมิอากาศและไม่ใช่ค่าตลอดวัน
+- เปรียบเทียบเฉพาะ observation ที่ cloud mask, season/time และ valid coverage เหมาะสม
+- แสดง source observation time, collection, processing version, valid-pixel coverage และ uncertainty/quality
+- mosaic/composite ต้องระบุช่วงวันที่; ห้ามใช้วัน ingest เป็น observation date
+
+## Optimizer
+
+Candidate ต้องมี geometry จริงและ feasibility ผ่าน rule ที่บันทึกไว้ Cost/effect assumptions มาจากตาราง versioned ที่ผู้มีอำนาจอนุมัติ หากไม่มี cost/benefit ที่รองรับให้ candidate เป็น `insufficient_evidence` และไม่ใส่ใน solver โดยอัตโนมัติ
+
+ตัวอย่าง objective แบบ linear:
+
+```text
+maximize Σ x_j × (
+  w_beneficiary × normalized_exposed_population_j
+  + w_priority × heat_priority_j
+  + w_efficiency × defensible_benefit_per_baht_j
+  + w_equity × verified_underserved_indicator_j
+)
+```
+
+Subject to budget, eligibility, mutual-exclusion, capacity และ geographic coverage constraints. หากไม่มี verified underserved indicator ให้ weight ส่วนนั้นเป็นศูนย์และเปลี่ยนคำอธิบายให้ตรงหลักฐาน
+
+Output ต้องรายงาน solver status, gap/time limit, input versions, allocated/unspent budget และเหตุผลของ candidate ที่ถูกเลือก/ไม่เลือก ผล A/B/C ต้องใช้ eligibility/cost/input version เดียวกัน
+
+## Future outlook
+
+เริ่มด้วย scenario-based analysis และ baseline trend ก่อนอ้างว่าเป็น forecast:
+
+1. แบ่ง train/test ตามเวลา (ห้าม random split อย่างเดียว)
+2. ทำ spatial holdout ระดับ district/grid block
+3. เปรียบเทียบกับ persistence/seasonal-naive baseline
+4. ตรวจ calibration/coverage ของ uncertainty interval
+5. บันทึก training-data/model version และ assumptions
+
+ถ้า model ไม่ชนะ baseline หรือช่วง uncertainty กว้างจนตัดสินใจไม่ได้ UI ต้องบอกตรง ๆ และแสดง scenario assumptions แทน “prediction map”
+
+## Intervention effects
+
+ระบบห้ามสร้าง before/after temperature raster จากค่าทั่วไปที่ไม่มีการ validate เฉพาะพื้นที่ ผลจาก literature/model ต้องใช้คำว่า “projection” ระบุ transferability, maintenance, time horizon และ uncertainty

@@ -1,0 +1,66 @@
+from typing import Dict, Iterable
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.core.config import settings
+from app.models.entities import CandidateIntervention, DataSource, GeographicArea
+
+
+SOURCE_DEFINITIONS = [
+    ("Landsat 8/9", "USGS / Google Earth Engine", "LANDSAT/LC08_C02_T1_L2+LANDSAT/LC09_C02_T1_L2", "satellite", 86400, 45 * 86400),
+    ("Sentinel-2", "ESA / Google Earth Engine", "COPERNICUS/S2_SR_HARMONIZED", "satellite", 21600, 21 * 86400),
+    ("Google Dynamic World", "Google / WRI", "GOOGLE/DYNAMICWORLD/V1", "land_cover", 21600, 21 * 86400),
+    ("WorldPop", "WorldPop", "worldpop/global", "population", 30 * 86400, 400 * 86400),
+    ("Open-Meteo", "Open-Meteo", "open-meteo/weather-context", "weather", 3600, 3 * 3600),
+    ("OpenStreetMap", "OpenStreetMap contributors", "osm/bangkok", "vector", 7 * 86400, 14 * 86400),
+    ("Integration fixture", "Local test fixture", "local/integration-fixture", "test_fixture", 0, 86400),
+]
+
+
+def ensure_sources(db: Session) -> None:
+    existing = {row.dataset_id for row in db.scalars(select(DataSource)).all()}
+    for name, provider, dataset_id, source_type, interval, stale in SOURCE_DEFINITIONS:
+        if dataset_id not in existing:
+            db.add(
+                DataSource(
+                    name=name,
+                    provider=provider,
+                    dataset_id=dataset_id,
+                    source_type=source_type,
+                    check_interval_seconds=interval,
+                    stale_after_seconds=stale,
+                    enabled=source_type != "test_fixture",
+                )
+            )
+    db.commit()
+
+
+def seed_demo_data(db: Session) -> None:
+    """Opt-in synthetic fixtures. Every record is labelled and must never be shown as observation data."""
+    if not settings.demo_mode or db.scalar(select(GeographicArea.id).limit(1)):
+        return
+    demo_areas = [
+        ("demo-pathumwan", "ปทุมวัน (สาธิต)", "Pathum Wan (demo)", 100.533, 13.744),
+        ("demo-khlong-toei", "คลองเตย (สาธิต)", "Khlong Toei (demo)", 100.569, 13.716),
+        ("demo-bang-khen", "บางเขน (สาธิต)", "Bang Khen (demo)", 100.605, 13.872),
+    ]
+    for area_id, name_th, name_en, lon, lat in demo_areas:
+        d = 0.018
+        polygon = {
+            "type": "MultiPolygon",
+            "coordinates": [[[[lon - d, lat - d], [lon + d, lat - d], [lon + d, lat + d], [lon - d, lat + d], [lon - d, lat - d]]]],
+        }
+        db.add(
+            GeographicArea(
+                id=area_id,
+                name_th=name_th,
+                name_en=name_en,
+                geometry=polygon,
+                centroid={"type": "Point", "coordinates": [lon, lat]},
+                source_name="Synthetic UX fixture — not an official boundary",
+                source_version="demo-v1",
+                quality_status="synthetic_demo",
+            )
+        )
+    db.commit()

@@ -1,0 +1,71 @@
+{
+  "fixture_kind": "synthetic",
+  "publication_allowed": false,
+  "test_notice_th": "ข้อมูลสังเคราะห์สำหรับทดสอบ integration เท่านั้น ไม่ใช่การสังเกตจริง",
+  "source_name": "fixture_provider",
+  "dataset_id": "fixture-bangkok-lst",
+  "source_asset_id": "synthetic-scene-2024-04-15-v1",
+  "source_version": "fixture-v1",
+  "last_source_observed_at": "2024-04-15T03:22:00Z",
+  "checksum": "fixture-sha256-not-a-real-asset",
+  "crs": "EPSG:4326",
+  "quality_status": "test_only",
+  "payload": {
+    "area_indicators": [
+      {
+        "area_id": "demo-pathumwan",
+        "indicator_key": "lst_c_mean",
+        "value": 38.4,
+        "unit": "°C"
+      },
+      {
+        "area_id": "demo-pathumwan",
+        "indicator_key": "ndvi",
+        "value": 0.18,
+        "unit": "index"
+      },
+      {
+        "area_id": "demo-khlong-toei",
+        "indicator_key": "lst_c_mean",
+        "value": 36.9,
+        "unit": "°C"
+      }
+    ]
+  },
+  "geographic_extent": {
+    "type": "Polygon",
+    "coordinates": [[[100.49, 13.72], [100.56, 13.72], [100.56, 13.78], [100.49, 13.78], [100.49, 13.72]]]
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "id": "fixture-grid-a",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[100.50, 13.73], [100.53, 13.73], [100.53, 13.76], [100.50, 13.76], [100.50, 13.73]]]
+      },
+      "properties": {
+        "fixture": true,
+        "valid_pixel_fraction": 0.82,
+        "lst_c": 38.4,
+        "ndvi": 0.18,
+        "population_reference_year": 2020
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "fixture-grid-b",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[100.53, 13.73], [100.56, 13.73], [100.56, 13.76], [100.53, 13.76], [100.53, 13.73]]]
+      },
+      "properties": {
+        "fixture": true,
+        "valid_pixel_fraction": 0.76,
+        "lst_c": 36.9,
+        "ndvi": 0.27,
+        "population_reference_year": 2020
+      }
+    }
+  ]
+}
