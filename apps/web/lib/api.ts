@@ -10,6 +10,7 @@ import type {
   ObservatorySnapshot,
   OptimizationResult,
   PriorityRankingResult,
+  SavedScenarioRecord,
   WeatherContext,
 } from "@/lib/utils";
 
@@ -282,7 +283,14 @@ export async function loadOptimizationRun(runId: string): Promise<OptimizationRe
 }
 
 export async function downloadOptimizationReport(runId: string): Promise<void> {
-  const response = await fetch(endpoint(`/api/optimization/runs/${encodeURIComponent(runId)}/report`), { cache: "no-store" });
+  return downloadHtmlReport(
+    `/api/optimization/runs/${encodeURIComponent(runId)}/report`,
+    `heat-shift-decision-report-${runId}.html`,
+  );
+}
+
+async function downloadHtmlReport(path: string, fallbackFilename: string): Promise<void> {
+  const response = await fetch(endpoint(path), { cache: "no-store" });
   if (!response.ok) {
     const message = await response.text().catch(() => "");
     throw new Error(message || `API ${response.status}`);
@@ -291,13 +299,30 @@ export async function downloadOptimizationReport(runId: string): Promise<void> {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   const disposition = response.headers.get("content-disposition") || "";
-  const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || `heat-shift-decision-report-${runId}.html`;
+  const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || fallbackFilename;
   link.href = url;
   link.download = filename;
   document.body.appendChild(link);
   link.click();
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function normalizeScenarioComparison(value: Record<string, unknown>, budgetFallback: number): OptimizationResult[] {
+  const scenarios = Array.isArray(value.scenarios) ? value.scenarios as Array<Record<string, unknown>> : [];
+  const budget = Number(value.budget_thb || budgetFallback);
+  return scenarios.map((item) => ({
+    run_id: `scenario:${String(item.strategy)}`,
+    strategy: String(item.label_th || item.strategy),
+    budget_thb: budget,
+    total_cost_thb: Number(item.allocated_thb || 0),
+    estimated_beneficiaries: Number(item.estimated_beneficiaries || 0),
+    objective_score: Number(item.objective_value || 0),
+    dataset_versions: (value.input_versions || {}) as Record<string, unknown>,
+    allocations: Array.isArray(item.allocations)
+      ? (item.allocations as Array<Record<string, unknown>>).map(normalizeOptimizationProject)
+      : [],
+  }));
 }
 
 export async function compareScenarios(input: {
@@ -308,19 +333,59 @@ export async function compareScenarios(input: {
     method: "POST",
     body: JSON.stringify({ budget_thb: input.budget_thb, enabled_types: input.intervention_types }),
   });
-  const scenarios = Array.isArray(value.scenarios) ? value.scenarios as Array<Record<string, unknown>> : [];
-  return scenarios.map((item) => ({
-    run_id: `scenario:${String(item.strategy)}`,
-    strategy: String(item.label_th || item.strategy),
-    budget_thb: input.budget_thb,
-    total_cost_thb: Number(item.allocated_thb || 0),
-    estimated_beneficiaries: Number(item.estimated_beneficiaries || 0),
-    objective_score: Number(item.objective_value || 0),
-    dataset_versions: (value.input_versions || {}) as Record<string, unknown>,
-    allocations: Array.isArray(item.allocations)
-      ? (item.allocations as Array<Record<string, unknown>>).map(normalizeOptimizationProject)
-      : [],
-  }));
+  return normalizeScenarioComparison(value, input.budget_thb);
+}
+
+export async function saveScenario(input: {
+  name: string;
+  budget_thb: number;
+  intervention_types: string[];
+}) {
+  const value = await request<Record<string, unknown>>("/api/scenarios/save", {
+    method: "POST",
+    body: JSON.stringify({
+      name: input.name,
+      budget_thb: input.budget_thb,
+      enabled_types: input.intervention_types,
+    }),
+  });
+  return normalizeSavedScenario(value, input.budget_thb, input.name);
+}
+
+function normalizeSavedScenario(
+  value: Record<string, unknown>,
+  budgetFallback: number,
+  nameFallback = "ฉากทัศน์ที่บันทึก",
+): SavedScenarioRecord {
+  const comparison = value.comparison && typeof value.comparison === "object"
+    ? value.comparison as Record<string, unknown>
+    : {};
+  return {
+    id: String(value.id),
+    name: String(value.name || nameFallback),
+    budget_thb: Number(value.budget_thb || budgetFallback),
+    enabled_types: Array.isArray(value.enabled_types) ? value.enabled_types.map(String) : [],
+    created_at: typeof value.created_at === "string" ? value.created_at : null,
+    is_outdated: Boolean(value.is_outdated),
+    scenarios: normalizeScenarioComparison(comparison, budgetFallback),
+  };
+}
+
+export async function loadSavedScenario(scenarioId: string) {
+  const value = await request<Record<string, unknown>>(`/api/scenarios/${encodeURIComponent(scenarioId)}`);
+  return normalizeSavedScenario(value, Number(value.budget_thb || 0));
+}
+
+export async function loadSavedScenarios(): Promise<SavedScenarioRecord[]> {
+  const value = await request<unknown>("/api/scenarios?page=1&page_size=20");
+  return asItems<Record<string, unknown>>(value).map((item) => normalizeSavedScenario(item, Number(item.budget_thb || 0)));
+}
+
+export async function downloadSavedScenarioReport(scenarioId: string): Promise<void> {
+  return downloadHtmlReport(
+    `/api/scenarios/${encodeURIComponent(scenarioId)}/report`,
+    `heat-shift-scenario-${scenarioId}.html`,
+  );
 }
 
 export async function runForecastScenario(horizonYears: 1 | 3 | 5, areaIds?: string[]): Promise<ForecastResult> {

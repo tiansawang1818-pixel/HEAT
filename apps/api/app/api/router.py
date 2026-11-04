@@ -26,10 +26,19 @@ from app.models.entities import (
     PipelineEvent,
     ProcessingStatus,
     PriorityScore,
+    SavedScenario,
     SourceCheck,
     TemperatureObservation,
 )
-from app.schemas.api import AssistantQuery, ForecastRequest, IngestionRequest, OptimizationRequest, PriorityCalculateRequest, ScenarioCompareRequest
+from app.schemas.api import (
+    AssistantQuery,
+    ForecastRequest,
+    IngestionRequest,
+    OptimizationRequest,
+    PriorityCalculateRequest,
+    ScenarioCompareRequest,
+    ScenarioSaveRequest,
+)
 from app.services.connectors import (
     DynamicWorldConnector,
     FixtureConnector,
@@ -891,6 +900,187 @@ def scenarios_compare(request: ScenarioCompareRequest, db: Session = Depends(get
         "eligibility_consistent": True,
         "comparison_note_th": "ทุกยุทธศาสตร์ใช้ candidate, feasibility และเพดานงบชุดเดียวกัน ต่างกันเฉพาะน้ำหนัก objective",
     }
+
+
+def _serialize_saved_scenario(
+    db: Session,
+    scenario: SavedScenario,
+    current_versions: Optional[Dict[str, Any]] = None,
+    include_comparison: bool = True,
+) -> Dict[str, Any]:
+    configuration = scenario.configuration if isinstance(scenario.configuration, dict) else {}
+    comparison = configuration.get("comparison", {})
+    if not isinstance(comparison, dict):
+        comparison = {}
+    return {
+        "id": scenario.id,
+        "name": scenario.name,
+        "budget_thb": configuration.get("budget_thb"),
+        "enabled_types": configuration.get("enabled_types"),
+        "candidate_ids": configuration.get("candidate_ids"),
+        "comparison": comparison if include_comparison else {},
+        "dataset_versions": scenario.dataset_versions,
+        "is_outdated": scenario.dataset_versions != (current_versions if current_versions is not None else _current_versions(db)),
+        "created_at": _iso(scenario.created_at),
+    }
+
+
+@router.post("/scenarios/save", status_code=201)
+def scenario_save(request: ScenarioSaveRequest, db: Session = Depends(get_db)) -> Dict[str, Any]:
+    comparison = scenarios_compare(
+        ScenarioCompareRequest(
+            budget_thb=request.budget_thb,
+            enabled_types=request.enabled_types,
+            candidate_ids=request.candidate_ids,
+        ),
+        db,
+    )
+    scenario = SavedScenario(
+        name=request.name.strip(),
+        configuration={
+            "budget_thb": request.budget_thb,
+            "enabled_types": request.enabled_types,
+            "candidate_ids": request.candidate_ids,
+            "comparison": comparison,
+        },
+        dataset_versions=comparison["input_versions"],
+    )
+    db.add(scenario)
+    db.commit()
+    return _serialize_saved_scenario(db, scenario)
+
+
+@router.get("/scenarios")
+def saved_scenarios(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    total = int(db.scalar(select(func.count()).select_from(SavedScenario)) or 0)
+    rows = db.scalars(
+        select(SavedScenario).order_by(desc(SavedScenario.created_at)).offset((page - 1) * page_size).limit(page_size)
+    ).all()
+    current_versions = _current_versions(db)
+    return {
+        "items": [_serialize_saved_scenario(db, row, current_versions, include_comparison=False) for row in rows],
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+    }
+
+
+@router.get("/scenarios/{scenario_id}")
+def saved_scenario_detail(scenario_id: str, db: Session = Depends(get_db)) -> Dict[str, Any]:
+    scenario = db.get(SavedScenario, scenario_id)
+    if scenario is None:
+        raise HTTPException(status_code=404, detail="Saved scenario not found")
+    return _serialize_saved_scenario(db, scenario)
+
+
+@router.get("/scenarios/{scenario_id}/report", response_class=HTMLResponse)
+def saved_scenario_report(scenario_id: str, db: Session = Depends(get_db)) -> HTMLResponse:
+    scenario = db.get(SavedScenario, scenario_id)
+    if scenario is None:
+        raise HTTPException(status_code=404, detail="Saved scenario not found")
+    report = _serialize_saved_scenario(db, scenario)
+    comparison = report["comparison"]
+
+    def text(value: Any) -> str:
+        return html.escape(str(value if value is not None else "—"))
+
+    def json_text(value: Any) -> str:
+        return html.escape(json.dumps(value or {}, ensure_ascii=False, indent=2, sort_keys=True))
+
+    sections = []
+    for result in comparison.get("scenarios", []):
+        rows = "".join(
+            "<tr><td>{rank}</td><td>{name}</td><td>{kind}</td><td class=\"number\">{cost:,.0f}</td>"
+            "<td class=\"number\">{beneficiaries:,.0f}</td><td><pre>{evidence}</pre></td></tr>"
+            "<tr class=\"detail\"><td></td><td colspan=\"5\"><strong>พื้นที่</strong> {area_id}<br>"
+            "<strong>เรขาคณิต</strong><pre>{geometry}</pre><strong>ความไม่แน่นอน</strong><pre>{uncertainty}</pre></td></tr>".format(
+                rank=int(item.get("rank", index)),
+                name=text(item.get("name_th")),
+                kind=text(item.get("intervention_type")),
+                cost=float(item.get("estimated_cost_thb") or 0),
+                beneficiaries=float(item.get("estimated_beneficiaries") or 0),
+                evidence=json_text(item.get("evidence")),
+                area_id=text(item.get("area_id")),
+                geometry=json_text(item.get("geometry")),
+                uncertainty=json_text(item.get("uncertainty")),
+            )
+            for index, item in enumerate(result.get("allocations", []), start=1)
+        )
+        if not rows:
+            rows = '<tr><td colspan="6">ไม่มีโครงการที่ผ่านข้อจำกัด</td></tr>'
+        sections.append(
+            """
+            <section><h2>{label}</h2>
+            <div class="summary">ใช้งบ ฿{allocated:,.0f} · ผู้รับประโยชน์โดยประมาณ {beneficiaries:,.0f} คน · Objective {objective} · ครอบคลุม {covered}</div>
+            <table><thead><tr><th>#</th><th>โครงการ</th><th>ประเภท</th><th>ต้นทุน (THB)</th><th>ผู้รับประโยชน์</th><th>หลักฐาน</th></tr></thead><tbody>{rows}</tbody></table>
+            </section>
+            """.format(
+                label=text(result.get("label_th") or result.get("strategy")),
+                allocated=float(result.get("allocated_thb") or 0),
+                beneficiaries=float(result.get("estimated_beneficiaries") or 0),
+                objective=text(result.get("objective_value")),
+                covered=text(", ".join(result.get("covered_area_ids", [])) or "—"),
+                rows=rows,
+            )
+        )
+    outdated_notice = (
+        '<div class="warning"><strong>ผลเปรียบเทียบอาจล้าสมัย</strong> มี dataset version ใหม่กว่า โปรดคำนวณและบันทึกฉากทัศน์ใหม่ก่อนตัดสินใจ</div>'
+        if report["is_outdated"]
+        else '<div class="ok"><strong>เวอร์ชันข้อมูลยังตรงกัน</strong> ณ เวลาที่ส่งออกรายงาน</div>'
+    )
+    content = """<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HEAT//SHIFT Scenario Report {scenario_id}</title>
+<style>
+  :root {{ color-scheme: light; font-family: system-ui, -apple-system, "Noto Sans Thai", sans-serif; color: #14212b; }}
+  body {{ margin: 0 auto; max-width: 1080px; padding: 40px; background: #f4f7f8; }}
+  header {{ padding: 28px; color: white; background: #0a1822; border-top: 5px solid #4eeaff; }}
+  h1 {{ margin: 4px 0; font-size: 28px; }} h2 {{ margin-top: 30px; }} .tag {{ color: #4eeaff; letter-spacing: .14em; }}
+  .meta, table {{ width: 100%; border-collapse: collapse; background: white; }}
+  .meta td, th, td {{ padding: 10px 11px; border: 1px solid #dbe3e6; vertical-align: top; }}
+  th {{ text-align: left; background: #eaf0f2; }} .number {{ text-align: right; font-variant-numeric: tabular-nums; }}
+  .summary {{ margin: -12px 0 10px; color: #52646f; }} pre {{ white-space: pre-wrap; word-break: break-word; margin: 0; font-size: 11px; }}
+  .detail td {{ background: #f8fafb; font-size: 12px; }}
+  .warning, .ok {{ margin: 20px 0; padding: 14px 16px; border-radius: 6px; }}
+  .warning {{ background: #fff1e8; border: 1px solid #f59b68; }} .ok {{ background: #e9f8f1; border: 1px solid #68c99d; }}
+  footer {{ margin-top: 36px; color: #5f707a; font-size: 12px; }} @media print {{ body {{ padding: 0; background: white; }} section {{ break-inside: avoid; }} }}
+</style></head><body>
+<header><div class="tag">HEAT//SHIFT · SCENARIO REPORT</div><h1>{name}</h1><div>เปรียบเทียบยุทธศาสตร์ภายใต้ candidate, feasibility และเพดานงบเดียวกัน</div></header>
+{outdated_notice}
+<table class="meta"><tr><td><strong>Scenario ID</strong><br>{scenario_id}</td><td><strong>บันทึกเมื่อ</strong><br>{created_at}</td><td><strong>งบประมาณ</strong><br>฿{budget:,.0f}</td></tr></table>
+{sections}
+<h2>เวอร์ชันข้อมูลที่ใช้</h2><pre>{versions}</pre>
+<h2>เงื่อนไขที่บันทึก</h2><pre>{configuration}</pre>
+<footer>ผลประโยชน์เป็นค่าประมาณตามหลักฐานของ candidate รายงานนี้ไม่ใช่การรับรองราคาจัดซื้อหรือผลการลดอุณหภูมิจริง</footer>
+</body></html>""".format(
+        name=text(report["name"]),
+        scenario_id=text(report["id"]),
+        created_at=text(report["created_at"]),
+        budget=float(report["budget_thb"] or 0),
+        sections="".join(sections),
+        versions=json_text(report["dataset_versions"]),
+        configuration=json_text(
+            {
+                "enabled_types": report["enabled_types"],
+                "candidate_ids": report["candidate_ids"],
+                "eligibility_consistent": comparison.get("eligibility_consistent"),
+                "comparison_note_th": comparison.get("comparison_note_th"),
+            }
+        ),
+        outdated_notice=outdated_notice,
+    )
+    return HTMLResponse(
+        content=content,
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Disposition": 'attachment; filename="heat-shift-scenario-%s.html"' % scenario.id,
+            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'",
+        },
+    )
 
 
 @router.post("/forecast/run")

@@ -34,6 +34,18 @@ class ScenarioCompareRequest(BaseModel):
     candidate_ids: Optional[List[str]] = None
 
 
+class ScenarioSaveRequest(ScenarioCompareRequest):
+    name: str = Field(min_length=1, max_length=200)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Scenario name must not be blank")
+        return value
+
+
 class ForecastRequest(BaseModel):
     horizon_years: Literal[1, 3, 5]
     area_ids: Optional[List[str]] = None

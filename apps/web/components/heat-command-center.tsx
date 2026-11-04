@@ -48,6 +48,7 @@ import { Card } from "@/components/ui/card";
 import {
   askAssistant,
   compareScenarios,
+  downloadSavedScenarioReport,
   downloadOptimizationReport,
   loadAreaDetail,
   loadAreaHistory,
@@ -56,9 +57,12 @@ import {
   loadLayerFeatures,
   loadObservatoryStatus,
   loadPriorityRankings,
+  loadSavedScenario,
+  loadSavedScenarios,
   loadOptimizationRun,
   runForecastScenario,
   runOptimization,
+  saveScenario,
   streamUrl,
   triggerRefresh,
 } from "@/lib/api";
@@ -79,6 +83,7 @@ import {
   type ObservatorySnapshot,
   type OptimizationResult,
   type PriorityRankingResult,
+  type SavedScenarioRecord,
   type WeatherContext,
 } from "@/lib/utils";
 
@@ -192,6 +197,13 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
   const [optimization, setOptimization] = useState<OptimizationResult | null>(null);
   const [scenarioResults, setScenarioResults] = useState<OptimizationResult[]>([]);
   const [activeScenarioId, setActiveScenarioId] = useState<string | null>(null);
+  const [scenarioName, setScenarioName] = useState("แผนเปรียบเทียบ HEAT//SHIFT");
+  const [savedScenario, setSavedScenario] = useState<SavedScenarioRecord | null>(null);
+  const [savedScenarioList, setSavedScenarioList] = useState<SavedScenarioRecord[]>([]);
+  const [savedScenariosLoading, setSavedScenariosLoading] = useState(initialView === "scenarios");
+  const [openingScenarioId, setOpeningScenarioId] = useState<string | null>(null);
+  const [savingScenario, setSavingScenario] = useState(false);
+  const [exportingScenario, setExportingScenario] = useState(false);
   const [refreshJob, setRefreshJob] = useState<{ job_id: string; status: string } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -218,14 +230,31 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
   }, []);
 
   const reloadOptimizationStatus = useCallback(async () => {
-    if (!optimization?.run_id) return;
-    try {
-      const latest = await loadOptimizationRun(optimization.run_id);
-      setOptimization({ ...latest, strategy: optimization.strategy });
-    } catch {
-      // Keep the historical result visible if status synchronization is temporarily unavailable.
+    if (optimization?.run_id) {
+      try {
+        const latest = await loadOptimizationRun(optimization.run_id);
+        setOptimization({ ...latest, strategy: optimization.strategy });
+      } catch {
+        // Keep the historical result visible if status synchronization is temporarily unavailable.
+      }
     }
-  }, [optimization?.run_id, optimization?.strategy]);
+    if (savedScenario?.id) {
+      try {
+        const latest = await loadSavedScenario(savedScenario.id);
+        setSavedScenario(latest);
+        setScenarioResults(latest.scenarios);
+      } catch {
+        // Keep the saved historical comparison visible if synchronization is temporarily unavailable.
+      }
+    }
+    if (initialView === "scenarios") {
+      try {
+        setSavedScenarioList(await loadSavedScenarios());
+      } catch {
+        // The active comparison remains usable when the saved-scenario library is temporarily unavailable.
+      }
+    }
+  }, [initialView, optimization?.run_id, optimization?.strategy, savedScenario?.id]);
 
   useEffect(() => {
     void reload();
@@ -335,6 +364,20 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
     return () => { cancelled = true; };
   }, [initialView]);
 
+  useEffect(() => {
+    if (initialView !== "scenarios") return;
+    let cancelled = false;
+    void loadSavedScenarios()
+      .then((items) => {
+        if (!cancelled) setSavedScenarioList(items);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setSavedScenariosLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [initialView]);
+
   const handleSelect = useCallback((feature: GeoFeature) => {
     setSelected(feature);
     setRightTab("area");
@@ -378,6 +421,7 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
         const results = await compareScenarios({ budget_thb: budget, intervention_types: interventions });
         setScenarioResults(results);
         setActiveScenarioId(results.at(-1)?.run_id || null);
+        setSavedScenario(null);
       } else {
         const result = await runOptimization({ budget_thb: budget, strategy, intervention_types: interventions });
         setOptimization(result);
@@ -433,6 +477,59 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
       setActionError(error instanceof Error ? error.message : "ส่งออกรายงานไม่สำเร็จ");
     } finally {
       setExportingReport(false);
+    }
+  }
+
+  async function handleSaveScenario() {
+    if (!scenarioName.trim() || !scenarioResults.length) return;
+    setSavingScenario(true);
+    setActionError(null);
+    try {
+      const saved = await saveScenario({
+        name: scenarioName.trim(),
+        budget_thb: budget,
+        intervention_types: interventions,
+      });
+      setSavedScenario(saved);
+      setSavedScenarioList((current) => [saved, ...current.filter((item) => item.id !== saved.id)]);
+      setScenarioResults(saved.scenarios);
+      setActiveScenarioId(saved.scenarios.at(-1)?.run_id || null);
+      setUpdateNotice("บันทึกฉากทัศน์พร้อม dataset versions และผลเปรียบเทียบแล้ว");
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "บันทึกฉากทัศน์ไม่สำเร็จ");
+    } finally {
+      setSavingScenario(false);
+    }
+  }
+
+  async function handleOpenSavedScenario(scenarioId: string) {
+    setOpeningScenarioId(scenarioId);
+    setActionError(null);
+    try {
+      const saved = await loadSavedScenario(scenarioId);
+      setSavedScenario(saved);
+      setBudget(saved.budget_thb);
+      if (saved.enabled_types.length) setInterventions(saved.enabled_types);
+      setScenarioResults(saved.scenarios);
+      setActiveScenarioId(saved.scenarios.at(-1)?.run_id || null);
+      setUpdateNotice(saved.is_outdated ? "เปิดผลเดิมแล้ว — มี dataset version ใหม่กว่า ควรคำนวณใหม่ก่อนตัดสินใจ" : "เปิดฉากทัศน์ที่บันทึกไว้แล้ว");
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "เปิดฉากทัศน์ที่บันทึกไว้ไม่สำเร็จ");
+    } finally {
+      setOpeningScenarioId(null);
+    }
+  }
+
+  async function handleExportScenario() {
+    if (!savedScenario) return;
+    setExportingScenario(true);
+    setActionError(null);
+    try {
+      await downloadSavedScenarioReport(savedScenario.id);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "ส่งออกรายงานฉากทัศน์ไม่สำเร็จ");
+    } finally {
+      setExportingScenario(false);
     }
   }
 
@@ -663,11 +760,19 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
             <motion.div key="optimizer" className="panel-scroll" initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }}>
               <OptimizerPanel
                 budget={budget}
-                setBudget={setBudget}
+                setBudget={(value) => {
+                  setBudget(value);
+                  setScenarioResults([]);
+                  setSavedScenario(null);
+                }}
                 strategy={strategy}
                 setStrategy={setStrategy}
                 interventions={interventions}
-                setInterventions={setInterventions}
+                setInterventions={(value) => {
+                  setInterventions(value);
+                  setScenarioResults([]);
+                  setSavedScenario(null);
+                }}
                 onRun={() => void handleOptimize(false)}
                 onCompare={() => void handleOptimize(true)}
                 onExport={() => void handleExportReport()}
@@ -677,6 +782,18 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
                 scenarios={scenarioResults}
                 activeScenarioId={activeScenario?.run_id || null}
                 onScenarioSelect={setActiveScenarioId}
+                scenarioMode={initialView === "scenarios"}
+                scenarioName={scenarioName}
+                setScenarioName={setScenarioName}
+                savedScenario={savedScenario}
+                savedScenarioList={savedScenarioList}
+                savedScenariosLoading={savedScenariosLoading}
+                openingScenarioId={openingScenarioId}
+                savingScenario={savingScenario}
+                exportingScenario={exportingScenario}
+                onSaveScenario={() => void handleSaveScenario()}
+                onExportScenario={() => void handleExportScenario()}
+                onOpenSavedScenario={(scenarioId) => void handleOpenSavedScenario(scenarioId)}
                 disabled={data.isDemo}
                 error={actionError}
               />
@@ -993,6 +1110,18 @@ interface OptimizerPanelProps {
   scenarios: OptimizationResult[];
   activeScenarioId: string | null;
   onScenarioSelect: (runId: string) => void;
+  scenarioMode: boolean;
+  scenarioName: string;
+  setScenarioName: (value: string) => void;
+  savedScenario: SavedScenarioRecord | null;
+  savedScenarioList: SavedScenarioRecord[];
+  savedScenariosLoading: boolean;
+  openingScenarioId: string | null;
+  savingScenario: boolean;
+  exportingScenario: boolean;
+  onSaveScenario: () => void;
+  onExportScenario: () => void;
+  onOpenSavedScenario: (scenarioId: string) => void;
   disabled: boolean;
   error: string | null;
 }
@@ -1040,13 +1169,52 @@ function OptimizerPanel(props: OptimizerPanelProps) {
         </>
       )}
       {!!props.scenarios.length && (
-        <div className="scenario-mini-list">
-          {props.scenarios.map((item) => (
-            <button className={cn(item.run_id === props.activeScenarioId && "active")} key={item.run_id} onClick={() => props.onScenarioSelect(item.run_id)}>
-              <span>{item.strategy}<small>{item.allocations.length} โครงการ · {formatBaht(item.total_cost_thb)}</small></span>
-              <strong>{formatNumber(item.estimated_beneficiaries)} คน</strong>
-            </button>
-          ))}
+        <>
+          <div className="scenario-mini-list">
+            {props.scenarios.map((item) => (
+              <button className={cn(item.run_id === props.activeScenarioId && "active")} key={item.run_id} onClick={() => props.onScenarioSelect(item.run_id)}>
+                <span>{item.strategy}<small>{item.allocations.length} โครงการ · {formatBaht(item.total_cost_thb)}</small></span>
+                <strong>{formatNumber(item.estimated_beneficiaries)} คน</strong>
+              </button>
+            ))}
+          </div>
+          {props.scenarioMode && (
+            <div className="scenario-save-box">
+              <label htmlFor="scenario-name">ชื่อฉากทัศน์ที่บันทึก</label>
+              <input id="scenario-name" className="text-field" value={props.scenarioName} maxLength={200} onChange={(event) => props.setScenarioName(event.target.value)} />
+              <Button className="w-full" variant="outline" disabled={props.savingScenario || !props.scenarioName.trim()} onClick={props.onSaveScenario}>
+                {props.savingScenario ? <RefreshCw className="animate-spin" size={14} /> : <Database size={14} />}
+                {props.savingScenario ? "กำลังบันทึกเวอร์ชัน…" : "บันทึกผลเปรียบเทียบ"}
+              </Button>
+              {props.savedScenario && (
+                <>
+                  <div className={cn("saved-scenario-note", props.savedScenario.is_outdated && "outdated")}>
+                    <ShieldCheck size={13} />
+                    <span>{props.savedScenario.is_outdated ? "มีข้อมูลใหม่กว่า — ผลเดิมยังถูกเก็บไว้" : "บันทึกแล้ว"}<strong>{props.savedScenario.name}</strong><small>ID {props.savedScenario.id}</small></span>
+                  </div>
+                  <Button className="w-full" variant="outline" disabled={props.exportingScenario} onClick={props.onExportScenario}>
+                    {props.exportingScenario ? <RefreshCw className="animate-spin" size={14} /> : <Download size={14} />}
+                    {props.exportingScenario ? "กำลังสร้างรายงาน…" : "ส่งออกรายงาน 3 ยุทธศาสตร์"}
+                  </Button>
+                </>
+              )}
+            </div>
+          )}
+        </>
+      )}
+      {props.scenarioMode && (
+        <div className="scenario-save-box scenario-library-only">
+          <div className="saved-scenario-library">
+            <span>ฉากทัศน์ที่บันทึกไว้</span>
+            {props.savedScenariosLoading && <small><RefreshCw className="animate-spin" size={11} /> กำลังโหลด</small>}
+            {!props.savedScenariosLoading && !props.savedScenarioList.length && <small>ยังไม่มีรายการที่บันทึก</small>}
+            {props.savedScenarioList.map((item) => (
+              <button key={item.id} className={cn(item.id === props.savedScenario?.id && "active", item.is_outdated && "outdated")} onClick={() => props.onOpenSavedScenario(item.id)}>
+                <span>{item.name}<small>{formatThaiDate(item.created_at, true)} · {formatBaht(item.budget_thb)}</small></span>
+                {props.openingScenarioId === item.id ? <RefreshCw className="animate-spin" size={12} /> : <Badge>{item.is_outdated ? "ข้อมูลใหม่กว่า" : "พร้อมใช้"}</Badge>}
+              </button>
+            ))}
+          </div>
         </div>
       )}
     </>

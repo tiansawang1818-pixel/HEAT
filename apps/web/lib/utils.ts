@@ -152,6 +152,16 @@ export interface OptimizationResult {
   is_demo?: boolean;
 }
 
+export interface SavedScenarioRecord {
+  id: string;
+  name: string;
+  budget_thb: number;
+  enabled_types: string[];
+  created_at: string | null;
+  is_outdated: boolean;
+  scenarios: OptimizationResult[];
+}
+
 export interface HistoryPoint {
   date: string;
   temperature_c?: number | null;

@@ -190,6 +190,24 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .scenario-mini-list button.active { border-color: rgba(78,234,255,.25); background: rgba(78,234,255,.06); color: #d5f5f8; }
 .scenario-mini-list span small { display: block; margin-top: 2px; color: #506873; font-size: 7px; }
 .scenario-mini-list strong { color: #bed0d7; }
+.scenario-save-box { display: grid; gap: 7px; margin-top: 10px; padding: 10px; border: 1px solid rgba(78,234,255,.14); border-radius: 7px; background: rgba(78,234,255,.025); }
+.scenario-save-box > label { color: #647d88; font-size: 8px; }
+.scenario-save-box.scenario-library-only { background: rgba(255,255,255,.012); }
+.saved-scenario-note { display: flex; align-items: flex-start; gap: 7px; padding: 8px; border: 1px solid rgba(86,227,159,.16); border-radius: 6px; background: rgba(86,227,159,.045); color: #73a692; }
+.saved-scenario-note svg { flex: 0 0 auto; }
+.saved-scenario-note span { display: grid; min-width: 0; font-size: 7px; }
+.saved-scenario-note strong { overflow: hidden; color: #a6cabb; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.saved-scenario-note small { margin-top: 2px; color: #4e7062; font: 600 6px ui-monospace, monospace; }
+.saved-scenario-note.outdated { border-color: rgba(251,191,36,.24); background: rgba(92,67,14,.16); color: #d5b965; }
+.saved-scenario-note.outdated strong { color: #dbc987; }
+.saved-scenario-library { display: grid; gap: 4px; margin-top: 3px; padding-top: 8px; border-top: 1px solid var(--line); }
+.saved-scenario-library > span { color: #607984; font-size: 7px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.saved-scenario-library > small { display: flex; align-items: center; gap: 5px; color: #526b76; font-size: 7px; }
+.saved-scenario-library > button { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center; width: 100%; padding: 7px; border: 1px solid transparent; border-radius: 5px; background: rgba(255,255,255,.018); color: #8da3ab; text-align: left; }
+.saved-scenario-library > button:hover, .saved-scenario-library > button.active { border-color: rgba(78,234,255,.18); background: rgba(78,234,255,.045); }
+.saved-scenario-library > button.outdated { border-left-color: rgba(251,191,36,.45); }
+.saved-scenario-library > button > span { overflow: hidden; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.saved-scenario-library > button small { display: block; margin-top: 2px; color: #4f6873; font-size: 6px; }
 .scenario-map-grid { position: absolute; z-index: 24; inset: 82px 14px 16px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: minmax(0, 1fr) auto; gap: 8px; min-height: 0; }
 .scenario-map-card { display: grid; grid-template-rows: 42px minmax(0, 1fr) 43px; min-width: 0; min-height: 0; overflow: hidden; border: 1px solid rgba(255,255,255,.11); border-radius: 9px; background: #0a151d; box-shadow: 0 14px 34px rgba(0,0,0,.3); transition: border-color .18s ease, box-shadow .18s ease; }
 .scenario-map-card.active { border-color: rgba(78,234,255,.55); box-shadow: 0 0 0 1px rgba(78,234,255,.12), 0 14px 34px rgba(0,0,0,.38); }

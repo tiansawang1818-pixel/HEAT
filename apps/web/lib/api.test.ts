@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { askAssistant, compareScenarios, loadDashboardData, runForecastScenario } from "./api";
+import { askAssistant, compareScenarios, loadDashboardData, runForecastScenario, saveScenario } from "./api";
 import { formatBaht, formatNumber, freshnessLabel } from "./utils";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -125,5 +125,49 @@ describe("Thai presentation helpers", () => {
     expect(result.optimization?.run_id).toBe("run-1");
     expect(result.optimization?.allocations[0]).toMatchObject({ longitude: 100.52, latitude: 13.74 });
     expect(result.grounding[0].type).toBe("optimization_run");
+  });
+
+  it("saves a versioned scenario and uses the server-recomputed comparison", async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => Response.json({
+      id: "saved-1",
+      name: "แผนงบ 5 ล้านบาท",
+      created_at: "2026-11-04T02:00:00+00:00",
+      is_outdated: false,
+      comparison: {
+        budget_thb: 5_000_000,
+        input_versions: { worldpop: { version_id: "v2" } },
+        scenarios: [{
+          strategy: "heatshift_optimized",
+          label_th: "HEAT//SHIFT สมดุล",
+          allocated_thb: 3_000_000,
+          estimated_beneficiaries: 1_800,
+          objective_value: 0.9,
+          allocations: [{
+            id: "shade-1",
+            name_th: "โครงสร้างร่มเงา",
+            intervention_type: "shade_structure",
+            estimated_cost_thb: 3_000_000,
+            estimated_beneficiaries: 1_800,
+            priority_score: 82,
+            geometry: { type: "Point", coordinates: [100.55, 13.76] },
+          }],
+        }],
+      },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const saved = await saveScenario({
+      name: "แผนงบ 5 ล้านบาท",
+      budget_thb: 5_000_000,
+      intervention_types: ["shade_structure"],
+    });
+    expect(saved.id).toBe("saved-1");
+    expect(saved.scenarios[0].dataset_versions).toEqual({ worldpop: { version_id: "v2" } });
+    expect(saved.scenarios[0].allocations[0]).toMatchObject({ longitude: 100.55, latitude: 13.76 });
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
+      name: "แผนงบ 5 ล้านบาท",
+      budget_thb: 5_000_000,
+      enabled_types: ["shade_structure"],
+    });
   });
 });

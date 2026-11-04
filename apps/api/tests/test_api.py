@@ -415,3 +415,84 @@ def test_saved_optimization_can_be_retrieved_and_exported(client, db):
 
 def test_missing_optimization_report_returns_not_found(client):
     assert client.get("/api/optimization/runs/not-found/report").status_code == 404
+
+
+def test_saved_scenario_preserves_comparison_versions_and_exports_safe_report(client, db):
+    area = GeographicArea(
+        id="scenario-area",
+        name_th="พื้นที่ฉากทัศน์",
+        name_en="Scenario area",
+        geometry={"type": "Point", "coordinates": [100.57, 13.73]},
+        source_name="test",
+    )
+    candidate = CandidateIntervention(
+        id="scenario-candidate",
+        area_id=area.id,
+        name_th="จุดพักคลายร้อน",
+        intervention_type="cooling_rest_area",
+        geometry={"type": "Point", "coordinates": [100.57, 13.73]},
+        estimated_cost_thb=750_000,
+        estimated_beneficiaries=900,
+        priority_score=84,
+        benefit_score=0.75,
+        feasibility_status="eligible",
+        evidence={"source": "approved-pilot-study"},
+        uncertainty={"level": "medium"},
+    )
+    db.add_all([area, candidate])
+    db.commit()
+
+    saved = client.post(
+        "/api/scenarios/save",
+        json={
+            "name": "<script>alert('scenario')</script>",
+            "budget_thb": 1_000_000,
+            "enabled_types": ["cooling_rest_area"],
+        },
+    )
+    assert saved.status_code == 201
+    body = saved.json()
+    assert len(body["comparison"]["scenarios"]) == 3
+    assert body["comparison"]["eligibility_consistent"] is True
+    assert body["is_outdated"] is False
+
+    listing = client.get("/api/scenarios")
+    assert listing.status_code == 200
+    assert listing.json()["total"] == 1
+    assert listing.json()["items"][0]["id"] == body["id"]
+
+    source = db.scalar(select(DataSource).where(DataSource.dataset_id == "worldpop/global"))
+    db.add(
+        DatasetVersion(
+            source_id=source.id,
+            source_asset_id="worldpop:new-version",
+            source_version="2026",
+            observed_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            published_at=datetime.now(timezone.utc),
+            status="published",
+            quality_status="valid",
+            layer_version=1,
+            geographic_extent={"type": "Point", "coordinates": [100.57, 13.73]},
+        )
+    )
+    db.commit()
+
+    detail = client.get(f"/api/scenarios/{body['id']}")
+    assert detail.status_code == 200
+    assert detail.json()["is_outdated"] is True
+
+    report = client.get(f"/api/scenarios/{body['id']}/report")
+    assert report.status_code == 200
+    assert report.headers["cache-control"] == "no-store"
+    assert "attachment;" in report.headers["content-disposition"]
+    assert "default-src 'none'" in report.headers["content-security-policy"]
+    assert "ผลเปรียบเทียบอาจล้าสมัย" in report.text
+    assert "&lt;script&gt;" in report.text
+    assert "<script>alert('scenario')</script>" not in report.text
+    assert "approved-pilot-study" in report.text
+
+
+def test_saved_scenario_rejects_blank_name_and_missing_report(client):
+    response = client.post("/api/scenarios/save", json={"name": "   ", "budget_thb": 1_000_000})
+    assert response.status_code == 422
+    assert client.get("/api/scenarios/not-found/report").status_code == 404
