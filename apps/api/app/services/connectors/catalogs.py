@@ -1,16 +1,250 @@
+import hashlib
+import io
+import json
+import zipfile
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 import httpx
 
 from app.core.config import settings
-from app.services.connectors.base import AreaProcessingRecord, ConnectorError, ProviderRateLimitError, SourceAsset, SourceConnector
+from app.services.connectors.base import (
+    AreaProcessingRecord,
+    BoundaryProcessingRecord,
+    ConnectorError,
+    ProviderRateLimitError,
+    SourceAsset,
+    SourceConnector,
+)
 
 
 BANGKOK_EXTENT = {
     "type": "Polygon",
     "coordinates": [[[100.327, 13.494], [100.938, 13.494], [100.938, 13.955], [100.327, 13.955], [100.327, 13.494]]],
 }
+
+
+class BangkokBoundaryConnector(SourceConnector):
+    source_name = "Bangkok district boundaries"
+    dataset_id = "bma/bangkok-district-boundaries"
+    layer_key = "boundaries"
+    requires_boundary_processing = True
+    processor_version = "bma-shapefile-v1"
+    expected_area_count = 50
+
+    @staticmethod
+    def _parse_time(value: str) -> datetime:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+    def discover(self, latest_asset_id: Optional[str] = None, checkpoint: Optional[Dict[str, Any]] = None) -> List[SourceAsset]:
+        try:
+            response = httpx.get(
+                settings.bma_boundary_catalog_url,
+                params={"id": settings.bma_boundary_dataset_id},
+                timeout=settings.source_request_timeout_seconds,
+            )
+            response.raise_for_status()
+            body = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise ConnectorError("BMA boundary catalog request failed: %s" % exc) from exc
+        if not body.get("success") or not isinstance(body.get("result"), dict):
+            raise ConnectorError("BMA boundary catalog response is incomplete")
+        package = body["result"]
+        resource = next(
+            (
+                item
+                for item in package.get("resources", [])
+                if item.get("id") == settings.bma_boundary_resource_id
+            ),
+            None,
+        )
+        if resource is None:
+            raise ConnectorError("Configured BMA boundary resource is not present in the catalog")
+        resource_url = str(resource.get("url") or "")
+        last_modified = str(resource.get("last_modified") or resource.get("created") or "")
+        if not resource_url or not last_modified:
+            raise ConnectorError("BMA boundary resource URL or modification time is missing")
+        asset_id = "bma-boundaries:%s:%s" % (resource["id"], last_modified)
+        if asset_id == latest_asset_id:
+            return []
+        return [
+            SourceAsset.with_checksum(
+                asset_id,
+                last_modified,
+                self._parse_time(last_modified),
+                BANGKOK_EXTENT,
+                metadata={
+                    "dataset_title": package.get("title"),
+                    "dataset_id": package.get("id"),
+                    "package_modified_at": package.get("metadata_modified"),
+                    "resource_id": resource.get("id"),
+                    "resource_name": resource.get("name"),
+                    "resource_format": resource.get("format"),
+                    "resource_url": resource_url,
+                    "resource_last_modified_at": last_modified,
+                    "license": package.get("license_title") or "License not specified",
+                    "publisher": "Bangkok Metropolitan Administration / data.go.th",
+                    "processor_version": self.processor_version,
+                    "data_class": "official_administrative_boundary",
+                },
+            )
+        ]
+
+    def validate(self, asset: SourceAsset) -> Dict[str, Any]:
+        report = super().validate(asset)
+        errors = list(report["errors"])
+        resource_url = str(asset.metadata.get("resource_url") or "")
+        parsed = urlparse(resource_url)
+        if parsed.scheme != "https" or parsed.hostname != "data.bangkok.go.th":
+            errors.append("BMA boundary resource URL must use the approved data.bangkok.go.th HTTPS host")
+        if str(asset.metadata.get("resource_format", "")).upper() != "ZIP":
+            errors.append("BMA boundary resource must be the configured ZIP shapefile")
+        return {
+            "passed": not errors,
+            "errors": errors,
+            "warnings": [*report["warnings"], "Provider metadata does not specify a data license"],
+            "metrics": {
+                "resource_id": asset.metadata.get("resource_id"),
+                "resource_last_modified_at": asset.metadata.get("resource_last_modified_at"),
+                "publisher": asset.metadata.get("publisher"),
+            },
+        }
+
+    @staticmethod
+    def _zip_member(archive: zipfile.ZipFile, suffix: str) -> bytes:
+        matches = [name for name in archive.namelist() if name.lower().endswith(suffix)]
+        if len(matches) != 1:
+            raise ConnectorError("BMA boundary ZIP must contain exactly one %s file" % suffix)
+        info = archive.getinfo(matches[0])
+        if info.file_size > settings.bma_boundary_max_download_bytes:
+            raise ConnectorError("BMA boundary ZIP member exceeds the configured size limit")
+        return archive.read(info)
+
+    def process_boundaries(self, asset: SourceAsset) -> List[BoundaryProcessingRecord]:
+        try:
+            response = httpx.get(
+                asset.metadata["resource_url"],
+                timeout=settings.source_request_timeout_seconds,
+                follow_redirects=True,
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise ConnectorError("BMA boundary download failed: %s" % exc) from exc
+        if len(response.content) > settings.bma_boundary_max_download_bytes:
+            raise ConnectorError("BMA boundary download exceeds the configured size limit")
+        checksum = hashlib.sha256(response.content).hexdigest()
+        try:
+            archive = zipfile.ZipFile(io.BytesIO(response.content))
+            shp = self._zip_member(archive, ".shp")
+            shx = self._zip_member(archive, ".shx")
+            dbf = self._zip_member(archive, ".dbf")
+            prj = self._zip_member(archive, ".prj").decode("utf-8")
+        except (zipfile.BadZipFile, UnicodeDecodeError) as exc:
+            raise ConnectorError("BMA boundary ZIP is invalid: %s" % exc) from exc
+
+        try:
+            import shapefile
+            from pyproj import CRS, Transformer
+            from shapely.geometry import GeometryCollection, MultiPolygon, Polygon, mapping, shape
+            from shapely.ops import transform
+            from shapely.validation import make_valid
+
+            reader = shapefile.Reader(
+                shp=io.BytesIO(shp),
+                shx=io.BytesIO(shx),
+                dbf=io.BytesIO(dbf),
+                encoding="cp874",
+            )
+            transformer = Transformer.from_crs(CRS.from_wkt(prj), CRS.from_epsg(4326), always_xy=True)
+        except Exception as exc:
+            raise ConnectorError("BMA boundary shapefile initialization failed: %s" % exc) from exc
+
+        records: List[BoundaryProcessingRecord] = []
+        for item in reader.iterShapeRecords():
+            properties = {str(key).lower(): value for key, value in item.record.as_dict().items()}
+            district_code = str(properties.get("dcode") or "").strip()
+            name_th = str(properties.get("dname") or "").strip()
+            name_en = str(properties.get("dname_e") or "").strip()
+            if not district_code or not name_th or not name_en:
+                raise ConnectorError("BMA boundary record is missing district code or name")
+            source_geometry = shape(item.shape.__geo_interface__)
+            geometry = make_valid(transform(transformer.transform, source_geometry))
+            if isinstance(geometry, Polygon):
+                geometry = MultiPolygon([geometry])
+            elif isinstance(geometry, GeometryCollection):
+                polygons = [part for part in geometry.geoms if isinstance(part, Polygon)]
+                geometry = MultiPolygon(polygons)
+            if not isinstance(geometry, MultiPolygon) or geometry.is_empty:
+                raise ConnectorError("BMA boundary geometry is not a usable polygon for district %s" % district_code)
+            area_sq_km = float(properties.get("area") or source_geometry.area) / 1_000_000
+            centroid = geometry.representative_point()
+            records.append(
+                BoundaryProcessingRecord(
+                    area_id="bma-district-%s" % district_code,
+                    district_code=district_code,
+                    name_th=name_th,
+                    name_en=name_en,
+                    geometry=json.loads(json.dumps(mapping(geometry))),
+                    centroid=json.loads(json.dumps(mapping(centroid))),
+                    area_sq_km=area_sq_km,
+                    source_checksum=checksum,
+                    metadata={
+                        "source_crs": "EPSG:32647",
+                        "target_crs": "EPSG:4326",
+                        "resource_id": asset.metadata.get("resource_id"),
+                        "processor_version": self.processor_version,
+                    },
+                )
+            )
+        return records
+
+    def validate_boundaries(
+        self, asset: SourceAsset, records: List[BoundaryProcessingRecord]
+    ) -> Dict[str, Any]:
+        report = super().validate_boundaries(asset, records)
+        errors = list(report["errors"])
+        if len(records) != self.expected_area_count:
+            errors.append("expected %d Bangkok districts but processed %d" % (self.expected_area_count, len(records)))
+        codes = [record.district_code for record in records]
+        names_th = [record.name_th for record in records]
+        if len(codes) != len(set(codes)):
+            errors.append("BMA boundary district codes are not unique")
+        if len(names_th) != len(set(names_th)):
+            errors.append("BMA boundary Thai district names are not unique")
+        checksums = {record.source_checksum for record in records}
+        if len(checksums) != 1:
+            errors.append("BMA boundary records do not share one source checksum")
+        for record in records:
+            coordinates = record.geometry.get("coordinates", [])
+            flattened: List[List[float]] = []
+
+            def visit(value: Any) -> None:
+                if isinstance(value, list):
+                    if len(value) >= 2 and all(isinstance(part, (int, float)) for part in value[:2]):
+                        flattened.append(value)
+                    else:
+                        for part in value:
+                            visit(part)
+
+            visit(coordinates)
+            if not flattened or any(not (100.2 <= point[0] <= 101.1 and 13.3 <= point[1] <= 14.2) for point in flattened):
+                errors.append("district %s geometry falls outside the Bangkok validation extent" % record.district_code)
+            if record.area_sq_km <= 0:
+                errors.append("district %s has invalid area" % record.district_code)
+        return {
+            "passed": not errors,
+            "errors": errors,
+            "warnings": report["warnings"],
+            "metrics": {
+                "processed_areas": len(records),
+                "unique_district_codes": len(set(codes)),
+                "source_checksum": next(iter(checksums), None),
+                "source_crs": "EPSG:32647",
+                "published_crs": "EPSG:4326",
+            },
+        }
 
 
 class WorldPopConnector(SourceConnector):

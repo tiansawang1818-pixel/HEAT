@@ -10,6 +10,7 @@
 | WorldPop | population estimate | 30 d | release/version + reference year/checksum | ไม่ใช่ real-time; verify license and product metadata |
 | Open-Meteo | observation/model/forecast context | 1 h | reference/model/run time | Usually no key; respect fair-use/rate limit and preserve model metadata |
 | OSM / Overture | roads, buildings, public spaces | 7 d | replication sequence/release ID | Prefer approved extracts/incremental diffs; Overpass is not bulk production pipeline |
+| Bangkok district boundaries | BMA / data.go.th official 50-district Shapefile | 7 d | CKAN resource ID + resource modification time + SHA-256 | Provider metadata currently does not declare a licence; preserve attribution and review reuse terms before public redistribution |
 
 ## Required environment
 
@@ -22,12 +23,26 @@ OVERPASS_API_URL=https://overpass-api.de/api/interpreter
 WORLDPOP_API_BASE_URL=https://api.worldpop.org/v3
 WORLDPOP_API_KEY=
 WORLDPOP_REFERENCE_YEAR=
+BMA_BOUNDARY_CATALOG_URL=https://data.go.th/api/3/action/package_show
+BMA_BOUNDARY_DATASET_ID=e537025b-1cf6-4c5b-8e46-c2e976f13283
+BMA_BOUNDARY_RESOURCE_ID=d7be7e84-9d84-4595-bf8f-79b0bc01f1ae
+BMA_BOUNDARY_MAX_DOWNLOAD_BYTES=10000000
 OVERTURE_RELEASE=
 ```
 
 Mount Google service-account JSON as a Docker/Kubernetes secret; do not copy it into the image or repository. Production should prefer workload identity where supported.
 
 ## Validation gates
+
+### Bangkok administrative boundaries
+
+- ตรวจ CKAN metadata ของชุด `e537025b-1cf6-4c5b-8e46-c2e976f13283` และ resource ID ที่ตรึงไว้ก่อนดาวน์โหลด
+- รับเฉพาะ HTTPS จาก `data.bangkok.go.th`, จำกัดขนาด ZIP/member และอ่าน archive ในหน่วยความจำโดยไม่ extract path ลง filesystem
+- อ่าน Shapefile encoding CP874, แปลง `EPSG:32647` เป็น `EPSG:4326`, repair geometry และตรวจว่าครบ 50 district codes/ชื่อไม่ซ้ำ
+- คำนวณ SHA-256 จาก ZIP จริง เก็บ `DistrictBoundary` ทุกเวอร์ชัน และปิด `valid_to` ของขอบเขตก่อนหน้าแทนการลบประวัติ
+- เมื่อมี demo area ชื่อเดียวกัน ระบบอัปเกรด record เดิมเป็น official boundary เพื่อไม่สร้างเขตซ้ำใน local database
+
+ข้อมูลต้นทางระบุวันที่ resource ล่าสุดปี 2021 และ metadata package ปรับปรุงปี 2025 ระบบจะแสดง freshness ตามวันที่ resource จริง ไม่ใช้วันที่ ingest แทน และจะแสดงคำเตือนว่า provider metadata ไม่ได้ระบุ licence
 
 ### Satellite-derived layers
 

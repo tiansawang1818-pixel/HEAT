@@ -17,6 +17,19 @@ class AreaProcessingRecord:
 
 
 @dataclass(frozen=True)
+class BoundaryProcessingRecord:
+    area_id: str
+    district_code: str
+    name_th: str
+    name_en: str
+    geometry: Dict[str, Any]
+    centroid: Dict[str, Any]
+    area_sq_km: float
+    source_checksum: str
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class SourceAsset:
     source_asset_id: str
     source_version: str
@@ -61,6 +74,7 @@ class SourceConnector(ABC):
     dataset_id: str
     layer_key: str
     requires_area_processing: bool = False
+    requires_boundary_processing: bool = False
 
     @abstractmethod
     def discover(self, latest_asset_id: Optional[str] = None, checkpoint: Optional[Dict[str, Any]] = None) -> List[SourceAsset]:
@@ -107,3 +121,23 @@ class SourceConnector(ABC):
     def quota_status(self) -> Dict[str, Any]:
         """Return provider quota metadata captured during the latest request."""
         return {}
+
+    def process_boundaries(self, asset: SourceAsset) -> List[BoundaryProcessingRecord]:
+        return []
+
+    def validate_boundaries(
+        self, asset: SourceAsset, records: Sequence[BoundaryProcessingRecord]
+    ) -> Dict[str, Any]:
+        if self.requires_boundary_processing and not records:
+            return {
+                "passed": False,
+                "errors": ["processing produced no usable boundary records"],
+                "warnings": [],
+                "metrics": {"processed_areas": 0},
+            }
+        return {
+            "passed": True,
+            "errors": [],
+            "warnings": [],
+            "metrics": {"processed_areas": len(records)},
+        }

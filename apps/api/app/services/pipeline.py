@@ -9,6 +9,7 @@ from app.models.entities import (
     AreaIndicator,
     DataSource,
     DatasetVersion,
+    DistrictBoundary,
     GeographicArea,
     IngestionJob,
     OptimizationRun,
@@ -21,8 +22,8 @@ from app.models.entities import (
     VegetationObservation,
 )
 from app.services.analytics import recalculate_priority_scores
-from app.services.connectors.base import AreaProcessingRecord, SourceAsset, SourceConnector
-from app.services.geometry import to_geojson
+from app.services.connectors.base import AreaProcessingRecord, BoundaryProcessingRecord, SourceAsset, SourceConnector
+from app.services.geometry import to_db_geometry, to_geojson
 from app.services.locks import distributed_lock
 
 
@@ -135,6 +136,61 @@ def _persist_area_records(
             )
 
 
+def _normalized_area_name(value: str) -> str:
+    return value.replace("(สาธิต)", "").replace("(demo)", "").strip().casefold()
+
+
+def _persist_boundary_records(
+    db: Session,
+    version: DatasetVersion,
+    records: Sequence[BoundaryProcessingRecord],
+) -> None:
+    existing_areas = list(db.scalars(select(GeographicArea)).all())
+    by_name: Dict[str, GeographicArea] = {}
+    for area in existing_areas:
+        by_name[_normalized_area_name(area.name_th)] = area
+        by_name[_normalized_area_name(area.name_en)] = area
+    boundary_time = version.observed_at or utcnow()
+    for record in records:
+        area = db.get(GeographicArea, record.area_id)
+        if area is None:
+            area = by_name.get(_normalized_area_name(record.name_th)) or by_name.get(
+                _normalized_area_name(record.name_en)
+            )
+        if area is None:
+            area = GeographicArea(
+                id=record.area_id,
+                name_th=record.name_th,
+                name_en=record.name_en,
+                geometry=to_db_geometry(record.geometry),
+            )
+            db.add(area)
+        area.name_th = record.name_th
+        area.name_en = record.name_en
+        area.area_type = "district"
+        area.geometry = to_db_geometry(record.geometry)
+        area.centroid = to_db_geometry(record.centroid)
+        area.area_sq_km = record.area_sq_km
+        area.source_name = "Bangkok Metropolitan Administration / data.go.th"
+        area.source_version = "%s:%s" % (version.source_version, record.district_code)
+        area.quality_status = "verified_official_boundary"
+        for previous in db.scalars(
+            select(DistrictBoundary).where(
+                DistrictBoundary.area_id == area.id,
+                DistrictBoundary.valid_to.is_(None),
+            )
+        ).all():
+            previous.valid_to = boundary_time
+        db.add(
+            DistrictBoundary(
+                area_id=area.id,
+                dataset_version_id=version.id,
+                geometry=to_db_geometry(record.geometry),
+                valid_from=boundary_time,
+            )
+        )
+
+
 def _validation_report(
     db: Session,
     version: DatasetVersion,
@@ -235,19 +291,27 @@ def ingest_asset(db: Session, source: DataSource, connector: SourceConnector, as
     db.commit()
     try:
         area_inputs = _area_inputs(db)
-        records = connector.process(asset, area_inputs) if connector.requires_area_processing else []
-        processing_report = connector.validate_processed(asset, records)
-        known_area_ids = {area["id"] for area in area_inputs}
-        unknown_area_ids = sorted({record.area_id for record in records} - known_area_ids)
-        if unknown_area_ids:
-            processing_report = {
-                **processing_report,
-                "passed": False,
-                "errors": [
-                    *processing_report.get("errors", []),
-                    "processing returned unknown area ids: %s" % ", ".join(unknown_area_ids),
-                ],
-            }
+        records: List[AreaProcessingRecord] = []
+        boundary_records: List[BoundaryProcessingRecord] = []
+        if connector.requires_boundary_processing:
+            boundary_records = connector.process_boundaries(asset)
+            processing_report = connector.validate_boundaries(asset, boundary_records)
+            if boundary_records:
+                version.checksum = boundary_records[0].source_checksum
+        else:
+            records = connector.process(asset, area_inputs) if connector.requires_area_processing else []
+            processing_report = connector.validate_processed(asset, records)
+            known_area_ids = {area["id"] for area in area_inputs}
+            unknown_area_ids = sorted({record.area_id for record in records} - known_area_ids)
+            if unknown_area_ids:
+                processing_report = {
+                    **processing_report,
+                    "passed": False,
+                    "errors": [
+                        *processing_report.get("errors", []),
+                        "processing returned unknown area ids: %s" % ", ".join(unknown_area_ids),
+                    ],
+                }
     except Exception as exc:
         _fail_processing(db, version.id, job.id, exc)
         raise
@@ -265,6 +329,7 @@ def ingest_asset(db: Session, source: DataSource, connector: SourceConnector, as
         return version
 
     _persist_area_records(db, connector, version, records)
+    _persist_boundary_records(db, version, boundary_records)
     if connector.layer_key == "fixture":
         _publish_fixture_indicators(db, version, asset.payload)
     version.status = ProcessingStatus.publishing.value
@@ -284,6 +349,7 @@ def ingest_asset(db: Session, source: DataSource, connector: SourceConnector, as
     version.published_at = utcnow()
     db.flush()
     priority_updates = recalculate_priority_scores(db) if records else 0
+    processed_area_count = len(records) + len(boundary_records)
 
     for optimization in db.scalars(select(OptimizationRun).where(OptimizationRun.is_outdated.is_(False))).all():
         recorded = optimization.input_versions.get(source.dataset_id) if optimization.input_versions else None
@@ -295,6 +361,7 @@ def ingest_asset(db: Session, source: DataSource, connector: SourceConnector, as
         "landcover": ["vegetation", "built", "priority"],
         "population": ["population", "priority"],
         "urban_form": ["candidates", "priority"],
+        "boundaries": ["temperature", "population", "vegetation", "ndvi", "built", "priority", "historical", "future-risk"],
         "weather": ["weather"],
         "fixture": ["fixture"],
     }.get(connector.layer_key, [connector.layer_key])
@@ -310,7 +377,7 @@ def ingest_asset(db: Session, source: DataSource, connector: SourceConnector, as
                 "observed_at": version.observed_at.isoformat() if version.observed_at else None,
                 "affected_layers": affected_layers,
                 "cache_tags": ["layer:%s" % layer for layer in affected_layers],
-                "processed_areas": len(records),
+                "processed_areas": processed_area_count,
                 "priority_scores_recalculated": priority_updates,
             },
         )
@@ -319,7 +386,7 @@ def ingest_asset(db: Session, source: DataSource, connector: SourceConnector, as
     job.stage = "published"
     job.progress = 1.0
     job.checkpoint = {
-        "processed_areas": len(records),
+        "processed_areas": processed_area_count,
         "layer_version": version.layer_version,
         "priority_scores_recalculated": priority_updates,
     }

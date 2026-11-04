@@ -41,6 +41,7 @@ from app.schemas.api import (
     ScenarioSaveRequest,
 )
 from app.services.connectors import (
+    BangkokBoundaryConnector,
     DynamicWorldConnector,
     FixtureConnector,
     LandsatConnector,
@@ -1331,6 +1332,8 @@ def assistant_query(request: AssistantQuery, db: Session = Depends(get_db)) -> D
 
 
 def _connector_for(source: str, fixture_path: Optional[str] = None):
+    if source == "bma-boundaries":
+        return BangkokBoundaryConnector()
     if source == "landsat":
         return LandsatConnector()
     if source == "sentinel":

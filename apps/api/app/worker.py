@@ -9,6 +9,7 @@ from app.db.session import SessionLocal
 from app.models.entities import IngestionJob
 from app.services.bootstrap import ensure_sources
 from app.services.connectors import (
+    BangkokBoundaryConnector,
     DynamicWorldConnector,
     FixtureConnector,
     LandsatConnector,
@@ -33,6 +34,7 @@ celery_app.conf.update(
     task_time_limit=60 * 60,
     broker_connection_retry_on_startup=True,
     beat_schedule={
+        "monitor-bma-boundaries-weekly": {"task": "app.worker.run_ingestion", "schedule": 7 * 86400, "args": ["bma-boundaries"]},
         "monitor-landsat-daily": {"task": "app.worker.run_ingestion", "schedule": 86400, "args": ["landsat"]},
         "monitor-sentinel-six-hourly": {"task": "app.worker.run_ingestion", "schedule": 21600, "args": ["sentinel"]},
         "monitor-dynamic-world-six-hourly": {"task": "app.worker.run_ingestion", "schedule": 21600, "args": ["dynamic-world"]},
@@ -45,6 +47,7 @@ celery_app.conf.update(
 
 def connector_for(source: str, fixture_path: Optional[str] = None):
     connectors = {
+        "bma-boundaries": BangkokBoundaryConnector,
         "landsat": LandsatConnector,
         "sentinel": SentinelConnector,
         "dynamic-world": DynamicWorldConnector,

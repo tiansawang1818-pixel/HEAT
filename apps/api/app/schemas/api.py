@@ -58,7 +58,7 @@ class AssistantQuery(BaseModel):
 
 
 class IngestionRequest(BaseModel):
-    source: Literal["landsat", "sentinel", "dynamic-world", "open-meteo", "worldpop", "osm", "fixture"]
+    source: Literal["bma-boundaries", "landsat", "sentinel", "dynamic-world", "open-meteo", "worldpop", "osm", "fixture"]
     fixture_path: Optional[str] = None
 
 

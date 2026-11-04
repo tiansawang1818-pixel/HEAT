@@ -9,6 +9,7 @@ from app.services.geometry import to_db_geometry
 
 
 SOURCE_DEFINITIONS = [
+    ("Bangkok district boundaries", "Bangkok Metropolitan Administration / data.go.th", "bma/bangkok-district-boundaries", "boundary", 7 * 86400, 730 * 86400),
     ("Landsat 8/9", "USGS / Google Earth Engine", "LANDSAT/LC08_C02_T1_L2+LANDSAT/LC09_C02_T1_L2", "satellite", 86400, 45 * 86400),
     ("Sentinel-2", "ESA / Google Earth Engine", "COPERNICUS/S2_SR_HARMONIZED", "satellite", 21600, 21 * 86400),
     ("Google Dynamic World", "Google / WRI", "GOOGLE/DYNAMICWORLD/V1", "land_cover", 21600, 21 * 86400),
