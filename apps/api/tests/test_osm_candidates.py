@@ -122,6 +122,59 @@ def test_osm_changed_snapshot_deactivates_removed_candidate_without_deleting_his
     assert len(db.scalars(select(DatasetVersion)).all()) == 2
 
 
+def test_osm_refresh_preserves_approved_cost_and_feasibility_evidence(db, monkeypatch):
+    _add_area(db)
+    original = [
+        {
+            "type": "node",
+            "id": 101,
+            "lat": 13.70,
+            "lon": 100.50,
+            "tags": {"amenity": "marketplace", "name": "Old market name"},
+        }
+    ]
+    _mock_osm(monkeypatch, 42, original)
+    run_monitor(db, OpenStreetMapConnector(), requested_by="test")
+    candidate = db.get(CandidateIntervention, "osm-node-101-public-shade-structure")
+    candidate.estimated_cost_thb = 500_000
+    candidate.feasibility_status = "eligible"
+    candidate.evidence = {
+        **candidate.evidence,
+        "cost_assumption_id": "cost-v1",
+        "cost_evidence": "https://example.org/cost",
+        "feasibility_evidence": "https://example.org/site",
+        "approved_by": "reviewer",
+    }
+    db.commit()
+
+    refreshed = [
+        {
+            "type": "node",
+            "id": 101,
+            "lat": 13.701,
+            "lon": 100.501,
+            "tags": {"amenity": "marketplace", "name": "Updated market name"},
+        },
+        {
+            "type": "node",
+            "id": 102,
+            "lat": 13.71,
+            "lon": 100.51,
+            "tags": {"amenity": "clinic"},
+        },
+    ]
+    _mock_osm(monkeypatch, 43, refreshed)
+    run_monitor(db, OpenStreetMapConnector(), requested_by="test")
+    db.refresh(candidate)
+
+    assert candidate.name_th == "Updated market name"
+    assert candidate.estimated_cost_thb == 500_000
+    assert candidate.feasibility_status == "eligible"
+    assert candidate.evidence["cost_assumption_id"] == "cost-v1"
+    assert candidate.evidence["approved_by"] == "reviewer"
+    assert candidate.evidence["source_tags"]["name"] == "Updated market name"
+
+
 def test_osm_rate_limit_preserves_retry_after(monkeypatch):
     from app.services.connectors.base import ProviderRateLimitError
 

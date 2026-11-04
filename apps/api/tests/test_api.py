@@ -569,3 +569,170 @@ def test_saved_scenario_rejects_blank_name_and_missing_report(client):
     response = client.post("/api/scenarios/save", json={"name": "   ", "budget_thb": 1_000_000})
     assert response.status_code == 422
     assert client.get("/api/scenarios/not-found/report").status_code == 404
+
+
+def test_admin_approves_versioned_cost_and_candidate_before_optimization(client, db):
+    area = GeographicArea(
+        id="approval-area",
+        name_th="พื้นที่ตรวจหลักฐาน",
+        name_en="Evidence review area",
+        geometry={"type": "Point", "coordinates": [100.55, 13.75]},
+        source_name="test",
+    )
+    candidate = CandidateIntervention(
+        id="approval-candidate",
+        area_id=area.id,
+        name_th="พื้นที่ร่มเงาที่รอตรวจ",
+        intervention_type="public_shade_structure",
+        geometry={"type": "Point", "coordinates": [100.55, 13.75]},
+        estimated_cost_thb=None,
+        estimated_beneficiaries=None,
+        priority_score=88,
+        benefit_score=None,
+        feasibility_status="insufficient_evidence",
+        evidence={"source_dataset_id": "osm/bangkok", "screening_only": True},
+        uncertainty={"cost": "unavailable", "benefit": "unavailable"},
+    )
+    db.add_all([area, candidate])
+    db.commit()
+
+    payload = {
+        "intervention_type": "public_shade_structure",
+        "version": "bma-reference-2026.1",
+        "unit_cost_thb": 500_000,
+        "annual_maintenance_thb": 25_000,
+        "cost_basis": "fixed_per_site",
+        "evidence_url": "https://example.org/bma-cost-reference",
+        "evidence_title": "เอกสารอ้างอิงราคากลางที่อนุมัติ",
+    }
+    assert client.post("/api/cost-assumptions", json=payload).status_code == 401
+    created = client.post(
+        "/api/cost-assumptions",
+        json=payload,
+        headers={"X-Admin-Key": "test-admin-key", "X-Admin-Actor": "qa-reviewer"},
+    )
+    assert created.status_code == 201
+    assumption = created.json()
+    assert assumption["assumptions"]["approved_by"] == "qa-reviewer"
+    cost_event = db.scalar(
+        select(PipelineEvent).where(PipelineEvent.event_type == "cost_assumption.approved")
+    )
+    assert cost_event.payload["cost_assumption_id"] == assumption["id"]
+    duplicate = client.post(
+        "/api/cost-assumptions",
+        json=payload,
+        headers={"X-Admin-Key": "test-admin-key"},
+    )
+    assert duplicate.status_code == 409
+
+    approval_payload = {
+        "cost_assumption_id": assumption["id"],
+        "confirm_site_feasibility": True,
+        "confirm_land_control": True,
+        "confirm_design_accessibility_review": True,
+        "feasibility_evidence_url": "https://example.org/site-survey/approval-candidate",
+        "feasibility_notes": "ตรวจสิทธิในพื้นที่ การเข้าถึง และข้อจำกัดการออกแบบแล้ว",
+        "estimated_beneficiaries": 650,
+        "benefit_score": 62,
+        "benefit_evidence_url": "https://example.org/benefit-study",
+    }
+    approved = client.post(
+        "/api/candidates/approval-candidate/approve",
+        json=approval_payload,
+        headers={"X-Admin-Key": "test-admin-key", "X-Admin-Actor": "urban-climate-lead"},
+    )
+    assert approved.status_code == 200
+    body = approved.json()
+    assert body["feasibility_status"] == "eligible"
+    assert body["estimated_cost_thb"] == 500_000
+    assert body["annual_maintenance_thb"] == 25_000
+    assert body["evidence"]["approved_by"] == "urban-climate-lead"
+
+    optimized = client.post(
+        "/api/optimization/run",
+        json={"budget_thb": 500_000, "candidate_ids": ["approval-candidate"]},
+    )
+    assert optimized.status_code == 200
+    assert optimized.json()["selected"][0]["id"] == "approval-candidate"
+    assert db.scalar(
+        select(PipelineEvent).where(PipelineEvent.event_type == "candidate.approved")
+    ) is not None
+
+
+def test_candidate_approval_requires_benefit_evidence_and_matching_cost_type(client, db):
+    area = GeographicArea(
+        id="approval-validation-area",
+        name_th="พื้นที่ตรวจเงื่อนไข",
+        name_en="Approval validation area",
+        geometry={"type": "Point", "coordinates": [100.56, 13.76]},
+    )
+    candidate = CandidateIntervention(
+        id="approval-validation-candidate",
+        area_id=area.id,
+        name_th="พื้นที่ปลูกต้นไม้",
+        intervention_type="tree_planting",
+        geometry={"type": "Point", "coordinates": [100.56, 13.76]},
+        estimated_cost_thb=None,
+        priority_score=70,
+        feasibility_status="insufficient_evidence",
+        evidence={"source_dataset_id": "osm/bangkok"},
+    )
+    db.add_all([area, candidate])
+    db.commit()
+    cost = client.post(
+        "/api/cost-assumptions",
+        json={
+            "intervention_type": "cooling_rest_area",
+            "version": "mismatch-1",
+            "unit_cost_thb": 300_000,
+            "evidence_url": "https://example.org/cost",
+            "evidence_title": "หลักฐานต้นทุนจุดพักคลายร้อน",
+        },
+        headers={"X-Admin-Key": "test-admin-key"},
+    ).json()
+    no_benefit_source = client.post(
+        "/api/candidates/approval-validation-candidate/approve",
+        json={
+            "cost_assumption_id": cost["id"],
+            "confirm_site_feasibility": True,
+            "confirm_land_control": True,
+            "confirm_design_accessibility_review": True,
+            "feasibility_evidence_url": "https://example.org/site",
+            "feasibility_notes": "ตรวจสอบพื้นที่จริงครบตามรายการแล้ว",
+            "estimated_beneficiaries": 100,
+        },
+        headers={"X-Admin-Key": "test-admin-key"},
+    )
+    assert no_benefit_source.status_code == 422
+    mismatch = client.post(
+        "/api/candidates/approval-validation-candidate/approve",
+        json={
+            "cost_assumption_id": cost["id"],
+            "confirm_site_feasibility": True,
+            "confirm_land_control": True,
+            "confirm_design_accessibility_review": True,
+            "feasibility_evidence_url": "https://example.org/site",
+            "feasibility_notes": "ตรวจสอบพื้นที่จริงครบตามรายการแล้ว",
+        },
+        headers={"X-Admin-Key": "test-admin-key"},
+    )
+    assert mismatch.status_code == 422
+
+
+def test_production_rejects_known_default_admin_key(client, monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "environment", "production")
+    monkeypatch.setattr(settings, "admin_api_key", "local-admin-key-change-me")
+    response = client.post(
+        "/api/cost-assumptions",
+        json={
+            "intervention_type": "tree_planting",
+            "version": "blocked-default",
+            "unit_cost_thb": 100_000,
+            "evidence_url": "https://example.org/cost",
+            "evidence_title": "หลักฐานต้นทุน",
+        },
+        headers={"X-Admin-Key": "local-admin-key-change-me"},
+    )
+    assert response.status_code == 503

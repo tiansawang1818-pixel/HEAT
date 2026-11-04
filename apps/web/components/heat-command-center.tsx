@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Activity,
@@ -47,13 +47,17 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import {
   askAssistant,
+  approveCandidate,
   compareScenarios,
+  createCostAssumption,
   downloadSavedScenarioReport,
   downloadOptimizationReport,
   loadAreaDetail,
   loadAreaHistory,
+  loadCostAssumptions,
   loadDashboardData,
   loadDatasetVersions,
+  loadEvidencePendingCandidates,
   loadIngestionStatus,
   loadLayerFeatures,
   loadObservatoryStatus,
@@ -75,6 +79,8 @@ import {
   formatThaiDate,
   freshnessLabel,
   type AreaProperties,
+  type CandidateReviewRecord,
+  type CostAssumptionRecord,
   type DatasetStatus,
   type DatasetVersionHistory,
   type FeatureCollection,
@@ -129,7 +135,7 @@ const layerColors: Record<string, string> = {
 
 const interventionOptions = [
   { id: "tree_planting", label: "ปลูกต้นไม้" },
-  { id: "shade_structure", label: "โครงสร้างบังแดด" },
+  { id: "public_shade_structure", label: "โครงสร้างบังแดด" },
   { id: "shaded_walkway", label: "ทางเดินร่มเงา" },
   { id: "cooling_rest_area", label: "จุดพักคลายร้อน" },
   { id: "reflective_surface", label: "พื้นผิวสะท้อนความร้อน" },
@@ -268,6 +274,11 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
       eventSource.addEventListener("data-update", () => {
         void reload(true);
         void reloadOptimizationStatus();
+      });
+      eventSource.addEventListener("candidate.approved", () => {
+        void reload(true);
+        void reloadOptimizationStatus();
+        setUpdateNotice("candidate ผ่านหลักฐานแล้ว — ชั้นจุดลงทุนและสถานะแผนถูกอัปเดต");
       });
       eventSource.onmessage = (event) => {
         try {
@@ -1292,6 +1303,188 @@ function HistoryChart({ history, loading, areaName }: { history: HistoryPoint[];
   );
 }
 
+const evidenceTypeLabels: Record<string, string> = {
+  tree_planting: "ปลูกต้นไม้",
+  public_shade_structure: "โครงสร้างบังแดด",
+  shaded_walkway: "ทางเดินร่มเงา",
+  cooling_rest_area: "จุดพักคลายร้อน",
+  reflective_surface: "พื้นผิวสะท้อนความร้อน",
+};
+
+function EvidenceApprovalPanel({ operatorToken }: { operatorToken: string }) {
+  const [assumptions, setAssumptions] = useState<CostAssumptionRecord[]>([]);
+  const [candidates, setCandidates] = useState<CandidateReviewRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [panelError, setPanelError] = useState<string | null>(null);
+  const [costType, setCostType] = useState("public_shade_structure");
+  const [costVersion, setCostVersion] = useState("");
+  const [unitCost, setUnitCost] = useState("");
+  const [maintenanceCost, setMaintenanceCost] = useState("");
+  const [costEvidenceTitle, setCostEvidenceTitle] = useState("");
+  const [costEvidenceUrl, setCostEvidenceUrl] = useState("");
+  const [selectedCandidateId, setSelectedCandidateId] = useState("");
+  const [selectedAssumptionId, setSelectedAssumptionId] = useState("");
+  const [feasibilityUrl, setFeasibilityUrl] = useState("");
+  const [feasibilityNotes, setFeasibilityNotes] = useState("");
+  const [siteChecked, setSiteChecked] = useState(false);
+  const [landChecked, setLandChecked] = useState(false);
+  const [accessChecked, setAccessChecked] = useState(false);
+
+  const reloadEvidence = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [costRows, candidateRows] = await Promise.all([
+        loadCostAssumptions(),
+        loadEvidencePendingCandidates(),
+      ]);
+      setAssumptions(costRows);
+      setCandidates(candidateRows);
+      setSelectedCandidateId((current) => current && candidateRows.some((item) => item.id === current)
+        ? current
+        : candidateRows[0]?.id || "");
+    } catch (loadError) {
+      setPanelError(loadError instanceof Error ? loadError.message : "โหลดข้อมูลหลักฐานไม่สำเร็จ");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void reloadEvidence(); }, [reloadEvidence]);
+
+  const selectedCandidate = candidates.find((item) => item.id === selectedCandidateId) || null;
+  const matchingAssumptions = assumptions.filter(
+    (item) => item.intervention_type === selectedCandidate?.intervention_type,
+  );
+
+  useEffect(() => {
+    setSelectedAssumptionId((current) => matchingAssumptions.some((item) => item.id === current)
+      ? current
+      : matchingAssumptions[0]?.id || "");
+  }, [selectedCandidateId, assumptions]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function submitCost(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setPanelError(null);
+    setMessage(null);
+    const parsedCost = Number(unitCost);
+    const parsedMaintenance = maintenanceCost ? Number(maintenanceCost) : null;
+    if (!operatorToken) {
+      setPanelError("กรอกรหัสผู้ดูแลด้านบนก่อนบันทึกหลักฐาน");
+      return;
+    }
+    if (!Number.isFinite(parsedCost) || parsedCost <= 0 || (parsedMaintenance != null && (!Number.isFinite(parsedMaintenance) || parsedMaintenance < 0))) {
+      setPanelError("กรอกต้นทุนเป็นตัวเลขที่มากกว่าศูนย์ และค่าบำรุงรักษาต้องไม่ติดลบ");
+      return;
+    }
+    setSaving(true);
+    try {
+      const created = await createCostAssumption({
+        intervention_type: costType,
+        version: costVersion.trim(),
+        unit_cost_thb: parsedCost,
+        annual_maintenance_thb: parsedMaintenance,
+        evidence_url: costEvidenceUrl.trim(),
+        evidence_title: costEvidenceTitle.trim(),
+      }, operatorToken);
+      setAssumptions((current) => [created, ...current]);
+      setCostVersion("");
+      setUnitCost("");
+      setMaintenanceCost("");
+      setCostEvidenceTitle("");
+      setCostEvidenceUrl("");
+      setMessage("บันทึกสมมติฐานต้นทุนแบบ versioned พร้อมหลักฐานแล้ว");
+    } catch (saveError) {
+      setPanelError(saveError instanceof Error ? saveError.message : "บันทึกสมมติฐานไม่สำเร็จ");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function submitApproval(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setPanelError(null);
+    setMessage(null);
+    if (!operatorToken) {
+      setPanelError("กรอกรหัสผู้ดูแลด้านบนก่อนอนุมัติ candidate");
+      return;
+    }
+    if (!selectedCandidate || !selectedAssumptionId) {
+      setPanelError("เลือก candidate และสมมติฐานต้นทุนประเภทเดียวกันก่อน");
+      return;
+    }
+    if (!siteChecked || !landChecked || !accessChecked) {
+      setPanelError("ต้องยืนยันผลสำรวจ สิทธิใช้พื้นที่ และการออกแบบ/การเข้าถึงครบทุกข้อ");
+      return;
+    }
+    setSaving(true);
+    try {
+      await approveCandidate(selectedCandidate.id, {
+        cost_assumption_id: selectedAssumptionId,
+        feasibility_evidence_url: feasibilityUrl.trim(),
+        feasibility_notes: feasibilityNotes.trim(),
+        confirm_site_feasibility: siteChecked,
+        confirm_land_control: landChecked,
+        confirm_design_accessibility_review: accessChecked,
+      }, operatorToken);
+      const remaining = candidates.filter((item) => item.id !== selectedCandidate.id);
+      setCandidates(remaining);
+      setSelectedCandidateId(remaining[0]?.id || "");
+      setFeasibilityUrl("");
+      setFeasibilityNotes("");
+      setSiteChecked(false);
+      setLandChecked(false);
+      setAccessChecked(false);
+      setMessage("อนุมัติ candidate แล้ว ระบบทำเครื่องหมายแผน optimization เดิมว่าล้าสมัย");
+    } catch (approvalError) {
+      setPanelError(approvalError instanceof Error ? approvalError.message : "อนุมัติ candidate ไม่สำเร็จ");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="evidence-approval-panel">
+      <div className="evidence-panel-heading">
+        <div><span>EVIDENCE GATE</span><strong>หลักฐานก่อนนำจุดเข้า optimizer</strong></div>
+        <button onClick={() => void reloadEvidence()} disabled={loading} aria-label="โหลดข้อมูลหลักฐานใหม่"><RefreshCw className={cn(loading && "animate-spin")} size={13} /></button>
+      </div>
+      <p className="evidence-warning">ตำแหน่ง OSM เป็นเพียงจุดคัดกรอง ระบบจะไม่สร้างต้นทุนหรือผลประโยชน์ขึ้นเอง และไม่ถือว่าอนุมัติจนกว่าจะมีหลักฐานครบ</p>
+      <div className="evidence-grid">
+        <form className="evidence-form" onSubmit={submitCost}>
+          <h3>1. เพิ่มสมมติฐานต้นทุน</h3>
+          <label><span>ประเภทโครงการ</span><select value={costType} onChange={(event) => setCostType(event.target.value)}>{Object.entries(evidenceTypeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+          <div className="evidence-form-row">
+            <label><span>เวอร์ชัน</span><input required maxLength={80} value={costVersion} onChange={(event) => setCostVersion(event.target.value)} placeholder="เช่น bma-2026.1" /></label>
+            <label><span>ต้นทุนต่อจุด (บาท)</span><input required type="number" min="1" value={unitCost} onChange={(event) => setUnitCost(event.target.value)} /></label>
+          </div>
+          <label><span>ค่าบำรุงรักษาต่อปี (ถ้ามี)</span><input type="number" min="0" value={maintenanceCost} onChange={(event) => setMaintenanceCost(event.target.value)} /></label>
+          <label><span>ชื่อเอกสารหลักฐาน</span><input required minLength={3} value={costEvidenceTitle} onChange={(event) => setCostEvidenceTitle(event.target.value)} /></label>
+          <label><span>URL หลักฐาน</span><input required type="url" value={costEvidenceUrl} onChange={(event) => setCostEvidenceUrl(event.target.value)} placeholder="https://..." /></label>
+          <Button type="submit" disabled={saving || !operatorToken}><ShieldCheck size={13} /> บันทึกสมมติฐาน</Button>
+        </form>
+        <form className="evidence-form" onSubmit={submitApproval}>
+          <h3>2. อนุมัติ candidate</h3>
+          <label><span>จุดที่รอหลักฐาน ({candidates.length})</span><select required value={selectedCandidateId} onChange={(event) => setSelectedCandidateId(event.target.value)}><option value="">ยังไม่มี candidate</option>{candidates.map((item) => <option key={item.id} value={item.id}>{item.name_th} · {evidenceTypeLabels[item.intervention_type] || item.intervention_type}</option>)}</select></label>
+          {selectedCandidate && <div className="candidate-evidence-meta"><span>Priority {formatNumber(selectedCandidate.priority_score, 1)}</span><span>{selectedCandidate.area_id}</span></div>}
+          <label><span>สมมติฐานต้นทุนที่ตรงประเภท</span><select required value={selectedAssumptionId} onChange={(event) => setSelectedAssumptionId(event.target.value)}><option value="">ยังไม่มีสมมติฐานที่ใช้ได้</option>{matchingAssumptions.map((item) => <option key={item.id} value={item.id}>{item.version} · {formatBaht(item.assumptions.unit_cost_thb || 0)}</option>)}</select></label>
+          <label><span>URL รายงานตรวจพื้นที่</span><input required type="url" value={feasibilityUrl} onChange={(event) => setFeasibilityUrl(event.target.value)} placeholder="https://..." /></label>
+          <label><span>บันทึกข้อจำกัดและผลตรวจ</span><textarea required minLength={10} value={feasibilityNotes} onChange={(event) => setFeasibilityNotes(event.target.value)} /></label>
+          <div className="evidence-checks">
+            <label><input type="checkbox" checked={siteChecked} onChange={(event) => setSiteChecked(event.target.checked)} /> สำรวจหน้างานแล้ว</label>
+            <label><input type="checkbox" checked={landChecked} onChange={(event) => setLandChecked(event.target.checked)} /> ตรวจสิทธิใช้พื้นที่แล้ว</label>
+            <label><input type="checkbox" checked={accessChecked} onChange={(event) => setAccessChecked(event.target.checked)} /> ทบทวนการออกแบบและการเข้าถึงแล้ว</label>
+          </div>
+          <Button type="submit" disabled={saving || !operatorToken || !selectedCandidate}><ShieldCheck size={13} /> อนุมัติเข้า optimizer</Button>
+        </form>
+      </div>
+      {message && <div className="evidence-message success">{message}</div>}
+      {panelError && <div className="evidence-message error">{panelError}</div>}
+    </section>
+  );
+}
+
 function ObservatoryOverlay({ datasets, snapshot, loading, onRefresh, refreshing, job, error }: {
   datasets: DatasetStatus[];
   snapshot: ObservatorySnapshot | null;
@@ -1334,7 +1527,7 @@ function ObservatoryOverlay({ datasets, snapshot, loading, onRefresh, refreshing
   const recentJobs = snapshot?.recent_jobs || [];
   const recentEvents = snapshot?.recent_events || [];
   return (
-    <motion.div className="map-overlay-panel observatory" initial={{ opacity: 0, scale: .98 }} animate={{ opacity: 1, scale: 1 }}>
+    <motion.div className="map-overlay-panel observatory" initial={false} animate={{ opacity: 1, scale: 1 }}>
       <div className="overlay-heading"><div><Badge>PIPELINE MONITOR</Badge><h2>สุขภาพระบบข้อมูล</h2><p>เวลาสังเกตการณ์และเวลาที่ระบบตรวจสอบถูกแสดงแยกกันเสมอ</p></div></div>
       <div className="pipeline-summary-grid">
         <Card><span>กำลังรอ / ทำงาน</span><strong>{queue.queued} / {queue.running}</strong><small>durable job queue</small></Card>
@@ -1347,6 +1540,7 @@ function ObservatoryOverlay({ datasets, snapshot, loading, onRefresh, refreshing
         <label><span>รหัสผู้ดูแล (ส่งเฉพาะ server)</span><input type="password" autoComplete="current-password" value={operatorToken} onChange={(event) => setOperatorToken(event.target.value)} placeholder="DASHBOARD_ADMIN_TOKEN" /></label>
         <Button onClick={() => onRefresh(source, operatorToken)} disabled={refreshing || !operatorToken} variant="outline">{refreshing ? <RefreshCw className="animate-spin" size={14} /> : <RefreshCw size={14} />} ตรวจสอบตอนนี้</Button>
       </div>
+      <EvidenceApprovalPanel operatorToken={operatorToken} />
       {error && <div className="error-box">{error}</div>}
       {job && <div className="job-box"><Activity size={14} /><span>Job {job.job_id}</span><strong>{job.status}</strong></div>}
       {loading && <div className="observatory-loading"><RefreshCw className="animate-spin" size={14} /> กำลังโหลดสถานะ pipeline</div>}

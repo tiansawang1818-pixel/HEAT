@@ -2,6 +2,8 @@
 
 Local Compose ใช้ shared admin key เพื่อให้เริ่มระบบได้ง่ายเท่านั้น ก่อนเปิดใช้งานภายนอกให้เปลี่ยนเป็น OIDC/SSO + RBAC และ audit log ที่ผูกกับผู้ใช้จริง
 
+การป้องกันที่มีแล้วสำหรับ local/pilot: backend เปรียบเทียบ admin secret แบบ constant-time, ปฏิเสธค่า default เมื่อ `ENVIRONMENT=production`, sanitize `X-Admin-Actor` ก่อนเขียน audit trail และ Next.js server proxy ไม่เปิดเผย backend key ต่อ browser พร้อมจำกัด body ของคำขอ admin ส่วนการอนุมัติต้นทุน/candidate สร้าง `PipelineEvent` ที่ตรวจสอบย้อนหลังได้ การควบคุมเหล่านี้ไม่ใช่สิ่งทดแทน identity provider และ RBAC ใน production
+
 - ปิด `ALLOW_FIXTURE_INGESTION` และ `NEXT_PUBLIC_DEMO_MODE` ใน production
 - เก็บ `ADMIN_API_KEY` และ `DASHBOARD_ADMIN_TOKEN` เป็น server-side secrets เท่านั้น ห้ามใช้ชื่อ `NEXT_PUBLIC_*`
 - เก็บ provider credentials ใน secret manager/workload identity; rotate และกำหนด least privilege

@@ -161,6 +161,42 @@ export interface MapLayerMeta {
   source_name?: string;
 }
 
+export interface CostAssumptionRecord {
+  id: string;
+  intervention_type: string;
+  version: string;
+  currency: "THB";
+  assumptions: {
+    status?: string;
+    cost_basis?: string;
+    unit_cost_thb?: number;
+    annual_maintenance_thb?: number | null;
+    evidence_title?: string;
+    notes?: string | null;
+    approved_by?: string;
+    approved_at?: string;
+  };
+  evidence_url: string;
+  effective_from: string | null;
+}
+
+export interface CandidateReviewRecord {
+  id: string;
+  area_id: string;
+  name_th: string;
+  intervention_type: string;
+  estimated_cost_thb: number | null;
+  annual_maintenance_thb: number | null;
+  estimated_beneficiaries: number | null;
+  priority_score: number;
+  benefit_score: number | null;
+  feasibility_status: string;
+  feasibility_constraints: Record<string, unknown>;
+  evidence: Record<string, unknown>;
+  uncertainty: Record<string, unknown>;
+  active: boolean;
+}
+
 export interface OptimizationProject {
   id: string;
   name: string;

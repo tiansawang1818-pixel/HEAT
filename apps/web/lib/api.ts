@@ -1,6 +1,8 @@
 import { defaultLayers, demoDatasets, demoFeatures } from "@/lib/demo-data";
 import type {
   AreaProperties,
+  CandidateReviewRecord,
+  CostAssumptionRecord,
   DatasetStatus,
   DatasetVersionHistory,
   FeatureCollection,
@@ -426,6 +428,63 @@ export async function loadObservatoryStatus(): Promise<ObservatorySnapshot> {
 
 export async function loadDatasetVersions(sourceId: string): Promise<DatasetVersionHistory> {
   return request<DatasetVersionHistory>(`/api/datasets/${encodeURIComponent(sourceId)}/versions?page=1&page_size=20`);
+}
+
+export async function loadCostAssumptions(): Promise<CostAssumptionRecord[]> {
+  return asItems<CostAssumptionRecord>(await request<unknown>("/api/cost-assumptions"));
+}
+
+export async function loadEvidencePendingCandidates(pageSize = 100): Promise<CandidateReviewRecord[]> {
+  return asItems<CandidateReviewRecord>(
+    await request<unknown>(`/api/candidates?feasibility_status=insufficient_evidence&page=1&page_size=${pageSize}`),
+  );
+}
+
+async function adminPost<T>(path: string, operatorToken: string, body: Record<string, unknown>): Promise<T> {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Local-Admin-Token": operatorToken },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ detail: `API ${response.status}` })) as { detail?: string };
+    throw new Error(payload.detail || `API ${response.status}`);
+  }
+  return response.json() as Promise<T>;
+}
+
+export async function createCostAssumption(
+  input: {
+    intervention_type: string;
+    version: string;
+    unit_cost_thb: number;
+    annual_maintenance_thb?: number | null;
+    evidence_url: string;
+    evidence_title: string;
+    notes?: string | null;
+  },
+  operatorToken: string,
+): Promise<CostAssumptionRecord> {
+  return adminPost<CostAssumptionRecord>("/api/admin/cost-assumptions", operatorToken, input);
+}
+
+export async function approveCandidate(
+  candidateId: string,
+  input: {
+    cost_assumption_id: string;
+    feasibility_evidence_url: string;
+    feasibility_notes: string;
+    confirm_site_feasibility: boolean;
+    confirm_land_control: boolean;
+    confirm_design_accessibility_review: boolean;
+  },
+  operatorToken: string,
+): Promise<CandidateReviewRecord> {
+  return adminPost<CandidateReviewRecord>(
+    `/api/admin/candidates/${encodeURIComponent(candidateId)}/approve`,
+    operatorToken,
+    input,
+  );
 }
 
 export async function askAssistant(question: string, areaId?: string) {

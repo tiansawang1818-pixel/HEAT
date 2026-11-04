@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
 
 class OrmModel(BaseModel):
@@ -69,3 +69,42 @@ class PriorityCalculateRequest(BaseModel):
     built_intensity: Optional[float] = None
     historical_change: Optional[float] = None
     weights: Optional[Dict[str, float]] = None
+
+
+InterventionType = Literal[
+    "tree_planting",
+    "public_shade_structure",
+    "shaded_walkway",
+    "cooling_rest_area",
+    "reflective_surface",
+]
+
+
+class CostAssumptionCreateRequest(BaseModel):
+    intervention_type: InterventionType
+    version: str = Field(min_length=1, max_length=80, pattern=r"^[a-zA-Z0-9._-]+$")
+    unit_cost_thb: float = Field(gt=0, le=100_000_000)
+    annual_maintenance_thb: Optional[float] = Field(default=None, ge=0, le=100_000_000)
+    cost_basis: Literal["fixed_per_site"] = "fixed_per_site"
+    evidence_url: HttpUrl
+    evidence_title: str = Field(min_length=3, max_length=300)
+    notes: Optional[str] = Field(default=None, max_length=2000)
+    effective_from: Optional[datetime] = None
+
+
+class CandidateApprovalRequest(BaseModel):
+    cost_assumption_id: str = Field(min_length=1, max_length=36)
+    confirm_site_feasibility: Literal[True]
+    confirm_land_control: Literal[True]
+    confirm_design_accessibility_review: Literal[True]
+    feasibility_evidence_url: HttpUrl
+    feasibility_notes: str = Field(min_length=10, max_length=2000)
+    estimated_beneficiaries: Optional[float] = Field(default=None, ge=0)
+    benefit_score: Optional[float] = Field(default=None, ge=0, le=100)
+    benefit_evidence_url: Optional[HttpUrl] = None
+
+    @model_validator(mode="after")
+    def require_benefit_evidence(self) -> "CandidateApprovalRequest":
+        if (self.estimated_beneficiaries is not None or self.benefit_score is not None) and not self.benefit_evidence_url:
+            raise ValueError("benefit_evidence_url is required when benefit values are supplied")
+        return self

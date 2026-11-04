@@ -31,6 +31,8 @@ make up
 
 หลังรัน City Optimizer ผู้ใช้สามารถส่งออกรายงาน HTML ที่พิมพ์หรือบันทึกเป็น PDF ได้ รายงานดึงผลจาก optimization run ที่บันทึกใน backend พร้อม dataset versions, หลักฐาน, ความไม่แน่นอน และคำเตือนเมื่อผลลัพธ์ล้าสมัย
 
+Data Observatory มี evidence gate ภาษาไทยสำหรับผู้ดูแล: บันทึก `CostAssumption` แบบ versioned พร้อม URL หลักฐาน และอนุมัติ candidate ได้ต่อเมื่อยืนยันการสำรวจหน้างาน สิทธิใช้พื้นที่ และการทบทวนการออกแบบ/การเข้าถึงครบ ระบบจะกัน candidate ที่ยังไม่มีต้นทุนหรือ feasibility ออกจาก OR-Tools และทำผล optimization เดิมเป็น outdated เมื่อ input ที่อนุมัติเปลี่ยน
+
 ตรวจสอบสถานะด้วย `docker compose ps` หรือ `make smoke` และดู worker ด้วย `make logs`
 
 ## โหมดข้อมูล
@@ -103,7 +105,7 @@ make down
 - OpenStreetMap Overpass ใช้ได้กับ Bangkok pilot; production ปริมาณสูงควรใช้ provider-approved extract/incremental feed และตั้ง rate limit อย่างรับผิดชอบ
 - Overture release URL/version (หากเปิด connector)
 - S3-compatible object storage สำหรับ raster/derived tiles
-- `ADMIN_API_KEY` หรือเปลี่ยนเป็นระบบ identity/role ขององค์กรก่อนเปิดสู่ภายนอก
+- `ADMIN_API_KEY` ใช้ได้เฉพาะ local/pilot; ต้องเปลี่ยนเป็น OIDC/SSO + RBAC ขององค์กรก่อนเปิดสู่ภายนอก
 
 Open-Meteo ไม่ควรถูกอธิบายว่าเป็นข้อมูลดาวเทียม และ WorldPop ต้องแสดง reference year เสมอ ดูรายละเอียดที่ [docs/data-sources.md](docs/data-sources.md)
 

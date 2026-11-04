@@ -229,6 +229,14 @@ class CandidateIntervention(Base):
 
 class CostAssumption(Base):
     __tablename__ = "cost_assumptions"
+    __table_args__ = (
+        Index(
+            "uq_cost_assumptions_type_version",
+            "intervention_type",
+            "version",
+            unique=True,
+        ),
+    )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     intervention_type: Mapped[str] = mapped_column(String(80), index=True)
     version: Mapped[str] = mapped_column(String(80))

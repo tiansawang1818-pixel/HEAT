@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from sqlalchemy import desc, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_admin
@@ -16,6 +17,7 @@ from app.db.session import get_db
 from app.models.entities import (
     AreaIndicator,
     CandidateIntervention,
+    CostAssumption,
     DataSource,
     DatasetVersion,
     ForecastRun,
@@ -33,6 +35,8 @@ from app.models.entities import (
 )
 from app.schemas.api import (
     AssistantQuery,
+    CandidateApprovalRequest,
+    CostAssumptionCreateRequest,
     ForecastRequest,
     IngestionRequest,
     OptimizationRequest,
@@ -592,6 +596,216 @@ def map_features(
     return {"type": "FeatureCollection", "features": features, "metadata": {"layer": layer, "bbox_filter": list(parsed_bbox) if parsed_bbox else None, "count": len(features)}}
 
 
+@router.get("/candidates")
+def candidates_list(
+    feasibility_status: Optional[str] = None,
+    area_id: Optional[str] = None,
+    active: bool = True,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=500),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    filters = [CandidateIntervention.active.is_(active)]
+    if feasibility_status:
+        filters.append(CandidateIntervention.feasibility_status == feasibility_status)
+    if area_id:
+        filters.append(CandidateIntervention.area_id == area_id)
+    total = int(
+        db.scalar(select(func.count()).select_from(CandidateIntervention).where(*filters)) or 0
+    )
+    rows = db.scalars(
+        select(CandidateIntervention)
+        .where(*filters)
+        .order_by(desc(CandidateIntervention.priority_score), CandidateIntervention.id)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    ).all()
+    return {
+        "items": [_serialize_candidate(row) for row in rows],
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+    }
+
+
+@router.get("/cost-assumptions")
+def cost_assumptions_list(
+    intervention_type: Optional[str] = None,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    query = select(CostAssumption)
+    if intervention_type:
+        query = query.where(CostAssumption.intervention_type == intervention_type)
+    rows = db.scalars(
+        query.order_by(CostAssumption.intervention_type, desc(CostAssumption.effective_from))
+    ).all()
+    return {
+        "items": [
+            {
+                "id": row.id,
+                "intervention_type": row.intervention_type,
+                "version": row.version,
+                "currency": row.currency,
+                "assumptions": row.assumptions,
+                "evidence_url": row.evidence_url,
+                "effective_from": _iso(row.effective_from),
+            }
+            for row in rows
+        ]
+    }
+
+
+@router.post("/cost-assumptions", status_code=201)
+def cost_assumption_create(
+    request: CostAssumptionCreateRequest,
+    admin_actor: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    duplicate = db.scalar(
+        select(CostAssumption).where(
+            CostAssumption.intervention_type == request.intervention_type,
+            CostAssumption.version == request.version,
+        )
+    )
+    if duplicate:
+        raise HTTPException(status_code=409, detail="Cost assumption version already exists")
+    now = datetime.now(timezone.utc)
+    row = CostAssumption(
+        intervention_type=request.intervention_type,
+        version=request.version,
+        currency="THB",
+        assumptions={
+            "status": "approved",
+            "cost_basis": request.cost_basis,
+            "unit_cost_thb": request.unit_cost_thb,
+            "annual_maintenance_thb": request.annual_maintenance_thb,
+            "evidence_title": request.evidence_title,
+            "notes": request.notes,
+            "approved_by": admin_actor,
+            "approved_at": now.isoformat(),
+        },
+        evidence_url=str(request.evidence_url),
+        effective_from=_aware(request.effective_from) or now,
+    )
+    db.add(row)
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Cost assumption version already exists")
+    db.add(
+        PipelineEvent(
+            event_type="cost_assumption.approved",
+            layer_key="candidates",
+            payload={
+                "cost_assumption_id": row.id,
+                "intervention_type": row.intervention_type,
+                "version": row.version,
+                "affected_layers": ["candidates"],
+                "approved_by": admin_actor,
+            },
+        )
+    )
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Cost assumption version already exists")
+    db.refresh(row)
+    return {
+        "id": row.id,
+        "intervention_type": row.intervention_type,
+        "version": row.version,
+        "currency": row.currency,
+        "assumptions": row.assumptions,
+        "evidence_url": row.evidence_url,
+        "effective_from": _iso(row.effective_from),
+    }
+
+
+@router.post("/candidates/{candidate_id}/approve")
+def candidate_approve(
+    candidate_id: str,
+    request: CandidateApprovalRequest,
+    admin_actor: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    candidate = db.get(CandidateIntervention, candidate_id)
+    if candidate is None or not candidate.active:
+        raise HTTPException(status_code=404, detail="Active candidate not found")
+    assumption = db.get(CostAssumption, request.cost_assumption_id)
+    if assumption is None or assumption.assumptions.get("status") != "approved":
+        raise HTTPException(status_code=422, detail="Approved cost assumption not found")
+    now = datetime.now(timezone.utc)
+    if _aware(assumption.effective_from) and _aware(assumption.effective_from) > now:
+        raise HTTPException(status_code=422, detail="Cost assumption is not effective yet")
+    if assumption.intervention_type != candidate.intervention_type:
+        raise HTTPException(status_code=422, detail="Cost assumption intervention type does not match candidate")
+    if assumption.assumptions.get("cost_basis") != "fixed_per_site":
+        raise HTTPException(status_code=422, detail="Candidate requires a fixed_per_site cost assumption")
+    unit_cost = assumption.assumptions.get("unit_cost_thb")
+    if not isinstance(unit_cost, (int, float)) or unit_cost <= 0:
+        raise HTTPException(status_code=422, detail="Cost assumption does not contain a valid unit cost")
+    candidate.estimated_cost_thb = float(unit_cost)
+    maintenance = assumption.assumptions.get("annual_maintenance_thb")
+    candidate.annual_maintenance_thb = float(maintenance) if maintenance is not None else None
+    candidate.estimated_beneficiaries = request.estimated_beneficiaries
+    candidate.benefit_score = request.benefit_score
+    candidate.feasibility_status = "eligible"
+    candidate.feasibility_constraints = {
+        **(candidate.feasibility_constraints or {}),
+        "site_survey_completed": True,
+        "land_control_verified": True,
+        "design_accessibility_reviewed": True,
+        "feasibility_evidence_url": str(request.feasibility_evidence_url),
+        "feasibility_notes": request.feasibility_notes,
+    }
+    candidate.evidence = {
+        **(candidate.evidence or {}),
+        "cost_assumption_id": assumption.id,
+        "cost_evidence": assumption.evidence_url,
+        "cost_assumption_version": assumption.version,
+        "feasibility_evidence": str(request.feasibility_evidence_url),
+        "benefit_evidence": str(request.benefit_evidence_url) if request.benefit_evidence_url else None,
+        "approved_at": now.isoformat(),
+        "approved_by": admin_actor,
+    }
+    candidate.uncertainty = {
+        **(candidate.uncertainty or {}),
+        "cost": "approved versioned fixed-per-site assumption; site-specific variance is not quantified",
+        "benefit": "evidence supplied" if request.benefit_evidence_url else "not estimated",
+        "feasibility": "administrator-confirmed site evidence supplied",
+    }
+    candidate.dataset_versions = {
+        **(candidate.dataset_versions or {}),
+        "cost_assumption": {
+            "id": assumption.id,
+            "version": assumption.version,
+            "effective_from": _iso(assumption.effective_from),
+        },
+    }
+    for run in db.scalars(
+        select(OptimizationRun).where(OptimizationRun.is_outdated.is_(False))
+    ).all():
+        run.is_outdated = True
+    db.add(
+        PipelineEvent(
+            event_type="candidate.approved",
+            layer_key="candidates",
+            payload={
+                "candidate_id": candidate.id,
+                "area_id": candidate.area_id,
+                "affected_layers": ["candidates"],
+                "optimization_inputs_changed": True,
+                "approved_by": admin_actor,
+            },
+        )
+    )
+    db.commit()
+    db.refresh(candidate)
+    return _serialize_candidate(candidate)
+
+
 @router.get("/priority/rankings")
 def priority_rankings(
     page: int = Query(default=1, ge=1),
@@ -655,7 +869,28 @@ def _candidate_rows(db: Session, ids: Optional[List[str]] = None) -> List[Candid
     )
     if ids:
         query = query.where(CandidateIntervention.id.in_(ids))
-    return list(db.scalars(query).all())
+    return [row for row in db.scalars(query).all() if row.evidence]
+
+
+def _serialize_candidate(row: CandidateIntervention) -> Dict[str, Any]:
+    return {
+        "id": row.id,
+        "area_id": row.area_id,
+        "name_th": row.name_th,
+        "intervention_type": row.intervention_type,
+        "geometry": to_geojson(row.geometry),
+        "estimated_cost_thb": row.estimated_cost_thb,
+        "annual_maintenance_thb": row.annual_maintenance_thb,
+        "estimated_beneficiaries": row.estimated_beneficiaries,
+        "priority_score": row.priority_score,
+        "benefit_score": row.benefit_score,
+        "feasibility_status": row.feasibility_status,
+        "feasibility_constraints": row.feasibility_constraints,
+        "evidence": row.evidence,
+        "uncertainty": row.uncertainty,
+        "dataset_versions": row.dataset_versions,
+        "active": row.active,
+    }
 
 
 def _to_optimizer_candidates(rows: List[CandidateIntervention]) -> List[Candidate]:
@@ -1503,8 +1738,13 @@ def ingestion_status(job_id: Optional[str] = None, db: Session = Depends(get_db)
     }
 
 
-@router.post("/ingestion/run", dependencies=[Depends(require_admin)], status_code=202)
-def ingestion_run(request: IngestionRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)) -> Dict[str, Any]:
+@router.post("/ingestion/run", status_code=202)
+def ingestion_run(
+    request: IngestionRequest,
+    background_tasks: BackgroundTasks,
+    admin_actor: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
     fixture_path = request.fixture_path
     if request.source == "fixture":
         if not settings.allow_fixture_ingestion:
@@ -1516,7 +1756,12 @@ def ingestion_run(request: IngestionRequest, background_tasks: BackgroundTasks, 
         if root not in path.parents or not path.is_file():
             raise HTTPException(status_code=400, detail="fixture_path must be an existing file below FIXTURE_ROOT")
         fixture_path = str(path)
-    job = IngestionJob(job_type="manual_refresh", status="queued", stage="queued", requested_by="admin")
+    job = IngestionJob(
+        job_type="manual_refresh",
+        status="queued",
+        stage="queued",
+        requested_by="admin:%s" % admin_actor,
+    )
     db.add(job)
     db.commit()
     dispatch_mode = "api-background-fallback"

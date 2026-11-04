@@ -33,6 +33,8 @@ Sensitivity analysis ควรรัน weight perturbation และราย�
 
 Candidate ต้องมี geometry จริงและ feasibility ผ่าน rule ที่บันทึกไว้ Cost/effect assumptions มาจากตาราง versioned ที่ผู้มีอำนาจอนุมัติ หากไม่มี cost/benefit ที่รองรับให้ candidate เป็น `insufficient_evidence` และไม่ใส่ใน solver โดยอัตโนมัติ
 
+Evidence gate ที่ใช้งานจริงแยกเป็นสองขั้น: (1) สร้างสมมติฐานต้นทุน `fixed_per_site` พร้อม version, วันที่มีผล และ URL เอกสารอ้างอิง (2) ผูกสมมติฐานนั้นกับ candidate ประเภทเดียวกันพร้อมรายงานหน้างาน และยืนยัน site feasibility, land control, design/accessibility review ครบทุกข้อ ค่า beneficiaries/benefit score เป็น optional และ backend จะไม่รับค่าดังกล่าวหากไม่มี benefit evidence URL
+
 ตัวอย่าง objective แบบ linear:
 
 ```text
