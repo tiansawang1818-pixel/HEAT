@@ -50,6 +50,12 @@ class ConnectorError(RuntimeError):
     pass
 
 
+class ProviderRateLimitError(ConnectorError):
+    def __init__(self, message: str, retry_after_seconds: int = 60):
+        super().__init__(message)
+        self.retry_after_seconds = max(1, min(int(retry_after_seconds), 86400))
+
+
 class SourceConnector(ABC):
     source_name: str
     dataset_id: str
@@ -97,3 +103,7 @@ class SourceConnector(ABC):
             "warnings": [],
             "metrics": {"processed_areas": len(records)},
         }
+
+    def quota_status(self) -> Dict[str, Any]:
+        """Return provider quota metadata captured during the latest request."""
+        return {}

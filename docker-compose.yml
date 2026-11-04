@@ -24,8 +24,9 @@ x-api-environment: &api-environment
   GEE_SERVICE_ACCOUNT: ${GEE_SERVICE_ACCOUNT:-}
   OPEN_METEO_BASE_URL: ${OPEN_METEO_BASE_URL:-https://api.open-meteo.com/v1/forecast}
   OVERPASS_API_URL: ${OVERPASS_API_URL:-https://overpass-api.de/api/interpreter}
-  WORLDPOP_BASE_URL: ${WORLDPOP_BASE_URL:-https://data.worldpop.org}
-  WORLDPOP_CATALOG_URL: ${WORLDPOP_CATALOG_URL:-https://hub.worldpop.org/rest/data/pop}
+  WORLDPOP_API_BASE_URL: ${WORLDPOP_API_BASE_URL:-https://api.worldpop.org/v3}
+  WORLDPOP_API_KEY: ${WORLDPOP_API_KEY:-}
+  WORLDPOP_REFERENCE_YEAR: ${WORLDPOP_REFERENCE_YEAR:-}
   OSM_REPLICATION_STATE_URL: ${OSM_REPLICATION_STATE_URL:-https://planet.openstreetmap.org/replication/day/state.txt}
   SOURCE_REQUEST_TIMEOUT_SECONDS: ${SOURCE_REQUEST_TIMEOUT_SECONDS:-60}
 

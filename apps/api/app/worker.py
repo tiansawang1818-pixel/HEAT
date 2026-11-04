@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -16,9 +17,8 @@ from app.services.connectors import (
     SentinelConnector,
     WorldPopConnector,
 )
+from app.services.connectors.base import ConnectorError, ProviderRateLimitError
 from app.services.pipeline import run_monitor
-from app.services.connectors.base import ConnectorError
-from datetime import datetime, timezone
 
 
 celery_app = Celery("heatshift", broker=settings.redis_url, backend=settings.redis_url)
@@ -74,7 +74,10 @@ def run_ingestion(self, source: str, fixture_path: Optional[str] = None):
     db = SessionLocal()
     try:
         ensure_sources(db)
-        return run_monitor(db, connector_for(source, fixture_path), requested_by="celery:%s" % self.request.id)
+        try:
+            return run_monitor(db, connector_for(source, fixture_path), requested_by="celery:%s" % self.request.id)
+        except ProviderRateLimitError as exc:
+            raise self.retry(exc=exc, countdown=exc.retry_after_seconds, max_retries=5)
     finally:
         db.close()
 

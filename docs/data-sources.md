@@ -19,7 +19,9 @@ GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/gee-service-account.json
 GEE_MAX_CONCURRENT_EXPORTS=2
 OPEN_METEO_BASE_URL=https://api.open-meteo.com/v1/forecast
 OVERPASS_API_URL=https://overpass-api.de/api/interpreter
-WORLDPOP_BASE_URL=https://data.worldpop.org
+WORLDPOP_API_BASE_URL=https://api.worldpop.org/v3
+WORLDPOP_API_KEY=
+WORLDPOP_REFERENCE_YEAR=
 OVERTURE_RELEASE=
 ```
 
@@ -52,6 +54,10 @@ Mount Google service-account JSON as a Docker/Kubernetes secret; do not copy it 
 - reference year and unit (`persons/pixel`, density, count) preserved
 - raster sum/aggregation method respects source grid and avoids double counting
 - no interpolation is described as a current observation
+
+WorldPop connector ใช้ Global2 `/catalog` เพื่อตรวจ release/ปีที่มีอยู่ และ `/batch` เพื่อรวมประชากรของ Bangkok geographic areas ในคำขอเดียว ค่าเริ่มต้นเลือกปีล่าสุดที่ไม่เกินปีปัจจุบัน จึงไม่หยิบประมาณการอนาคตมาแสดงเป็นข้อมูลปัจจุบันโดยอัตโนมัติ สามารถตรึงปีด้วย `WORLDPOP_REFERENCE_YEAR` ได้ ทุกผลลัพธ์ใช้สถานะ `model_estimate`, เก็บ reference year/release/resolution/citation และไม่สร้าง uncertainty ที่ provider ไม่ได้ส่งมา
+
+Anonymous API มี quota ต่ำกว่า API key ระบบบันทึก `X-RateLimit-*` ลง source check และ Celery เคารพ `Retry-After` เมื่อได้รับ HTTP 429 ห้ามใส่ key ลง repository หรือ frontend environment
 
 ### Vector candidates
 

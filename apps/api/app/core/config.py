@@ -24,12 +24,14 @@ class Settings(BaseSettings):
     open_meteo_longitude: float = 100.5018
     open_meteo_base_url: str = "https://api.open-meteo.com/v1/forecast"
     source_request_timeout_seconds: int = 30
-    worldpop_catalog_url: str = "https://hub.worldpop.org/rest/data/pop"
+    worldpop_api_base_url: str = "https://api.worldpop.org/v3"
+    worldpop_api_key: Optional[str] = None
+    worldpop_reference_year: Optional[int] = None
     osm_replication_state_url: str = "https://planet.openstreetmap.org/replication/day/state.txt"
     stale_weather_hours: int = 3
     stale_satellite_days: int = 32
 
-    model_config = SettingsConfigDict(env_file=".env", case_sensitive=False, extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=False, extra="ignore", env_ignore_empty=True)
 
 
 @lru_cache

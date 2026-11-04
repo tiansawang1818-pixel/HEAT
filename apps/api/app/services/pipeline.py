@@ -13,6 +13,7 @@ from app.models.entities import (
     IngestionJob,
     OptimizationRun,
     PipelineEvent,
+    PopulationEstimate,
     ProcessingStatus,
     SourceCheck,
     TemperatureObservation,
@@ -119,6 +120,17 @@ def _persist_area_records(
                     tree_cover_fraction=float(tree_pct) / 100 if tree_pct is not None else None,
                     built_fraction=float(built_pct) / 100 if built_pct is not None else None,
                     confidence=record.metadata.get("confidence"),
+                )
+            )
+        elif connector.layer_key == "population":
+            db.add(
+                PopulationEstimate(
+                    area_id=record.area_id,
+                    dataset_version_id=version.id,
+                    reference_year=int(record.metadata["reference_year"]),
+                    population=float(record.indicators["population_estimate"]),
+                    density_per_sq_km=float(record.indicators["population_density"]),
+                    uncertainty_fraction=record.metadata.get("uncertainty_fraction"),
                 )
             )
 
@@ -358,6 +370,7 @@ def run_monitor(db: Session, connector: SourceConnector, requested_by: str = "sc
                 processed.append(result.id)
                 jobs.append(job.id)
             check.queued_count = len(jobs)
+            check.provider_quota = connector.quota_status()
             check.status = "success"
             check.completed_at = utcnow()
             db.commit()
@@ -371,6 +384,7 @@ def run_monitor(db: Session, connector: SourceConnector, requested_by: str = "sc
         except Exception as exc:
             db.rollback()
             check = db.get(SourceCheck, check.id)
+            check.provider_quota = connector.quota_status()
             check.status = "failed"
             check.error_message = str(exc)
             check.completed_at = utcnow()

@@ -103,6 +103,8 @@ make down
 
 Open-Meteo ไม่ควรถูกอธิบายว่าเป็นข้อมูลดาวเทียม และ WorldPop ต้องแสดง reference year เสมอ ดูรายละเอียดที่ [docs/data-sources.md](docs/data-sources.md)
 
+WorldPop Global2 ใช้งานแบบ anonymous ได้ภายใต้ quota ของผู้ให้บริการ หรือกำหนด `WORLDPOP_API_KEY` สำหรับโควตาที่ได้รับอนุมัติ ระบบเลือกปีล่าสุดที่ไม่ใช่อนาคตโดยอัตโนมัติและไม่เรียก population estimate ว่า real-time
+
 ## ข้อจำกัดที่ต้องสื่อสารกับผู้ใช้
 
 - Landsat/Sentinel มีความล่าช้าและเมฆบัง จึงไม่ใช่อุณหภูมิ real-time
