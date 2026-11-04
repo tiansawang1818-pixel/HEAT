@@ -3,7 +3,17 @@ import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
+
+
+@dataclass(frozen=True)
+class AreaProcessingRecord:
+    area_id: str
+    indicators: Dict[str, Optional[float]]
+    units: Dict[str, str] = field(default_factory=dict)
+    coverage_fraction: Optional[float] = None
+    quality_status: str = "valid"
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -44,6 +54,7 @@ class SourceConnector(ABC):
     source_name: str
     dataset_id: str
     layer_key: str
+    requires_area_processing: bool = False
 
     @abstractmethod
     def discover(self, latest_asset_id: Optional[str] = None, checkpoint: Optional[Dict[str, Any]] = None) -> List[SourceAsset]:
@@ -60,3 +71,29 @@ class SourceConnector(ABC):
         if extent_type not in {"Polygon", "MultiPolygon", "Point"}:
             errors.append("invalid geographic extent")
         return {"passed": not errors, "errors": errors, "warnings": [], "metrics": {}}
+
+    def process(self, asset: SourceAsset, areas: Sequence[Dict[str, Any]]) -> List[AreaProcessingRecord]:
+        """Produce validated-ready regional records without publishing them.
+
+        Connectors that set ``requires_area_processing`` must override this hook.
+        The pipeline persists the returned records in the same transaction as
+        layer publication, so incomplete results never become visible.
+        """
+        return []
+
+    def validate_processed(
+        self, asset: SourceAsset, records: Sequence[AreaProcessingRecord]
+    ) -> Dict[str, Any]:
+        if self.requires_area_processing and not records:
+            return {
+                "passed": False,
+                "errors": ["processing produced no usable geographic records"],
+                "warnings": [],
+                "metrics": {"processed_areas": 0},
+            }
+        return {
+            "passed": True,
+            "errors": [],
+            "warnings": [],
+            "metrics": {"processed_areas": len(records)},
+        }

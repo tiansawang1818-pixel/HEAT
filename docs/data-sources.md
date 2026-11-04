@@ -38,6 +38,15 @@ Mount Google service-account JSON as a Docker/Kubernetes secret; do not copy it 
 - computed value distribution falls within scientifically plausible configured bounds
 - output checksum, processor version and source asset ID recorded
 
+### Implemented Earth Engine regional processors
+
+- Landsat 8/9: ตัด cloud/cirrus/cloud shadow/snow ด้วย `QA_PIXEL` bits 1–4, ตัด saturated pixels ด้วย `QA_RADSAT`, ใช้ Collection 2 Level-2 scale/offset ของ `ST_B10`, แล้วบันทึก district mean, p90 และ valid-pixel coverage
+- Sentinel-2: ตัด SCL classes 3, 8, 9, 10, 11 แล้วคำนวณ mean NDVI พร้อม valid-pixel coverage
+- Dynamic World: เก็บ mean tree/built probability และ mean maximum-class probability เป็น confidence; ไม่แปลง argmax label ให้เป็นความจริงเด็ดขาด
+- Regional record จะถูกเขียนพร้อม source asset ID และ `processor_version=gee-zonal-v1` เฉพาะเมื่อทั้ง asset validation และ processed-value validation ผ่าน ระบบจะคำนวณ Heat Exposure Priority ใหม่และส่ง affected-layer event หลัง publication สำเร็จ
+
+พื้นที่ที่มี valid coverage ต่ำกว่า 5% จะไม่ถูกเผยแพร่จาก observation นั้น; ช่วง 5–25% จะติดสถานะ `limited_coverage` แทนการปกปิดข้อจำกัดของเมฆ/ข้อมูลขาดหาย
+
 ### Population
 
 - reference year and unit (`persons/pixel`, density, count) preserved

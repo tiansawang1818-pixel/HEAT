@@ -52,6 +52,7 @@ from app.services.connectors import (
 from app.services.optimizer import Candidate, optimize_portfolio
 from app.services.pipeline import run_monitor
 from app.services.priority import calculate_priority, sensitivity_range
+from app.services.geometry import to_geojson
 
 
 router = APIRouter()
@@ -79,7 +80,7 @@ def _parse_bbox(value: Optional[str]) -> Optional[tuple[float, float, float, flo
     return west, south, east, north
 
 
-def _geometry_intersects_bbox(geometry: Optional[Dict[str, Any]], bbox: Optional[tuple[float, float, float, float]]) -> bool:
+def _geometry_intersects_bbox(geometry: Any, bbox: Optional[tuple[float, float, float, float]]) -> bool:
     """Bounds check used by SQLite fixtures and the Bangkok pilot API.
 
     A large production deployment should push the equivalent predicate down to
@@ -87,6 +88,7 @@ def _geometry_intersects_bbox(geometry: Optional[Dict[str, Any]], bbox: Optional
     """
     if bbox is None:
         return True
+    geometry = to_geojson(geometry)
     if not geometry or "coordinates" not in geometry:
         return False
     points: List[tuple[float, float]] = []
@@ -337,7 +339,7 @@ def areas(
                 "name_th": row.name_th,
                 "name_en": row.name_en,
                 "area_type": row.area_type,
-                "centroid": row.centroid,
+                "centroid": to_geojson(row.centroid),
                 "area_sq_km": row.area_sq_km,
                 "quality_status": row.quality_status,
             }
@@ -375,8 +377,8 @@ def area_detail(area_id: str, db: Session = Depends(get_db)) -> Dict[str, Any]:
         "id": area.id,
         "name_th": area.name_th,
         "name_en": area.name_en,
-        "geometry": area.geometry,
-        "centroid": area.centroid,
+        "geometry": to_geojson(area.geometry),
+        "centroid": to_geojson(area.centroid),
         "boundary_provenance": {"source": area.source_name, "version": area.source_version, "quality_status": area.quality_status},
         "indicators": _latest_indicators(db, area_id),
         "priority": None
@@ -525,7 +527,7 @@ def map_features(
                 {
                     "type": "Feature",
                     "id": row.id,
-                    "geometry": row.geometry,
+                    "geometry": to_geojson(row.geometry),
                     "properties": {
                         "area_id": row.area_id,
                         "name_th": row.name_th,
@@ -570,7 +572,7 @@ def map_features(
                 {
                     "type": "Feature",
                     "id": area.id,
-                    "geometry": area.geometry,
+                    "geometry": to_geojson(area.geometry),
                     "properties": {
                         "area_id": area.id,
                         "name_th": area.name_th,
@@ -711,7 +713,7 @@ def _serialize_optimization_run(db: Session, run: OptimizationRun) -> Dict[str, 
                 "area_id": candidate.area_id,
                 "name_th": candidate.name_th,
                 "intervention_type": candidate.intervention_type,
-                "geometry": candidate.geometry,
+                "geometry": to_geojson(candidate.geometry),
                 "estimated_cost_thb": candidate.estimated_cost_thb,
                 "annual_maintenance_thb": candidate.annual_maintenance_thb,
                 "estimated_beneficiaries": candidate.estimated_beneficiaries,
@@ -789,7 +791,7 @@ def optimization_run(request: OptimizationRequest, db: Session = Depends(get_db)
                 "area_id": row.area_id,
                 "name_th": row.name_th,
                 "intervention_type": row.intervention_type,
-                "geometry": row.geometry,
+                "geometry": to_geojson(row.geometry),
                 "estimated_cost_thb": row.estimated_cost_thb,
                 "annual_maintenance_thb": row.annual_maintenance_thb,
                 "estimated_beneficiaries": row.estimated_beneficiaries,
@@ -944,7 +946,7 @@ def scenarios_compare(request: ScenarioCompareRequest, db: Session = Depends(get
                     "area_id": candidate.area_id,
                     "name_th": candidate.name_th,
                     "intervention_type": candidate.intervention_type,
-                    "geometry": candidate.geometry,
+                    "geometry": to_geojson(candidate.geometry),
                     "estimated_cost_thb": candidate.estimated_cost_thb,
                     "annual_maintenance_thb": candidate.annual_maintenance_thb,
                     "estimated_beneficiaries": candidate.estimated_beneficiaries,

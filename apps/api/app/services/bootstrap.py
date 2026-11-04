@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.entities import CandidateIntervention, DataSource, GeographicArea
+from app.services.geometry import to_db_geometry
 
 
 SOURCE_DEFINITIONS = [
@@ -56,8 +57,8 @@ def seed_demo_data(db: Session) -> None:
                 id=area_id,
                 name_th=name_th,
                 name_en=name_en,
-                geometry=polygon,
-                centroid={"type": "Point", "coordinates": [lon, lat]},
+                geometry=to_db_geometry(polygon),
+                centroid=to_db_geometry({"type": "Point", "coordinates": [lon, lat]}),
                 source_name="Synthetic UX fixture — not an official boundary",
                 source_version="demo-v1",
                 quality_status="synthetic_demo",

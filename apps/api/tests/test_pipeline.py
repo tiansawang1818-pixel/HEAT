@@ -2,8 +2,18 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 
-from app.models.entities import DataSource, DatasetVersion, OptimizationRun
-from app.services.connectors.base import SourceAsset, SourceConnector
+import pytest
+
+from app.models.entities import (
+    AreaIndicator,
+    DataSource,
+    DatasetVersion,
+    GeographicArea,
+    OptimizationRun,
+    PriorityScore,
+    TemperatureObservation,
+)
+from app.services.connectors.base import AreaProcessingRecord, ConnectorError, SourceAsset, SourceConnector
 from app.services.connectors.open_meteo import OpenMeteoConnector
 from app.services.pipeline import run_monitor
 
@@ -44,6 +54,61 @@ class UpdatedConnector(StaticConnector):
         if latest_asset_id == "asset-2":
             return []
         return [SourceAsset.with_checksum("asset-2", "v2", datetime(2026, 3, 1, tzinfo=timezone.utc), EXTENT)]
+
+
+class ProcessedTemperatureConnector(SourceConnector):
+    source_name = "Landsat 8/9"
+    dataset_id = "LANDSAT/LC08_C02_T1_L2+LANDSAT/LC09_C02_T1_L2"
+    layer_key = "temperature"
+    requires_area_processing = True
+
+    def __init__(self, fail_once=False):
+        self.fail_once = fail_once
+        self.process_calls = 0
+
+    def discover(self, latest_asset_id=None, checkpoint=None):
+        if latest_asset_id == "landsat-real-1":
+            return []
+        return [
+            SourceAsset.with_checksum(
+                "landsat-real-1",
+                "20260101",
+                datetime(2026, 1, 1, tzinfo=timezone.utc),
+                EXTENT,
+            )
+        ]
+
+    def process(self, asset, areas):
+        self.process_calls += 1
+        if self.fail_once and self.process_calls == 1:
+            raise ConnectorError("temporary Earth Engine timeout")
+        values = {"area-a": (38.0, 42.0), "area-b": (34.0, 37.0)}
+        return [
+            AreaProcessingRecord(
+                area_id=area["id"],
+                indicators={"lst_c_mean": values[area["id"]][0], "lst_c_p90": values[area["id"]][1]},
+                units={"lst_c_mean": "°C", "lst_c_p90": "°C"},
+                coverage_fraction=0.8,
+                metadata={"aggregation": "test regional reduction"},
+            )
+            for area in areas
+        ]
+
+
+def add_test_areas(db):
+    for area_id, offset in (("area-a", 0.0), ("area-b", 0.05)):
+        db.add(
+            GeographicArea(
+                id=area_id,
+                name_th=area_id,
+                name_en=area_id,
+                geometry={
+                    "type": "MultiPolygon",
+                    "coordinates": [[[[100.5 + offset, 13.7], [100.51 + offset, 13.7], [100.51 + offset, 13.71], [100.5 + offset, 13.71], [100.5 + offset, 13.7]]]],
+                },
+            )
+        )
+    db.commit()
 
 
 def test_new_asset_publishes_and_duplicate_is_skipped(db):
@@ -153,3 +218,42 @@ def test_new_publication_marks_saved_optimization_outdated(db):
     db.refresh(optimization_without_source)
     assert optimization.is_outdated is True
     assert optimization_without_source.is_outdated is True
+
+
+def test_processed_satellite_records_publish_atomically_and_recalculate_priority(db):
+    add_test_areas(db)
+    result = run_monitor(db, ProcessedTemperatureConnector(), requested_by="test")
+
+    assert result["processed"] == 1
+    observations = db.scalars(select(TemperatureObservation).order_by(TemperatureObservation.area_id)).all()
+    indicators = db.scalars(select(AreaIndicator).where(AreaIndicator.indicator_key == "lst_c_mean")).all()
+    scores = db.scalars(select(PriorityScore).order_by(PriorityScore.area_id)).all()
+    version = db.scalar(select(DatasetVersion).where(DatasetVersion.source_asset_id == "landsat-real-1"))
+
+    assert version.status == "published"
+    assert version.quality_summary["processed_areas"] == 2
+    assert len(observations) == 2
+    assert len(indicators) == 2
+    assert len(scores) == 2
+    assert scores[0].components["temperature_anomaly"] == 2.0
+    assert scores[1].components["temperature_anomaly"] == -2.0
+
+
+def test_processing_error_preserves_retryable_version_and_succeeds_on_retry(db):
+    add_test_areas(db)
+    connector = ProcessedTemperatureConnector(fail_once=True)
+
+    with pytest.raises(ConnectorError, match="temporary Earth Engine timeout"):
+        run_monitor(db, connector, requested_by="test")
+
+    failed = db.scalar(select(DatasetVersion).where(DatasetVersion.source_asset_id == "landsat-real-1"))
+    assert failed.status == "failed"
+    assert failed.quality_status == "processing_error"
+    assert db.scalar(select(AreaIndicator).where(AreaIndicator.dataset_version_id == failed.id)) is None
+
+    retried = run_monitor(db, connector, requested_by="test-retry")
+    db.refresh(failed)
+    assert retried["processed"] == 1
+    assert failed.status == "published"
+    assert connector.process_calls == 2
+    assert len(db.scalars(select(TemperatureObservation)).all()) == 2
