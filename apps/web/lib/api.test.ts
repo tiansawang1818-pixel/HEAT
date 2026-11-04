@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { askAssistant, compareScenarios, loadDashboardData, runForecastScenario, saveScenario } from "./api";
+import { askAssistant, compareScenarios, loadDashboardData, loadDatasetVersions, runForecastScenario, saveScenario } from "./api";
 import { formatBaht, formatNumber, freshnessLabel } from "./utils";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -169,5 +169,29 @@ describe("Thai presentation helpers", () => {
       budget_thb: 5_000_000,
       enabled_types: ["shade_structure"],
     });
+  });
+
+  it("loads validation provenance without requiring raw provider payloads", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      source: { id: "source-1", source_name: "Open-Meteo", provider: "Open-Meteo", dataset_id: "open-meteo/weather-context" },
+      items: [{
+        id: "version-1",
+        source_asset_id: "weather:2026-11-04T02:00Z",
+        source_version: "forecast-api-v1",
+        status: "failed",
+        quality_status: "rejected",
+        layer_version: 0,
+        provider_payload_preserved: true,
+        validation: { passed: false, checks: { forecast_hours: 0 }, warnings: [], errors: ["missing hourly fields"] },
+      }],
+      page: 1,
+      page_size: 20,
+      total: 1,
+    })));
+
+    const history = await loadDatasetVersions("source-1");
+    expect(history.items[0].validation?.passed).toBe(false);
+    expect(history.items[0].validation?.errors[0]).toContain("hourly");
+    expect(history.items[0].provider_payload_preserved).toBe(true);
   });
 });

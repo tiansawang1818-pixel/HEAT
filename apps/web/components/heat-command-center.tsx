@@ -53,6 +53,7 @@ import {
   loadAreaDetail,
   loadAreaHistory,
   loadDashboardData,
+  loadDatasetVersions,
   loadIngestionStatus,
   loadLayerFeatures,
   loadObservatoryStatus,
@@ -75,6 +76,7 @@ import {
   freshnessLabel,
   type AreaProperties,
   type DatasetStatus,
+  type DatasetVersionHistory,
   type FeatureCollection,
   type ForecastResult,
   type GeoFeature,
@@ -1301,6 +1303,20 @@ function ObservatoryOverlay({ datasets, snapshot, loading, onRefresh, refreshing
 }) {
   const [source, setSource] = useState("open-meteo");
   const [operatorToken, setOperatorToken] = useState("");
+  const [versionHistory, setVersionHistory] = useState<DatasetVersionHistory | null>(null);
+  const [versionHistoryLoading, setVersionHistoryLoading] = useState(false);
+  const [versionHistoryError, setVersionHistoryError] = useState<string | null>(null);
+  const inspectVersions = async (sourceId: string) => {
+    setVersionHistoryLoading(true);
+    setVersionHistoryError(null);
+    try {
+      setVersionHistory(await loadDatasetVersions(sourceId));
+    } catch (loadError) {
+      setVersionHistoryError(loadError instanceof Error ? loadError.message : "โหลดประวัติเวอร์ชันไม่สำเร็จ");
+    } finally {
+      setVersionHistoryLoading(false);
+    }
+  };
   const queue = {
     queued: snapshot?.queue?.queued ?? 0,
     running: snapshot?.queue?.running ?? 0,
@@ -1345,9 +1361,52 @@ function ObservatoryOverlay({ datasets, snapshot, loading, onRefresh, refreshing
               <div><dt>ตรวจครั้งถัดไป</dt><dd>{formatThaiDate(item.next_check_at, true)}</dd></div>
             </dl>
             <p>{item.status_reason || `คุณภาพ: ${item.quality_status || "ยังไม่ระบุ"}`}</p>
+            {item.source_id && <button className="version-history-button" onClick={() => void inspectVersions(item.source_id!)}><History size={12} /> ตรวจ version และ validation</button>}
           </Card>
         ))}
       </div>
+      {(versionHistoryLoading || versionHistory || versionHistoryError) && (
+        <div className="version-history-panel">
+          <div className="version-history-head">
+            <div><span>DATA PROVENANCE</span><strong>{versionHistory?.source.source_name || "กำลังโหลดประวัติ"}</strong><small>{versionHistory?.source.dataset_id}</small></div>
+            <div>
+              {versionHistory?.source.id && <button onClick={() => void inspectVersions(versionHistory.source.id)} aria-label="รีโหลดประวัติเวอร์ชัน"><RefreshCw className={cn(versionHistoryLoading && "animate-spin")} size={13} /></button>}
+              <button onClick={() => { setVersionHistory(null); setVersionHistoryError(null); }} aria-label="ปิดประวัติเวอร์ชัน"><X size={14} /></button>
+            </div>
+          </div>
+          {versionHistoryLoading && !versionHistory && <div className="observatory-loading"><RefreshCw className="animate-spin" size={13} /> กำลังอ่าน validation reports</div>}
+          {versionHistoryError && <div className="error-box">{versionHistoryError}</div>}
+          {versionHistory && (
+            <div className="version-history-list">
+              {versionHistory.items.map((version) => (
+                <article key={version.id} className={cn(version.status === "failed" && "failed")}>
+                  <div className="version-row-head">
+                    <span><strong>{version.source_asset_id}</strong><small>{version.source_version}</small></span>
+                    <Badge>{version.status}</Badge>
+                  </div>
+                  <dl>
+                    <div><dt>สังเกตการณ์ต้นทาง</dt><dd>{formatThaiDate(version.observed_at, true)}</dd></div>
+                    <div><dt>เผยแพร่</dt><dd>{formatThaiDate(version.published_at, true)}</dd></div>
+                    <div><dt>Layer version</dt><dd>v{version.layer_version}</dd></div>
+                    <div><dt>คุณภาพ</dt><dd>{version.quality_status}</dd></div>
+                  </dl>
+                  {version.validation ? (
+                    <div className={cn("validation-summary", version.validation.passed ? "passed" : "rejected")}>
+                      <span>{version.validation.passed ? "VALIDATION PASSED" : "VALIDATION REJECTED"}</span>
+                      <small>{Object.entries(version.validation.checks).map(([key, value]) => `${key}: ${String(value)}`).join(" · ") || "ไม่มี metric เพิ่มเติม"}</small>
+                      {!!version.validation.warnings.length && <p>คำเตือน: {version.validation.warnings.join(" · ")}</p>}
+                      {!!version.validation.errors.length && <p>เหตุผล: {version.validation.errors.join(" · ")}</p>}
+                    </div>
+                  ) : <div className="validation-summary"><span>ยังไม่มี validation report</span></div>}
+                  <div className="version-foot"><span>Payload เก็บในระบบ: {version.provider_payload_preserved ? "ใช่ (ไม่เปิดเผย raw ผ่าน API)" : "ไม่"}</span><span>{version.checksum ? `SHA-256 ${version.checksum.slice(0, 12)}…` : "ไม่มี checksum"}</span></div>
+                </article>
+              ))}
+              {!versionHistory.items.length && <p className="timeline-empty">ยังไม่มี dataset version สำหรับแหล่งนี้</p>}
+              <div className="version-history-count">แสดง {versionHistory.items.length} จาก {versionHistory.total} เวอร์ชัน</div>
+            </div>
+          )}
+        </div>
+      )}
       {snapshot && (
         <div className="observatory-details">
           <section>

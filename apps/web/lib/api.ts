@@ -2,6 +2,7 @@ import { defaultLayers, demoDatasets, demoFeatures } from "@/lib/demo-data";
 import type {
   AreaProperties,
   DatasetStatus,
+  DatasetVersionHistory,
   FeatureCollection,
   ForecastResult,
   GeoFeature,
@@ -56,6 +57,7 @@ const layerProperty: Record<string, keyof AreaProperties> = {
 
 function normalizeDataset(raw: Record<string, unknown>): DatasetStatus {
   return {
+    source_id: typeof raw.id === "string" ? raw.id : undefined,
     source_name: String(raw.source_name || raw.provider || "ไม่ระบุแหล่งข้อมูล"),
     dataset_id: String(raw.dataset_id || raw.id || "unknown"),
     layer_name: typeof raw.layer_name === "string" ? raw.layer_name : undefined,
@@ -420,6 +422,10 @@ export async function loadIngestionStatus(jobId: string) {
 
 export async function loadObservatoryStatus(): Promise<ObservatorySnapshot> {
   return request<ObservatorySnapshot>("/api/ingestion/status");
+}
+
+export async function loadDatasetVersions(sourceId: string): Promise<DatasetVersionHistory> {
+  return request<DatasetVersionHistory>(`/api/datasets/${encodeURIComponent(sourceId)}/versions?page=1&page_size=20`);
 }
 
 export async function askAssistant(question: string, areaId?: string) {

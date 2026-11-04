@@ -29,6 +29,7 @@ from app.models.entities import (
     SavedScenario,
     SourceCheck,
     TemperatureObservation,
+    ValidationReport,
 )
 from app.schemas.api import (
     AssistantQuery,
@@ -237,6 +238,81 @@ def weather_context(db: Session = Depends(get_db)) -> Dict[str, Any]:
         "hourly": payload.get("hourly") if isinstance(payload.get("hourly"), dict) else None,
         "hourly_units": payload.get("hourly_units") if isinstance(payload.get("hourly_units"), dict) else {},
         "limitations_th": "ข้อมูลนี้เป็นค่าประมาณจากแบบจำลองและพยากรณ์ ไม่ใช่อุณหภูมิพื้นผิวจากดาวเทียมหรือสถานีภาคพื้นดิน",
+    }
+
+
+@router.get("/datasets/{source_id}/versions")
+def dataset_versions(
+    source_id: str,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    status: Optional[str] = None,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    source = db.get(DataSource, source_id)
+    if source is None or source.source_type == "test_fixture":
+        raise HTTPException(status_code=404, detail="Data source not found")
+    query = select(DatasetVersion).where(DatasetVersion.source_id == source.id)
+    count_query = select(func.count()).select_from(DatasetVersion).where(DatasetVersion.source_id == source.id)
+    if status:
+        query = query.where(DatasetVersion.status == status)
+        count_query = count_query.where(DatasetVersion.status == status)
+    total = int(db.scalar(count_query) or 0)
+    rows = db.scalars(
+        query.order_by(desc(DatasetVersion.discovered_at)).offset((page - 1) * page_size).limit(page_size)
+    ).all()
+    version_ids = [row.id for row in rows]
+    reports: Dict[str, ValidationReport] = {}
+    if version_ids:
+        for report in db.scalars(
+            select(ValidationReport)
+            .where(ValidationReport.dataset_version_id.in_(version_ids))
+            .order_by(desc(ValidationReport.created_at))
+        ).all():
+            reports.setdefault(report.dataset_version_id, report)
+
+    def serialize(row: DatasetVersion) -> Dict[str, Any]:
+        report = reports.get(row.id)
+        metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+        return {
+            "id": row.id,
+            "source_asset_id": row.source_asset_id,
+            "source_version": row.source_version,
+            "checksum": row.checksum,
+            "status": row.status,
+            "quality_status": row.quality_status,
+            "quality_summary": row.quality_summary,
+            "layer_version": row.layer_version,
+            "observed_at": _iso(row.observed_at),
+            "discovered_at": _iso(row.discovered_at),
+            "ingested_at": _iso(row.ingested_at),
+            "validated_at": _iso(row.validated_at),
+            "published_at": _iso(row.published_at),
+            "geographic_extent": row.geographic_extent,
+            "metadata": {key: value for key, value in metadata.items() if key != "provider_payload"},
+            "provider_payload_preserved": "provider_payload" in metadata,
+            "validation": None
+            if report is None
+            else {
+                "passed": report.passed,
+                "checks": report.checks,
+                "warnings": report.warnings,
+                "errors": report.errors,
+                "created_at": _iso(report.created_at),
+            },
+        }
+
+    return {
+        "source": {
+            "id": source.id,
+            "source_name": source.name,
+            "provider": source.provider,
+            "dataset_id": source.dataset_id,
+        },
+        "items": [serialize(row) for row in rows],
+        "page": page,
+        "page_size": page_size,
+        "total": total,
     }
 
 

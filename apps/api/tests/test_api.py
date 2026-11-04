@@ -14,6 +14,7 @@ from app.models.entities import (
     PipelineEvent,
     PriorityScore,
     SourceCheck,
+    ValidationReport,
 )
 
 
@@ -83,6 +84,78 @@ def test_weather_context_is_transparently_unavailable_before_publication(client)
     assert body["status"] == "unavailable"
     assert body["current"] is None
     assert body["reference_time"] is None
+
+
+def test_dataset_version_history_exposes_validation_but_not_provider_payload(client, db):
+    source = db.scalar(select(DataSource).where(DataSource.dataset_id == "open-meteo/weather-context"))
+    published = DatasetVersion(
+        source_id=source.id,
+        source_asset_id="weather:valid",
+        source_version="forecast-api-v1",
+        observed_at=datetime(2026, 11, 4, 1, 0, tzinfo=timezone.utc),
+        discovered_at=datetime(2026, 11, 4, 1, 1, tzinfo=timezone.utc),
+        published_at=datetime(2026, 11, 4, 1, 2, tzinfo=timezone.utc),
+        status="published",
+        quality_status="valid",
+        layer_version=2,
+        geographic_extent={"type": "Point", "coordinates": [100.5018, 13.7563]},
+        metadata_json={
+            "data_class": "model_estimate_and_forecast",
+            "provider_payload": {"current": {"temperature_2m": 31.2}},
+        },
+    )
+    failed = DatasetVersion(
+        source_id=source.id,
+        source_asset_id="weather:rejected",
+        source_version="forecast-api-v1",
+        observed_at=datetime(2026, 11, 4, 2, 0, tzinfo=timezone.utc),
+        discovered_at=datetime(2026, 11, 4, 2, 1, tzinfo=timezone.utc),
+        status="failed",
+        quality_status="rejected",
+        layer_version=0,
+        geographic_extent={"type": "Point", "coordinates": [100.5018, 13.7563]},
+        metadata_json={"provider_payload": {"raw": "must-not-be-public"}},
+    )
+    db.add_all([published, failed])
+    db.flush()
+    db.add_all(
+        [
+            ValidationReport(
+                dataset_version_id=published.id,
+                passed=True,
+                checks={"forecast_hours": 48},
+                warnings=[],
+                errors=[],
+            ),
+            ValidationReport(
+                dataset_version_id=failed.id,
+                passed=False,
+                checks={"forecast_hours": 0},
+                warnings=[],
+                errors=["missing Open-Meteo hourly fields"],
+            ),
+        ]
+    )
+    db.commit()
+
+    response = client.get(f"/api/datasets/{source.id}/versions")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 2
+    assert body["items"][0]["source_asset_id"] == "weather:rejected"
+    assert body["items"][0]["validation"]["passed"] is False
+    assert "hourly fields" in body["items"][0]["validation"]["errors"][0]
+    assert body["items"][0]["provider_payload_preserved"] is True
+    assert "provider_payload" not in body["items"][0]["metadata"]
+    assert "must-not-be-public" not in response.text
+
+    filtered = client.get(f"/api/datasets/{source.id}/versions?status=published")
+    assert filtered.status_code == 200
+    assert filtered.json()["total"] == 1
+    assert filtered.json()["items"][0]["layer_version"] == 2
+
+    fixture = db.scalar(select(DataSource).where(DataSource.dataset_id == "local/integration-fixture"))
+    assert client.get(f"/api/datasets/{fixture.id}/versions").status_code == 404
 
 
 def test_manual_ingestion_requires_admin(client):

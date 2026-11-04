@@ -39,6 +39,7 @@ export function freshnessLabel(status: DatasetStatus["status"]) {
 export type FreshnessState = "up_to_date" | "updating" | "stale" | "unavailable" | "error";
 
 export interface DatasetStatus {
+  source_id?: string;
   source_name: string;
   dataset_id: string;
   layer_name?: string;
@@ -50,6 +51,40 @@ export interface DatasetStatus {
   layer_version?: number;
   quality_status?: string;
   status_reason?: string;
+}
+
+export interface DatasetVersionHistory {
+  source: {
+    id: string;
+    source_name: string;
+    provider: string;
+    dataset_id: string;
+  };
+  items: Array<{
+    id: string;
+    source_asset_id: string;
+    source_version: string;
+    checksum?: string | null;
+    status: string;
+    quality_status: string;
+    layer_version: number;
+    observed_at?: string | null;
+    discovered_at?: string | null;
+    ingested_at?: string | null;
+    validated_at?: string | null;
+    published_at?: string | null;
+    provider_payload_preserved: boolean;
+    validation?: {
+      passed: boolean;
+      checks: Record<string, unknown>;
+      warnings: string[];
+      errors: string[];
+      created_at?: string | null;
+    } | null;
+  }>;
+  page: number;
+  page_size: number;
+  total: number;
 }
 
 export interface WeatherContext {
