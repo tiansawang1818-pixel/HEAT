@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { compareScenarios, loadDashboardData, runForecastScenario } from "./api";
+import { askAssistant, compareScenarios, loadDashboardData, runForecastScenario } from "./api";
 import { formatBaht, formatNumber, freshnessLabel } from "./utils";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -95,5 +95,35 @@ describe("Thai presentation helpers", () => {
     expect(dashboard.weather?.limitations_th).toContain("ไม่ใช่ LST");
     expect(dashboard.layers[0]).toMatchObject({ id: "priority", layer_version: 0, observation_date: null });
     expect(dashboard.isDemo).toBe(false);
+  });
+
+  it("normalizes a grounded assistant optimization for immediate map display", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      answer_th: "คำนวณจาก candidate ที่มีหลักฐานแล้ว",
+      grounding: [{ type: "optimization_run", id: "run-1" }],
+      mode: "deterministic",
+      optimization: {
+        run_id: "run-1",
+        budget_thb: 5_000_000,
+        allocated_thb: 2_000_000,
+        estimated_beneficiaries: 1_200,
+        objective_value: 0.8,
+        input_versions: { worldpop: { version_id: "v1" } },
+        selected: [{
+          id: "assistant-tree",
+          name_th: "แนวต้นไม้ที่ผ่านการสำรวจ",
+          intervention_type: "tree_planting",
+          estimated_cost_thb: 2_000_000,
+          estimated_beneficiaries: 1_200,
+          priority_score: 86,
+          geometry: { type: "Point", coordinates: [100.52, 13.74] },
+        }],
+      },
+    })));
+
+    const result = await askAssistant("มีงบ 5 ล้านบาท ควรลงทุนตรงไหน?");
+    expect(result.optimization?.run_id).toBe("run-1");
+    expect(result.optimization?.allocations[0]).toMatchObject({ longitude: 100.52, latitude: 13.74 });
+    expect(result.grounding[0].type).toBe("optimization_run");
   });
 });

@@ -180,6 +180,89 @@ def test_priority_rankings_use_latest_score_and_expose_formula(client, db):
     assert "ไม่ใช่ข้อสรุปเรื่องรายได้" in body["interpretation_warning_th"]
 
 
+def test_assistant_runs_grounded_budget_optimization_and_records_portfolio(client, db):
+    area = GeographicArea(
+        id="assistant-area",
+        name_th="พื้นที่ผู้ช่วย",
+        name_en="Assistant area",
+        geometry={"type": "Point", "coordinates": [100.52, 13.74]},
+        source_name="test",
+    )
+    candidates = [
+        CandidateIntervention(
+            id="assistant-tree",
+            area_id=area.id,
+            name_th="แนวต้นไม้ที่ผ่านการสำรวจ",
+            intervention_type="tree_planting",
+            geometry={"type": "Point", "coordinates": [100.52, 13.74]},
+            estimated_cost_thb=2_000_000,
+            estimated_beneficiaries=1_200,
+            priority_score=86,
+            benefit_score=0.8,
+            feasibility_status="eligible",
+            evidence={"source": "approved-site-survey"},
+            uncertainty={"level": "medium"},
+        ),
+        CandidateIntervention(
+            id="assistant-shade",
+            area_id=area.id,
+            name_th="โครงสร้างร่มเงาที่ผ่านการสำรวจ",
+            intervention_type="shade_structure",
+            geometry={"type": "Point", "coordinates": [100.53, 13.75]},
+            estimated_cost_thb=3_000_000,
+            estimated_beneficiaries=1_800,
+            priority_score=79,
+            benefit_score=0.7,
+            feasibility_status="eligible",
+            evidence={"source": "approved-site-survey"},
+            uncertainty={"level": "medium"},
+        ),
+        CandidateIntervention(
+            id="assistant-unverified",
+            area_id=area.id,
+            name_th="โครงการที่ยังไม่มีหลักฐาน",
+            intervention_type="cooling_rest_area",
+            geometry={"type": "Point", "coordinates": [100.54, 13.76]},
+            estimated_cost_thb=100_000,
+            estimated_beneficiaries=20_000,
+            priority_score=99,
+            benefit_score=1.0,
+            feasibility_status="eligible",
+            evidence={},
+            uncertainty={"level": "unknown"},
+        ),
+    ]
+    db.add_all([area, *candidates])
+    db.commit()
+
+    response = client.post(
+        "/api/assistant/query",
+        json={"question": "มีงบ ๕ ล้านบาท ควรลงทุนตรงไหน?", "area_id": area.id},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["mode"] == "deterministic"
+    assert body["invented_values"] is False
+    assert body["optimization"]["allocated_thb"] == 5_000_000
+    assert len(body["optimization"]["selected"]) == 2
+    assert "assistant-unverified" not in {item["id"] for item in body["optimization"]["selected"]}
+    assert body["optimization"]["selected"][0]["geometry"]["type"] == "Point"
+    assert body["grounding"][0]["type"] == "optimization_run"
+    assert db.get(OptimizationRun, body["optimization"]["run_id"]) is not None
+    allocations = db.scalars(
+        select(OptimizationAllocation).where(OptimizationAllocation.run_id == body["optimization"]["run_id"])
+    ).all()
+    assert len(allocations) == 2
+
+
+def test_assistant_rejects_budget_outside_optimizer_range(client):
+    response = client.post("/api/assistant/query", json={"question": "มีงบ 50,000 บาท"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["optimization"] is None
+    assert "100,000 ถึง 100,000,000 บาท" in body["answer_th"]
+
+
 def test_optimization_rejects_out_of_range_budget(client):
     response = client.post("/api/optimization/run", json={"budget_thb": 99999})
     assert response.status_code == 422

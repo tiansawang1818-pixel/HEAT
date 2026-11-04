@@ -951,11 +951,69 @@ def forecast_run(request: ForecastRequest, db: Session = Depends(get_db)) -> Dic
     }
 
 
+def _budget_from_question(question: str) -> Optional[int]:
+    normalized = question.translate(str.maketrans("๐๑๒๓๔๕๖๗๘๙", "0123456789")).replace(",", "")
+    match = re.search(r"(\d+(?:\.\d+)?)\s*(ล้าน(?:บาท)?|บาท)", normalized)
+    if not match:
+        return None
+    value = float(match.group(1))
+    if match.group(2).startswith("ล้าน"):
+        value *= 1_000_000
+    return int(round(value))
+
+
 @router.post("/assistant/query")
 def assistant_query(request: AssistantQuery, db: Session = Depends(get_db)) -> Dict[str, Any]:
     question = request.question.lower()
     grounding: List[Dict[str, Any]] = []
-    if "ล่าสุด" in question or "ข้อมูลใหม่" in question or "ดาวเทียม" in question:
+    optimization: Optional[Dict[str, Any]] = None
+    parsed_budget = request.budget_thb if request.budget_thb is not None else _budget_from_question(question)
+    budget_mentioned = request.budget_thb is not None or parsed_budget is not None or "งบ" in question
+    if budget_mentioned:
+        if parsed_budget is None:
+            answer = "กรุณาระบุงบประมาณเป็นบาทหรือหน่วยล้านบาท เช่น 5 ล้านบาท เพื่อให้ระบบคำนวณจาก candidate ที่มีหลักฐาน"
+        elif not 100_000 <= parsed_budget <= 100_000_000:
+            answer = "City Optimizer รองรับงบประมาณตั้งแต่ 100,000 ถึง 100,000,000 บาท"
+        else:
+            candidates = [candidate for candidate in _candidate_rows(db) if candidate.evidence]
+            if not candidates:
+                answer = "ยังไม่มี candidate intervention ที่มีหลักฐานในฐานข้อมูล จึงไม่ควรสร้างตำแหน่งลงทุนขึ้นเอง"
+            else:
+                optimization = optimization_run(
+                    OptimizationRequest(
+                        budget_thb=parsed_budget,
+                        objective="balanced",
+                        candidate_ids=[candidate.id for candidate in candidates],
+                    ),
+                    db,
+                )
+                selected = optimization["selected"]
+                if not selected:
+                    answer = "ยังไม่มี candidate ที่ feasible และมีต้นทุนอยู่ภายในงบ %s บาท" % f"{parsed_budget:,.0f}"
+                else:
+                    preview = ", ".join(item["name_th"] for item in selected[:3])
+                    if len(selected) > 3:
+                        preview += " และอีก %s โครงการ" % (len(selected) - 3)
+                    answer = (
+                        "จาก candidate ที่มีหลักฐาน ระบบ OR-Tools เลือก %s โครงการ ใช้งบ %s จาก %s บาท "
+                        "ผู้รับประโยชน์โดยประมาณ %s คน ได้แก่ %s ผลลัพธ์นี้ผูกกับ dataset versions ปัจจุบันและควรคำนวณใหม่เมื่อข้อมูลเปลี่ยน"
+                        % (
+                            len(selected),
+                            f"{optimization['allocated_thb']:,.0f}",
+                            f"{parsed_budget:,.0f}",
+                            f"{optimization['estimated_beneficiaries']:,.0f}",
+                            preview,
+                        )
+                    )
+                grounding.append(
+                    {
+                        "type": "optimization_run",
+                        "id": optimization["run_id"],
+                        "input_versions": optimization["input_versions"],
+                        "candidate_ids": [item["id"] for item in selected],
+                    }
+                )
+    elif "ล่าสุด" in question or "ข้อมูลใหม่" in question or "ดาวเทียม" in question:
         sources = [_source_status(db, source) for source in db.scalars(select(DataSource)).all()]
         observed = [item for item in sources if item["last_source_observation"]]
         if not observed:
@@ -966,7 +1024,7 @@ def assistant_query(request: AssistantQuery, db: Session = Depends(get_db)) -> D
                 latest["source_name"], latest["last_source_observation"], latest["status"]
             )
             grounding.append({"type": "dataset", "id": latest["id"], "layer_version": latest["layer_version"]})
-    elif request.area_id or "ทำไม" in question:
+    elif any(token in question for token in ["ทำไม", "คะแนน", "พื้นที่นี้"]):
         if not request.area_id:
             answer = "กรุณาเลือกพื้นที่บนแผนที่ก่อน เพื่ออธิบายจากข้อมูลของพื้นที่นั้นโดยตรง"
         else:
@@ -980,8 +1038,6 @@ def assistant_query(request: AssistantQuery, db: Session = Depends(get_db)) -> D
                     area.name_th, score.score, component_text or "ข้อมูลที่มีอยู่"
                 )
                 grounding.append({"type": "priority_score", "id": score.id, "formula_version": score.formula_version})
-    elif request.budget_thb or re.search(r"\d+\s*(ล้าน|บาท)", question):
-        answer = "โปรดส่งงบประมาณผ่าน City Optimizer เพื่อให้ OR-Tools คำนวณจาก candidate ที่มีหลักฐานและข้อจำกัดจริง ระบบจะไม่สร้างตำแหน่งหรือผลประโยชน์ขึ้นเอง"
     else:
         top = db.execute(
             select(PriorityScore, GeographicArea)
@@ -997,7 +1053,13 @@ def assistant_query(request: AssistantQuery, db: Session = Depends(get_db)) -> D
                 area.name_th, score.score, _iso(score.calculated_at)
             )
             grounding.append({"type": "priority_score", "id": score.id, "area_id": area.id})
-    return {"answer_th": answer, "grounding": grounding, "mode": "deterministic", "invented_values": False}
+    return {
+        "answer_th": answer,
+        "grounding": grounding,
+        "optimization": optimization,
+        "mode": "deterministic",
+        "invented_values": False,
+    }
 
 
 def _connector_for(source: str, fixture_path: Optional[str] = None):

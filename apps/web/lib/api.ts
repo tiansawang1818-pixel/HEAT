@@ -358,14 +358,24 @@ export async function loadObservatoryStatus(): Promise<ObservatorySnapshot> {
 }
 
 export async function askAssistant(question: string, areaId?: string) {
-  const value = await request<{ answer_th: string; grounding?: Array<Record<string, unknown>>; mode: string }>(
+  const value = await request<{
+    answer_th: string;
+    grounding?: Array<Record<string, unknown>>;
+    optimization?: Record<string, unknown> | null;
+    mode: string;
+  }>(
     "/api/assistant/query",
     {
       method: "POST",
       body: JSON.stringify({ question, area_id: areaId || null }),
     },
   );
-  return { answer: value.answer_th, grounding: value.grounding || [], mode: value.mode };
+  return {
+    answer: value.answer_th,
+    grounding: value.grounding || [],
+    optimization: value.optimization ? normalizeOptimizationResult(value.optimization, "balanced") : null,
+    mode: value.mode,
+  };
 }
 
 export function streamUrl() {

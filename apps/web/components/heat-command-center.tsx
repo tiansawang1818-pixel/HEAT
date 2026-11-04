@@ -197,6 +197,7 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
   const [actionError, setActionError] = useState<string | null>(null);
   const [assistantQuestion, setAssistantQuestion] = useState("");
   const [assistantAnswer, setAssistantAnswer] = useState<string | null>(null);
+  const [assistantOptimization, setAssistantOptimization] = useState<OptimizationResult | null>(null);
   const [assistantLoading, setAssistantLoading] = useState(false);
   const [observatory, setObservatory] = useState<ObservatorySnapshot | null>(null);
   const [observatoryLoading, setObservatoryLoading] = useState(initialView === "observatory");
@@ -409,6 +410,12 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
     try {
       const result = await askAssistant(question, selected?.properties.id);
       setAssistantAnswer(result.answer);
+      setAssistantOptimization(result.optimization);
+      if (result.optimization) {
+        setOptimization(result.optimization);
+        setBottomOpen(true);
+        setUpdateNotice("OR-Tools คำนวณพอร์ตจาก candidate ที่มีหลักฐานแล้ว — แสดงตำแหน่งบนแผนที่");
+      }
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "ผู้ช่วยยังไม่พร้อมใช้งาน");
     } finally {
@@ -682,6 +689,7 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
                 question={assistantQuestion}
                 setQuestion={setAssistantQuestion}
                 answer={assistantAnswer}
+                optimization={assistantOptimization}
                 loading={assistantLoading}
                 disabled={data.isDemo}
                 onAsk={(question) => void handleAssistant(question)}
@@ -1045,11 +1053,12 @@ function OptimizerPanel(props: OptimizerPanelProps) {
   );
 }
 
-function AssistantPanel({ area, question, setQuestion, answer, loading, disabled, onAsk, error }: {
+function AssistantPanel({ area, question, setQuestion, answer, optimization, loading, disabled, onAsk, error }: {
   area: AreaProperties | null;
   question: string;
   setQuestion: (value: string) => void;
   answer: string | null;
+  optimization: OptimizationResult | null;
   loading: boolean;
   disabled: boolean;
   onAsk: (question?: string) => void;
@@ -1065,6 +1074,28 @@ function AssistantPanel({ area, question, setQuestion, answer, loading, disabled
       {disabled && <div className="inline-warning">ผู้ช่วยจะตอบเมื่อเชื่อม backend เท่านั้น เพื่อไม่สร้างตัวเลขที่ไม่มีแหล่งอ้างอิง</div>}
       {error && <div className="error-box">{error}</div>}
       {answer && <div className="assistant-answer"><span>คำตอบจากข้อมูลระบบ</span><p>{answer}</p></div>}
+      {optimization && (
+        <Card className="assistant-portfolio">
+          <div className="assistant-portfolio-head">
+            <span>พอร์ตจาก OR-Tools</span>
+            <strong>{formatBaht(optimization.total_cost_thb)}</strong>
+          </div>
+          <div className="assistant-portfolio-stats">
+            <span>{optimization.allocations.length} โครงการ</span>
+            <span>ผู้รับประโยชน์ประมาณ {formatNumber(optimization.estimated_beneficiaries)} คน</span>
+          </div>
+          <div className="assistant-projects">
+            {optimization.allocations.slice(0, 5).map((project, index) => (
+              <div key={project.id}>
+                <i>{String(index + 1).padStart(2, "0")}</i>
+                <span>{project.name}<small>{project.intervention_type}</small></span>
+                <strong>{formatBaht(project.cost_thb)}</strong>
+              </div>
+            ))}
+          </div>
+          <p>ตำแหน่งถูกแสดงบนแผนที่และบันทึก run ไว้ส่งออกรายงานได้ในแท็บ “งบเมือง”</p>
+        </Card>
+      )}
     </>
   );
 }
