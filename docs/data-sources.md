@@ -20,6 +20,10 @@ GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/gee-service-account.json
 GEE_MAX_CONCURRENT_EXPORTS=2
 OPEN_METEO_BASE_URL=https://api.open-meteo.com/v1/forecast
 OVERPASS_API_URL=https://overpass-api.de/api/interpreter
+OVERPASS_TIMEOUT_SECONDS=120
+OVERPASS_MAX_RESPONSE_BYTES=20000000
+OVERPASS_MAX_ELEMENTS=20000
+OVERPASS_GRID_DIVISIONS=2
 WORLDPOP_API_BASE_URL=https://api.worldpop.org/v3
 WORLDPOP_API_KEY=
 WORLDPOP_REFERENCE_YEAR=
@@ -76,9 +80,13 @@ Anonymous API มี quota ต่ำกว่า API key ระบบบัน�
 
 ### Vector candidates
 
-- geometry validity, CRS, duplicates and feature IDs checked
-- suitability recalculated only where changed features intersect candidates
-- provider attribution/license fields retained
+- ตัวตรวจรายสัปดาห์อ่าน OSM daily replication state ก่อน แล้วแบ่ง Bangkok bbox เป็น grid ย่อยเพื่อ query Overpass สำหรับตลาด, สถานพยาบาล, community centres, parks, playgrounds และ squares จากนั้น deduplicate ด้วย OSM type/ID ชุด pilot จงใจไม่ bulk-query ป้ายรถโดยสาร/โรงเรียนทั้งหมดบน public endpoint
+- ระบบคำนวณ checksum จาก OSM IDs, tags, intervention screening type และตำแหน่งจริง ถ้า snapshot ไม่เปลี่ยนจะไม่สร้าง dataset version หรือประมวลผลซ้ำ
+- node ใช้พิกัดจริง ส่วน way/relation ใช้ `out center` สำหรับตำแหน่งคัดกรอง จึงไม่อ้างว่าเป็นขอบเขตแปลงหรือพื้นที่ก่อสร้าง
+- จุดต้องอยู่ในขอบเขต 50 เขตที่ publish แล้ว, ID ต้องไม่ซ้ำ, และเก็บลิงก์ feature/ODbL/`© OpenStreetMap contributors` ทุก record
+- candidate ใหม่มี `estimated_cost_thb=null`, `estimated_beneficiaries=null`, `feasibility_status=insufficient_evidence` และข้อกำหนดให้ตรวจสิทธิในที่ดิน/หน้างาน/การออกแบบ จึงไม่เข้า OR-Tools โดยอัตโนมัติ
+- เมื่อ snapshot เปลี่ยน ระบบ upsert stable IDs และทำ candidate ที่หายไปเป็น inactive โดยไม่ลบประวัติ การ publish ใหม่ทำให้ optimization run เดิมถูกทำเครื่องหมาย outdated
+- public Overpass เหมาะกับ pilot query ที่จำกัดขอบเขต ไม่ใช่ bulk production pipeline; deployment ขนาดใหญ่ควรเปลี่ยนเป็น extract/replication diff ที่ผู้ให้บริการอนุมัติ
 
 ## Freshness status policy
 

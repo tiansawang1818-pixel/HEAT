@@ -214,7 +214,7 @@ class CandidateIntervention(Base):
     name_th: Mapped[str] = mapped_column(String(200))
     intervention_type: Mapped[str] = mapped_column(String(80), index=True)
     geometry: Mapped[Dict[str, Any]] = mapped_column(geometry_type("GEOMETRY"))
-    estimated_cost_thb: Mapped[float] = mapped_column(Float)
+    estimated_cost_thb: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     annual_maintenance_thb: Mapped[Optional[float]] = mapped_column(Float)
     estimated_beneficiaries: Mapped[Optional[float]] = mapped_column(Float)
     priority_score: Mapped[float] = mapped_column(Float)

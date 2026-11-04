@@ -648,7 +648,11 @@ def priority_calculate(request: PriorityCalculateRequest) -> Dict[str, Any]:
 
 
 def _candidate_rows(db: Session, ids: Optional[List[str]] = None) -> List[CandidateIntervention]:
-    query = select(CandidateIntervention).where(CandidateIntervention.active.is_(True))
+    query = select(CandidateIntervention).where(
+        CandidateIntervention.active.is_(True),
+        CandidateIntervention.estimated_cost_thb.is_not(None),
+        CandidateIntervention.feasibility_status == "eligible",
+    )
     if ids:
         query = query.where(CandidateIntervention.id.in_(ids))
     return list(db.scalars(query).all())
@@ -658,7 +662,7 @@ def _to_optimizer_candidates(rows: List[CandidateIntervention]) -> List[Candidat
     return [
         Candidate(
             id=row.id,
-            cost_thb=int(round(row.estimated_cost_thb)),
+            cost_thb=int(round(row.estimated_cost_thb or 0)),
             beneficiaries=float(row.estimated_beneficiaries or 0),
             priority_score=float(row.priority_score),
             benefit_score=float(row.benefit_score or 0),

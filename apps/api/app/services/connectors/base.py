@@ -30,6 +30,19 @@ class BoundaryProcessingRecord:
 
 
 @dataclass(frozen=True)
+class CandidateProcessingRecord:
+    candidate_id: str
+    area_id: str
+    name_th: str
+    intervention_type: str
+    geometry: Dict[str, Any]
+    source_feature_id: str
+    feasibility_constraints: Dict[str, Any] = field(default_factory=dict)
+    evidence: Dict[str, Any] = field(default_factory=dict)
+    uncertainty: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class SourceAsset:
     source_asset_id: str
     source_version: str
@@ -75,6 +88,7 @@ class SourceConnector(ABC):
     layer_key: str
     requires_area_processing: bool = False
     requires_boundary_processing: bool = False
+    requires_candidate_processing: bool = False
 
     @abstractmethod
     def discover(self, latest_asset_id: Optional[str] = None, checkpoint: Optional[Dict[str, Any]] = None) -> List[SourceAsset]:
@@ -140,4 +154,26 @@ class SourceConnector(ABC):
             "errors": [],
             "warnings": [],
             "metrics": {"processed_areas": len(records)},
+        }
+
+    def process_candidates(
+        self, asset: SourceAsset, areas: Sequence[Dict[str, Any]]
+    ) -> List[CandidateProcessingRecord]:
+        return []
+
+    def validate_candidates(
+        self, asset: SourceAsset, records: Sequence[CandidateProcessingRecord]
+    ) -> Dict[str, Any]:
+        if self.requires_candidate_processing and not records:
+            return {
+                "passed": False,
+                "errors": ["processing produced no usable intervention candidates"],
+                "warnings": [],
+                "metrics": {"processed_candidates": 0},
+            }
+        return {
+            "passed": True,
+            "errors": [],
+            "warnings": [],
+            "metrics": {"processed_candidates": len(records)},
         }

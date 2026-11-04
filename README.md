@@ -27,6 +27,8 @@ make up
 
 หลังระบบเริ่มทำงาน Celery Beat จะตรวจ catalog ขอบเขต 50 เขตของ BMA รายสัปดาห์ ขอบเขตทางการต้อง publish ก่อน satellite/WorldPop regional aggregation ใน deployment ใหม่ สามารถสั่งครั้งแรกจาก Data Observatory โดยเลือก “ขอบเขต 50 เขต กทม.”
 
+ตัวตรวจ OpenStreetMap รายสัปดาห์ใช้ replication checkpoint ร่วมกับ snapshot checksum ของ feature ที่เกี่ยวข้องในกรุงเทพฯ ดึงเฉพาะสถานที่สาธารณะที่เข้าข่ายสำรวจผ่าน Overpass แล้วผูกจุดเข้ากับขอบเขตเขตทางการ ตำแหน่งเหล่านี้เริ่มในสถานะ `insufficient_evidence`: แสดงเป็นจุดคัดกรองบนแผนที่ได้ แต่ไม่มีต้นทุน/ผลประโยชน์ที่แต่งขึ้นและจะไม่เข้า optimizer จนกว่าจะผ่านการอนุมัติหลักฐาน
+
 หลังรัน City Optimizer ผู้ใช้สามารถส่งออกรายงาน HTML ที่พิมพ์หรือบันทึกเป็น PDF ได้ รายงานดึงผลจาก optimization run ที่บันทึกใน backend พร้อม dataset versions, หลักฐาน, ความไม่แน่นอน และคำเตือนเมื่อผลลัพธ์ล้าสมัย
 
 ตรวจสอบสถานะด้วย `docker compose ps` หรือ `make smoke` และดู worker ด้วย `make logs`
@@ -98,7 +100,7 @@ make down
 
 - Google Earth Engine project + service account ที่มีสิทธิ์อ่าน Landsat, Sentinel-2 และ Dynamic World
 - WorldPop/HTTP configuration ตามเงื่อนไขการเผยแพร่ของ version ที่เลือก
-- OpenStreetMap Overpass หรือ provider-approved incremental feed; ตั้ง rate limit อย่างรับผิดชอบ
+- OpenStreetMap Overpass ใช้ได้กับ Bangkok pilot; production ปริมาณสูงควรใช้ provider-approved extract/incremental feed และตั้ง rate limit อย่างรับผิดชอบ
 - Overture release URL/version (หากเปิด connector)
 - S3-compatible object storage สำหรับ raster/derived tiles
 - `ADMIN_API_KEY` หรือเปลี่ยนเป็นระบบ identity/role ขององค์กรก่อนเปิดสู่ภายนอก

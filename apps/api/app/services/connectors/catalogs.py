@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.services.connectors.base import (
     AreaProcessingRecord,
     BoundaryProcessingRecord,
+    CandidateProcessingRecord,
     ConnectorError,
     ProviderRateLimitError,
     SourceAsset,
@@ -497,11 +498,137 @@ class OpenStreetMapConnector(SourceConnector):
     source_name = "OpenStreetMap"
     dataset_id = "osm/bangkok"
     layer_key = "urban_form"
+    requires_candidate_processing = True
+    processor_version = "overpass-bangkok-candidates-v1"
+
+    def __init__(self) -> None:
+        self._candidate_elements: List[Dict[str, Any]] = []
+        self._processing_meta: Dict[str, Any] = {}
+
+    @staticmethod
+    def _raise_for_rate_limit(response: httpx.Response, provider: str) -> None:
+        if response.status_code != 429:
+            return
+        retry_after = response.headers.get("Retry-After", "60")
+        try:
+            seconds = int(retry_after)
+        except ValueError:
+            seconds = 60
+        raise ProviderRateLimitError("%s rate limit reached" % provider, seconds)
+
+    @staticmethod
+    def _element_point(element: Dict[str, Any]) -> Optional[tuple[float, float]]:
+        coordinate = element if element.get("type") == "node" else element.get("center", {})
+        try:
+            lon, lat = float(coordinate["lon"]), float(coordinate["lat"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        if not (100.327 <= lon <= 100.938 and 13.494 <= lat <= 13.955):
+            return None
+        return lon, lat
+
+    @staticmethod
+    def _intervention_type(tags: Dict[str, Any]) -> Optional[str]:
+        amenity = tags.get("amenity")
+        leisure = tags.get("leisure")
+        if leisure == "park":
+            return "tree_planting"
+        if amenity in {"hospital", "clinic", "community_centre"}:
+            return "cooling_rest_area"
+        if (
+            tags.get("highway") == "bus_stop"
+            or tags.get("public_transport") == "platform"
+            or amenity in {"marketplace", "school"}
+            or leisure == "playground"
+            or tags.get("place") == "square"
+        ):
+            return "public_shade_structure"
+        return None
+
+    @staticmethod
+    def _candidate_name(tags: Dict[str, Any], osm_type: str, osm_id: int) -> str:
+        return str(tags.get("name:th") or tags.get("name") or "จุดสำรวจ OSM %s/%s" % (osm_type, osm_id))[:200]
+
+    def _fetch_candidate_elements(self) -> List[Dict[str, Any]]:
+        west, south, east, north = settings.bangkok_bbox
+        divisions = max(1, min(settings.overpass_grid_divisions, 4))
+        longitude_step = (east - west) / divisions
+        latitude_step = (north - south) / divisions
+        by_id: Dict[tuple[str, int], Dict[str, Any]] = {}
+        total_bytes = 0
+        generators = set()
+        request_count = 0
+        for row in range(divisions):
+            tile_south = south + latitude_step * row
+            tile_north = north if row == divisions - 1 else tile_south + latitude_step
+            for column in range(divisions):
+                tile_west = west + longitude_step * column
+                tile_east = east if column == divisions - 1 else tile_west + longitude_step
+                query = """[out:json][timeout:{timeout}][bbox:{south},{west},{north},{east}];
+(
+  nwr[\"amenity\"~\"^(hospital|clinic|community_centre|marketplace)$\"];
+  nwr[\"leisure\"~\"^(park|playground)$\"];
+  nwr[\"place\"=\"square\"];
+);
+out center tags qt;""".format(
+                    timeout=settings.overpass_timeout_seconds,
+                    south=tile_south,
+                    west=tile_west,
+                    north=tile_north,
+                    east=tile_east,
+                )
+                try:
+                    response = httpx.post(
+                        settings.overpass_api_url,
+                        data={"data": query},
+                        timeout=settings.overpass_timeout_seconds + 15,
+                        headers={"User-Agent": "HEAT-SHIFT/0.1 (Bangkok urban heat research)"},
+                    )
+                    self._raise_for_rate_limit(response, "Overpass API")
+                    response.raise_for_status()
+                except ProviderRateLimitError:
+                    raise
+                except httpx.HTTPError as exc:
+                    raise ConnectorError("Overpass candidate request failed: %s" % exc) from exc
+                total_bytes += len(response.content)
+                if total_bytes > settings.overpass_max_response_bytes:
+                    raise ConnectorError("Overpass responses exceed the configured cumulative safety limit")
+                try:
+                    body = response.json()
+                except ValueError as exc:
+                    raise ConnectorError("Overpass response is not valid JSON") from exc
+                elements = body.get("elements")
+                if not isinstance(elements, list):
+                    raise ConnectorError("Overpass response does not contain an element list")
+                request_count += 1
+                if body.get("generator"):
+                    generators.add(str(body["generator"]))
+                for element in elements:
+                    if element.get("type") in {"node", "way", "relation"} and element.get("id") is not None:
+                        by_id[(str(element["type"]), int(element["id"]))] = element
+                if len(by_id) > settings.overpass_max_elements:
+                    raise ConnectorError("Overpass responses exceed the configured element limit")
+        result = list(by_id.values())
+        self._processing_meta = {
+            "overpass_generators": sorted(generators),
+            "overpass_request_count": request_count,
+            "response_bytes": total_bytes,
+            "raw_element_count": len(result),
+            "processor_version": self.processor_version,
+        }
+        return result
 
     def discover(self, latest_asset_id: Optional[str] = None, checkpoint: Optional[Dict[str, Any]] = None) -> List[SourceAsset]:
         try:
-            response = httpx.get(settings.osm_replication_state_url, timeout=settings.source_request_timeout_seconds)
+            response = httpx.get(
+                settings.osm_replication_state_url,
+                timeout=settings.source_request_timeout_seconds,
+                follow_redirects=True,
+            )
+            self._raise_for_rate_limit(response, "OpenStreetMap replication")
             response.raise_for_status()
+        except ProviderRateLimitError:
+            raise
         except httpx.HTTPError as exc:
             raise ConnectorError("OpenStreetMap replication state request failed: %s" % exc) from exc
         values = dict(line.split("=", 1) for line in response.text.splitlines() if "=" in line and not line.lstrip().startswith("#"))
@@ -509,7 +636,25 @@ class OpenStreetMapConnector(SourceConnector):
         timestamp = values.get("timestamp", "").replace("\\:", ":")
         if not sequence or not timestamp:
             raise ConnectorError("OSM replication state is incomplete")
-        asset_id = "osm-day-sequence:%s" % sequence
+        self._candidate_elements = self._fetch_candidate_elements()
+        normalized = []
+        for element in self._candidate_elements:
+            point = self._element_point(element)
+            intervention_type = self._intervention_type(element.get("tags", {}))
+            if point and intervention_type and element.get("type") in {"node", "way", "relation"} and element.get("id") is not None:
+                normalized.append(
+                    {
+                        "type": element["type"],
+                        "id": int(element["id"]),
+                        "point": point,
+                        "intervention_type": intervention_type,
+                        "tags": element.get("tags", {}),
+                    }
+                )
+        snapshot_checksum = hashlib.sha256(
+            json.dumps(sorted(normalized, key=lambda item: (item["type"], item["id"])), ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        asset_id = "osm-candidate-snapshot:%s" % snapshot_checksum
         if asset_id == latest_asset_id:
             return []
         observed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
@@ -521,8 +666,104 @@ class OpenStreetMapConnector(SourceConnector):
                 BANGKOK_EXTENT,
                 metadata={
                     "replication_sequence": int(sequence),
-                    "data_class": "provider_change_checkpoint",
-                    "note": "Downstream import applies and spatially filters provider-approved diffs before feature publication.",
+                    "snapshot_checksum": snapshot_checksum,
+                    "candidate_element_count": len(normalized),
+                    "data_class": "open_data_candidate_locations",
+                    "license": "ODbL 1.0",
+                    "attribution": "© OpenStreetMap contributors",
+                    "attribution_url": "https://www.openstreetmap.org/copyright",
+                    "processor_version": self.processor_version,
+                    "note": "OSM locations are screening candidates only; suitability, cost and benefit require separate evidence.",
                 },
             )
         ]
+
+    def process_candidates(
+        self, asset: SourceAsset, areas: List[Dict[str, Any]]
+    ) -> List[CandidateProcessingRecord]:
+        from shapely.geometry import Point, shape
+        from shapely.prepared import prep
+
+        if not self._candidate_elements:
+            self._candidate_elements = self._fetch_candidate_elements()
+        prepared_areas = [
+            (area["id"], prep(shape(area["geometry"])))
+            for area in areas
+            if area.get("geometry")
+        ]
+        records: List[CandidateProcessingRecord] = []
+        unassigned = 0
+        seen = set()
+        for element in self._candidate_elements:
+            osm_type = element.get("type")
+            osm_id = element.get("id")
+            tags = element.get("tags") if isinstance(element.get("tags"), dict) else {}
+            point = self._element_point(element)
+            intervention_type = self._intervention_type(tags)
+            if not point or not intervention_type or osm_type not in {"node", "way", "relation"} or osm_id is None:
+                continue
+            source_feature_id = "%s/%s" % (osm_type, osm_id)
+            candidate_id = "osm-%s-%s-%s" % (osm_type, osm_id, intervention_type.replace("_", "-"))
+            if candidate_id in seen:
+                continue
+            location = Point(point)
+            area_id = next((area_id for area_id, polygon in prepared_areas if polygon.covers(location)), None)
+            if area_id is None:
+                unassigned += 1
+                continue
+            seen.add(candidate_id)
+            records.append(
+                CandidateProcessingRecord(
+                    candidate_id=candidate_id,
+                    area_id=area_id,
+                    name_th=self._candidate_name(tags, osm_type, int(osm_id)),
+                    intervention_type=intervention_type,
+                    geometry={"type": "Point", "coordinates": [point[0], point[1]]},
+                    source_feature_id=source_feature_id,
+                    feasibility_constraints={
+                        "requires_site_survey": True,
+                        "requires_land_control_verification": True,
+                        "requires_design_and_accessibility_review": True,
+                    },
+                    evidence={
+                        "source_dataset_id": self.dataset_id,
+                        "source_feature_id": source_feature_id,
+                        "source_url": "https://www.openstreetmap.org/%s/%s" % (osm_type, osm_id),
+                        "source_tags": tags,
+                        "license": "ODbL 1.0",
+                        "attribution": "© OpenStreetMap contributors",
+                        "screening_only": True,
+                        "cost_evidence": None,
+                        "benefit_evidence": None,
+                    },
+                    uncertainty={
+                        "location": "community-maintained OSM feature; verify on site",
+                        "feasibility": "not assessed",
+                        "cost": "unavailable",
+                        "benefit": "unavailable",
+                    },
+                )
+            )
+        self._processing_meta.update({"unassigned_elements": unassigned, "usable_candidates": len(records)})
+        return records
+
+    def validate_candidates(
+        self, asset: SourceAsset, records: List[CandidateProcessingRecord]
+    ) -> Dict[str, Any]:
+        report = super().validate_candidates(asset, records)
+        errors = list(report["errors"])
+        warnings = list(report["warnings"])
+        ids = [record.candidate_id for record in records]
+        if len(ids) != len(set(ids)):
+            errors.append("candidate ids are not unique")
+        if any(record.intervention_type not in {"tree_planting", "public_shade_structure", "cooling_rest_area"} for record in records):
+            errors.append("unsupported intervention type returned from OSM processing")
+        if self._processing_meta.get("unassigned_elements"):
+            warnings.append("Some OSM elements could not be assigned to a published Bangkok district")
+        return {
+            **report,
+            "passed": not errors,
+            "errors": errors,
+            "warnings": warnings,
+            "metrics": {**report.get("metrics", {}), **self._processing_meta},
+        }

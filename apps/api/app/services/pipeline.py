@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.models.entities import (
     AreaIndicator,
+    CandidateIntervention,
     DataSource,
     DatasetVersion,
     DistrictBoundary,
@@ -16,13 +17,20 @@ from app.models.entities import (
     PipelineEvent,
     PopulationEstimate,
     ProcessingStatus,
+    PriorityScore,
     SourceCheck,
     TemperatureObservation,
     ValidationReport,
     VegetationObservation,
 )
 from app.services.analytics import recalculate_priority_scores
-from app.services.connectors.base import AreaProcessingRecord, BoundaryProcessingRecord, SourceAsset, SourceConnector
+from app.services.connectors.base import (
+    AreaProcessingRecord,
+    BoundaryProcessingRecord,
+    CandidateProcessingRecord,
+    SourceAsset,
+    SourceConnector,
+)
 from app.services.geometry import to_db_geometry, to_geojson
 from app.services.locks import distributed_lock
 
@@ -191,6 +199,91 @@ def _persist_boundary_records(
         )
 
 
+def _persist_candidate_records(
+    db: Session,
+    connector: SourceConnector,
+    version: DatasetVersion,
+    records: Sequence[CandidateProcessingRecord],
+) -> None:
+    latest_scores: Dict[str, float] = {}
+    for record in records:
+        if record.area_id in latest_scores:
+            continue
+        score = db.scalar(
+            select(PriorityScore)
+            .where(PriorityScore.area_id == record.area_id)
+            .order_by(PriorityScore.calculated_at.desc())
+            .limit(1)
+        )
+        latest_scores[record.area_id] = float(score.score) if score else 0.0
+
+    current_ids = {record.candidate_id for record in records}
+    existing_rows = list(db.scalars(select(CandidateIntervention)).all())
+    existing_by_id = {row.id: row for row in existing_rows}
+    for record in records:
+        row = existing_by_id.get(record.candidate_id)
+        if row is None:
+            row = CandidateIntervention(
+                id=record.candidate_id,
+                area_id=record.area_id,
+                name_th=record.name_th,
+                intervention_type=record.intervention_type,
+                geometry=to_db_geometry(record.geometry),
+                estimated_cost_thb=None,
+                annual_maintenance_thb=None,
+                estimated_beneficiaries=None,
+                priority_score=latest_scores[record.area_id],
+                benefit_score=None,
+                feasibility_status="insufficient_evidence",
+                feasibility_constraints=record.feasibility_constraints,
+                evidence=record.evidence,
+                uncertainty=record.uncertainty,
+                dataset_versions={},
+                active=True,
+            )
+            db.add(row)
+        else:
+            row.area_id = record.area_id
+            row.name_th = record.name_th
+            row.intervention_type = record.intervention_type
+            row.geometry = to_db_geometry(record.geometry)
+            row.priority_score = latest_scores[record.area_id]
+            row.feasibility_constraints = {
+                **record.feasibility_constraints,
+                **(row.feasibility_constraints or {}),
+            }
+            existing_evidence = row.evidence or {}
+            approved_evidence = {
+                key: existing_evidence[key]
+                for key in (
+                    "cost_assumption_id",
+                    "cost_evidence",
+                    "benefit_evidence",
+                    "feasibility_evidence",
+                    "approved_at",
+                    "approved_by",
+                )
+                if existing_evidence.get(key) is not None
+            }
+            row.evidence = {**existing_evidence, **record.evidence, **approved_evidence}
+            row.uncertainty = {**record.uncertainty, **(row.uncertainty or {})}
+            row.active = True
+        row.dataset_versions = {
+            **(row.dataset_versions or {}),
+            connector.dataset_id: {
+                "version_id": version.id,
+                "source_version": version.source_version,
+                "source_asset_id": version.source_asset_id,
+                "observed_at": version.observed_at.isoformat() if version.observed_at else None,
+            },
+        }
+
+    for row in existing_rows:
+        evidence = row.evidence if isinstance(row.evidence, dict) else {}
+        if evidence.get("source_dataset_id") == connector.dataset_id and row.id not in current_ids:
+            row.active = False
+
+
 def _validation_report(
     db: Session,
     version: DatasetVersion,
@@ -293,11 +386,26 @@ def ingest_asset(db: Session, source: DataSource, connector: SourceConnector, as
         area_inputs = _area_inputs(db)
         records: List[AreaProcessingRecord] = []
         boundary_records: List[BoundaryProcessingRecord] = []
+        candidate_records: List[CandidateProcessingRecord] = []
         if connector.requires_boundary_processing:
             boundary_records = connector.process_boundaries(asset)
             processing_report = connector.validate_boundaries(asset, boundary_records)
             if boundary_records:
                 version.checksum = boundary_records[0].source_checksum
+        elif connector.requires_candidate_processing:
+            candidate_records = connector.process_candidates(asset, area_inputs)
+            processing_report = connector.validate_candidates(asset, candidate_records)
+            known_area_ids = {area["id"] for area in area_inputs}
+            unknown_area_ids = sorted({record.area_id for record in candidate_records} - known_area_ids)
+            if unknown_area_ids:
+                processing_report = {
+                    **processing_report,
+                    "passed": False,
+                    "errors": [
+                        *processing_report.get("errors", []),
+                        "processing returned unknown area ids: %s" % ", ".join(unknown_area_ids),
+                    ],
+                }
         else:
             records = connector.process(asset, area_inputs) if connector.requires_area_processing else []
             processing_report = connector.validate_processed(asset, records)
@@ -330,6 +438,7 @@ def ingest_asset(db: Session, source: DataSource, connector: SourceConnector, as
 
     _persist_area_records(db, connector, version, records)
     _persist_boundary_records(db, version, boundary_records)
+    _persist_candidate_records(db, connector, version, candidate_records)
     if connector.layer_key == "fixture":
         _publish_fixture_indicators(db, version, asset.payload)
     version.status = ProcessingStatus.publishing.value
@@ -350,6 +459,7 @@ def ingest_asset(db: Session, source: DataSource, connector: SourceConnector, as
     db.flush()
     priority_updates = recalculate_priority_scores(db) if records else 0
     processed_area_count = len(records) + len(boundary_records)
+    processed_candidate_count = len(candidate_records)
 
     for optimization in db.scalars(select(OptimizationRun).where(OptimizationRun.is_outdated.is_(False))).all():
         recorded = optimization.input_versions.get(source.dataset_id) if optimization.input_versions else None
@@ -378,6 +488,7 @@ def ingest_asset(db: Session, source: DataSource, connector: SourceConnector, as
                 "affected_layers": affected_layers,
                 "cache_tags": ["layer:%s" % layer for layer in affected_layers],
                 "processed_areas": processed_area_count,
+                "processed_candidates": processed_candidate_count,
                 "priority_scores_recalculated": priority_updates,
             },
         )
@@ -387,6 +498,7 @@ def ingest_asset(db: Session, source: DataSource, connector: SourceConnector, as
     job.progress = 1.0
     job.checkpoint = {
         "processed_areas": processed_area_count,
+        "processed_candidates": processed_candidate_count,
         "layer_version": version.layer_version,
         "priority_scores_recalculated": priority_updates,
     }

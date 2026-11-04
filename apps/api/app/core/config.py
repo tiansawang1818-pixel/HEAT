@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     bma_boundary_resource_id: str = "d7be7e84-9d84-4595-bf8f-79b0bc01f1ae"
     bma_boundary_max_download_bytes: int = 10_000_000
     osm_replication_state_url: str = "https://planet.openstreetmap.org/replication/day/state.txt"
+    overpass_api_url: str = "https://overpass-api.de/api/interpreter"
+    overpass_timeout_seconds: int = 120
+    overpass_max_response_bytes: int = 20_000_000
+    overpass_max_elements: int = 20_000
+    overpass_grid_divisions: int = 2
     stale_weather_hours: int = 3
     stale_satellite_days: int = 32
 
