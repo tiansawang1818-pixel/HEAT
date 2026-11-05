@@ -89,6 +89,7 @@ class SourceConnector(ABC):
     requires_area_processing: bool = False
     requires_boundary_processing: bool = False
     requires_candidate_processing: bool = False
+    produces_raster: bool = False
 
     @abstractmethod
     def discover(self, latest_asset_id: Optional[str] = None, checkpoint: Optional[Dict[str, Any]] = None) -> List[SourceAsset]:
@@ -135,6 +136,9 @@ class SourceConnector(ABC):
     def quota_status(self) -> Dict[str, Any]:
         """Return provider quota metadata captured during the latest request."""
         return {}
+
+    def raster_metadata(self, asset: SourceAsset) -> Optional[Dict[str, Any]]:
+        return None
 
     def process_boundaries(self, asset: SourceAsset) -> List[BoundaryProcessingRecord]:
         return []

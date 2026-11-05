@@ -1,0 +1,56 @@
+groups:
+  - name: heatshift-pipeline
+    rules:
+      - alert: HeatShiftApiDown
+        expr: up{job="heatshift-api"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: HEAT//SHIFT API metrics endpoint is unavailable
+          description: Prometheus has been unable to scrape the API for five minutes.
+
+      - alert: HeatShiftSourceCheckOverdue
+        expr: heatshift_data_source_last_check_age_seconds > on(dataset_id, provider) group_left heatshift_data_source_check_interval_seconds * 2
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: A HEAT//SHIFT provider check is overdue
+          description: "{{ $labels.dataset_id }} has exceeded twice its configured monitoring interval."
+
+      - alert: HeatShiftPublishedDataStale
+        expr: heatshift_data_source_stale == 1
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: A published HEAT//SHIFT dataset is stale
+          description: "{{ $labels.dataset_id }} exceeds its source-specific freshness threshold."
+
+      - alert: HeatShiftIngestionFailures
+        expr: heatshift_ingestion_failed_jobs_24h > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: HEAT//SHIFT has failed ingestion jobs
+          description: At least one ingestion job created in the last 24 hours failed; the prior validated layer remains active.
+
+      - alert: HeatShiftValidationFailures
+        expr: heatshift_validation_failures_24h > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: HEAT//SHIFT rejected new provider data
+          description: At least one dataset version failed validation in the last 24 hours.
+
+      - alert: HeatShiftIngestionJobStuck
+        expr: heatshift_oldest_active_ingestion_job_age_seconds > 3600
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: A HEAT//SHIFT ingestion job may be stuck
+          description: The oldest queued or running ingestion job has been active for more than one hour.

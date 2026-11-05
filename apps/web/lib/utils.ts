@@ -161,6 +161,30 @@ export interface MapLayerMeta {
   source_name?: string;
 }
 
+export interface RasterTileDescriptor {
+  available: true;
+  layer: string;
+  tiles: string[];
+  tile_size: number;
+  min_zoom: number;
+  max_zoom: number;
+  bounds: [number, number, number, number];
+  attribution: string;
+  dataset_version_id: string;
+  source_asset_id: string;
+  source_version: string;
+  layer_version: number;
+  observed_at?: string | null;
+  quality_status: string;
+  legend: {
+    min: number;
+    max: number;
+    palette: string[];
+    unit: string;
+  };
+  delivery: "google-earth-engine-provider-xyz";
+}
+
 export interface CostAssumptionRecord {
   id: string;
   intervention_type: string;
@@ -295,10 +319,23 @@ export interface ForecastResult {
   message_th?: string;
   available_years?: number;
   required_years?: number;
+  eligible_areas?: number;
+  required_areas?: number;
   method: string;
   model_version: string;
   training_versions: Record<string, unknown>;
   assumptions: Record<string, unknown>;
+  metrics?: {
+    validation_passed?: boolean;
+    temporal_holdout_samples?: number;
+    spatial_holdout_samples?: number;
+    temporal_model_mae_c?: number;
+    temporal_baseline_mae_c?: number;
+    spatial_model_mae_c?: number;
+    spatial_baseline_mae_c?: number;
+    empirical_interval_coverage_fraction?: number;
+    [key: string]: unknown;
+  };
   created_at?: string | null;
   projections: Array<{
     area_id: string;

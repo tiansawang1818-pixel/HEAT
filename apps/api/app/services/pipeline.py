@@ -18,6 +18,7 @@ from app.models.entities import (
     PopulationEstimate,
     ProcessingStatus,
     PriorityScore,
+    RasterAssetMetadata,
     SourceCheck,
     TemperatureObservation,
     ValidationReport,
@@ -284,6 +285,30 @@ def _persist_candidate_records(
             row.active = False
 
 
+def _persist_raster_metadata(
+    db: Session,
+    connector: SourceConnector,
+    version: DatasetVersion,
+    asset: SourceAsset,
+) -> None:
+    if not connector.produces_raster:
+        return
+    metadata = connector.raster_metadata(asset)
+    if not metadata:
+        raise ValueError("Raster-producing connector did not return raster metadata")
+    db.add(
+        RasterAssetMetadata(
+            dataset_version_id=version.id,
+            storage_uri=metadata["storage_uri"],
+            media_type=metadata["media_type"],
+            crs=metadata["crs"],
+            bounds=metadata["bounds"],
+            resolution_m=metadata.get("resolution_m"),
+            band_metadata=metadata.get("band_metadata", {}),
+        )
+    )
+
+
 def _validation_report(
     db: Session,
     version: DatasetVersion,
@@ -439,6 +464,7 @@ def ingest_asset(db: Session, source: DataSource, connector: SourceConnector, as
     _persist_area_records(db, connector, version, records)
     _persist_boundary_records(db, version, boundary_records)
     _persist_candidate_records(db, connector, version, candidate_records)
+    _persist_raster_metadata(db, connector, version, asset)
     if connector.layer_key == "fixture":
         _publish_fixture_indicators(db, version, asset.payload)
     version.status = ProcessingStatus.publishing.value

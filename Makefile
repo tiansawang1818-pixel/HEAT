@@ -1,13 +1,15 @@
 SHELL := /bin/sh
 COMPOSE := docker compose
 
-.PHONY: help setup up down build logs ps migrate seed test test-api test-web lint format smoke simulate-update clean
+.PHONY: help setup up observability down build logs ps migrate seed test test-api test-web lint format smoke simulate-update backup clean
 
 help:
 	@echo "HEAT//SHIFT commands"
 	@echo "  make setup            Copy .env.example to .env (never overwrites)"
 	@echo "  make up               Build and start the complete platform"
 	@echo "  make test             Run API and web tests"
+	@echo "  make observability    Start the stack with Prometheus on port 9090"
+	@echo "  make backup           Create a checksum-protected local Postgres backup"
 	@echo "  make simulate-update  Run the authorized local fixture ingestion"
 	@echo "  make smoke            Check API, datasets and web endpoints"
 
@@ -20,6 +22,9 @@ build:
 
 up:
 	$(COMPOSE) up --build -d
+
+observability:
+	$(COMPOSE) --profile observability up --build -d
 
 down:
 	$(COMPOSE) down
@@ -56,6 +61,9 @@ smoke:
 
 simulate-update:
 	ALLOW_FIXTURE_INGESTION=true python3 scripts/simulate_provider_update.py
+
+backup:
+	./scripts/backup_postgres.sh
 
 clean:
 	$(COMPOSE) down --remove-orphans

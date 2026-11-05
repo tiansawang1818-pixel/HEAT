@@ -22,6 +22,7 @@ x-api-environment: &api-environment
   GEE_PROJECT: ${GEE_PROJECT:-}
   GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
   GEE_SERVICE_ACCOUNT: ${GEE_SERVICE_ACCOUNT:-}
+  GEE_TILE_DESCRIPTOR_TTL_SECONDS: ${GEE_TILE_DESCRIPTOR_TTL_SECONDS:-3000}
   OPEN_METEO_BASE_URL: ${OPEN_METEO_BASE_URL:-https://api.open-meteo.com/v1/forecast}
   OVERPASS_API_URL: ${OVERPASS_API_URL:-https://overpass-api.de/api/interpreter}
   OVERPASS_TIMEOUT_SECONDS: ${OVERPASS_TIMEOUT_SECONDS:-120}
@@ -37,6 +38,10 @@ x-api-environment: &api-environment
   BMA_BOUNDARY_MAX_DOWNLOAD_BYTES: ${BMA_BOUNDARY_MAX_DOWNLOAD_BYTES:-10000000}
   OSM_REPLICATION_STATE_URL: ${OSM_REPLICATION_STATE_URL:-https://planet.openstreetmap.org/replication/day/state.txt}
   SOURCE_REQUEST_TIMEOUT_SECONDS: ${SOURCE_REQUEST_TIMEOUT_SECONDS:-60}
+  FORECAST_MIN_YEARS: ${FORECAST_MIN_YEARS:-5}
+  FORECAST_MIN_AREAS: ${FORECAST_MIN_AREAS:-5}
+  FORECAST_MIN_VALIDATION_SAMPLES: ${FORECAST_MIN_VALIDATION_SAMPLES:-20}
+  FORECAST_MIN_BASELINE_IMPROVEMENT: ${FORECAST_MIN_BASELINE_IMPROVEMENT:-0.0}
 
 x-api-base: &api-base
   build:
@@ -140,7 +145,7 @@ services:
       minio-init:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health/ready"]
       interval: 10s
       timeout: 5s
       retries: 20
@@ -191,7 +196,26 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  prometheus:
+    image: prom/prometheus:v3.15.1
+    profiles: ["observability"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   postgres-data:
   redis-data:
   minio-data:
+  prometheus-data:

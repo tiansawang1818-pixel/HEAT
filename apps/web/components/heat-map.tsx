@@ -6,7 +6,13 @@ import { GeoJsonLayer, ScatterplotLayer } from "@deck.gl/layers";
 import type { PickingInfo } from "@deck.gl/core";
 import * as maplibregl from "maplibre-gl";
 import type { Map as MapLibreMap } from "maplibre-gl";
-import type { AreaProperties, FeatureCollection, GeoFeature, OptimizationProject } from "@/lib/utils";
+import type {
+  AreaProperties,
+  FeatureCollection,
+  GeoFeature,
+  OptimizationProject,
+  RasterTileDescriptor,
+} from "@/lib/utils";
 
 const BANGKOK: [number, number] = [100.5018, 13.7563];
 
@@ -47,6 +53,7 @@ function layerValue(feature: { properties: AreaProperties }, layer: string) {
 interface HeatMapProps {
   data: FeatureCollection;
   activeLayer: string;
+  rasterTile?: RasterTileDescriptor | null;
   selectedId?: string;
   projects?: OptimizationProject[];
   onSelect: (feature: GeoFeature) => void;
@@ -67,6 +74,7 @@ export interface MapViewport {
 export function HeatMap({
   data,
   activeLayer,
+  rasterTile = null,
   selectedId,
   projects = [],
   onSelect,
@@ -161,6 +169,41 @@ export function HeatMap({
   }, [viewport]);
 
   useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const sourceId = "heatshift-raster-source";
+    const layerId = "heatshift-raster-layer";
+    const applyRaster = () => {
+      if (map.getLayer(layerId)) map.removeLayer(layerId);
+      if (map.getSource(sourceId)) map.removeSource(sourceId);
+      if (!rasterTile) return;
+      map.addSource(sourceId, {
+        type: "raster",
+        tiles: rasterTile.tiles,
+        tileSize: rasterTile.tile_size,
+        minzoom: rasterTile.min_zoom,
+        maxzoom: rasterTile.max_zoom,
+        bounds: rasterTile.bounds,
+        attribution: rasterTile.attribution,
+      });
+      map.addLayer({
+        id: layerId,
+        type: "raster",
+        source: sourceId,
+        paint: {
+          "raster-opacity": 0.72,
+          "raster-fade-duration": 180,
+        },
+      });
+    };
+    if (map.isStyleLoaded()) applyRaster();
+    else map.once("load", applyRaster);
+    return () => {
+      map.off("load", applyRaster);
+    };
+  }, [rasterTile]);
+
+  useEffect(() => {
     const overlay = overlayRef.current;
     if (!overlay) return;
     const areaLayer = new GeoJsonLayer<AreaProperties & Record<string, unknown>>({
@@ -169,11 +212,11 @@ export function HeatMap({
       pickable: true,
       stroked: true,
       filled: true,
-      getFillColor: (feature) => ramp(layerValue(feature, activeLayer), activeLayer),
+      getFillColor: (feature) => rasterTile ? [0, 0, 0, 1] : ramp(layerValue(feature, activeLayer), activeLayer),
       getLineColor: (feature) => feature.properties.id === selectedId ? [78, 234, 255, 255] : [192, 226, 235, 145],
       getLineWidth: (feature) => feature.properties.id === selectedId ? 4 : 1,
       lineWidthMinPixels: 1,
-      updateTriggers: { getFillColor: [activeLayer], getLineColor: [selectedId], getLineWidth: [selectedId] },
+      updateTriggers: { getFillColor: [activeLayer, rasterTile?.dataset_version_id], getLineColor: [selectedId], getLineWidth: [selectedId] },
       onClick: (info: PickingInfo) => info.object && onSelect(info.object as GeoFeature),
       autoHighlight: true,
       highlightColor: [78, 234, 255, 55],
@@ -207,7 +250,7 @@ export function HeatMap({
         return { text: object.name };
       },
     });
-  }, [activeLayer, data, onSelect, projects, selectedId]);
+  }, [activeLayer, data, onSelect, projects, rasterTile, selectedId]);
 
   return (
     <div className="absolute inset-0">

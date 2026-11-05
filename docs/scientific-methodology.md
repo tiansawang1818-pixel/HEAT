@@ -62,6 +62,17 @@ Output ต้องรายงาน solver status, gap/time limit, input versi
 
 ถ้า model ไม่ชนะ baseline หรือช่วง uncertainty กว้างจนตัดสินใจไม่ได้ UI ต้องบอกตรง ๆ และแสดง scenario assumptions แทน “prediction map”
 
+Implementation ปัจจุบันใช้ publication gate `scenario-v2` ดังนี้:
+
+- รับเฉพาะ LST observation ที่ coverage ≥ 25%, อย่างน้อย 8 observation และอย่างน้อย 5 ปีต่อพื้นที่
+- แบบจำลองเป็น linear trend + annual sine/cosine seasonality; ไม่อ้างว่ารวม climate forcing, land-use policy หรือ causal intervention effect
+- temporal holdout ใช้ 20% ท้ายตามลำดับเวลาของทุกพื้นที่ และเทียบ seasonal-naive month baseline
+- spatial holdout กัน district 20% แบบ deterministic ออกจากการ fit global change model และเทียบ no-change baseline
+- ต้องมี holdout อย่างน้อย 20 samples ทั้งสองแบบ และ model ต้องชนะ baseline ทั้ง temporal และ spatial
+- uncertainty ใช้ empirical 90th-percentile absolute holdout error และขยายตาม square-root ของ horizon; metric, input versions, assumptions และ model version ถูกเก็บใน `forecast_runs`
+
+หาก gate ใดไม่ผ่าน endpoint จะบันทึก run เป็น `scenario_only`, ไม่สร้าง projection geometry และ UI จะแสดงเหตุผล/จำนวนปี/จำนวนพื้นที่ที่ยังขาด หากผ่าน ผลยังใช้ป้าย **validated historical trend scenario — not a forecast** เพราะไม่มีแบบจำลอง climate/land-use ภายนอกมารองรับคำพยากรณ์ห้าปี
+
 ## Intervention effects
 
 ระบบห้ามสร้าง before/after temperature raster จากค่าทั่วไปที่ไม่มีการ validate เฉพาะพื้นที่ ผลจาก literature/model ต้องใช้คำว่า “projection” ระบุ transferability, maintenance, time horizon และ uncertainty

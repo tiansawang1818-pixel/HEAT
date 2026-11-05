@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { askAssistant, compareScenarios, loadDashboardData, loadDatasetVersions, runForecastScenario, saveScenario } from "./api";
+import { askAssistant, compareScenarios, loadDashboardData, loadDatasetVersions, loadRasterTileDescriptor, runForecastScenario, saveScenario } from "./api";
 import { formatBaht, formatNumber, freshnessLabel } from "./utils";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -54,6 +54,7 @@ describe("Thai presentation helpers", () => {
       model_version: "scenario-v1",
       training_versions: {},
       assumptions: {},
+      metrics: { validation_passed: false },
     }), { status: 200, headers: { "Content-Type": "application/json" } }));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -193,5 +194,40 @@ describe("Thai presentation helpers", () => {
     expect(history.items[0].validation?.passed).toBe(false);
     expect(history.items[0].validation?.errors[0]).toContain("hourly");
     expect(history.items[0].provider_payload_preserved).toBe(true);
+  });
+
+  it("loads only a validated provider-backed raster descriptor", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      available: true,
+      layer: "temperature",
+      tiles: ["https://earthengine.googleapis.com/v1/projects/demo/maps/map-1/tiles/{z}/{x}/{y}"],
+      tile_size: 256,
+      min_zoom: 8,
+      max_zoom: 18,
+      bounds: [100.3, 13.45, 100.95, 14.05],
+      attribution: "USGS Landsat / Google Earth Engine",
+      dataset_version_id: "version-1",
+      source_asset_id: "LANDSAT/LC09/C02/T1_L2/scene-1",
+      source_version: "scene-1",
+      layer_version: 4,
+      observed_at: "2026-11-01T03:00:00+00:00",
+      quality_status: "validated",
+      legend: { min: 20, max: 50, palette: ["313695", "a50026"], unit: "°C" },
+      delivery: "google-earth-engine-provider-xyz",
+    })));
+
+    const descriptor = await loadRasterTileDescriptor("temperature");
+    expect(descriptor).toMatchObject({ layer: "temperature", layer_version: 4 });
+    expect(descriptor?.tiles[0]).toContain("earthengine.googleapis.com");
+  });
+
+  it("keeps district GeoJSON as the fallback when a raster is unavailable", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      available: false,
+      layer: "ndvi",
+      reason: "No validated published raster version",
+    })));
+
+    await expect(loadRasterTileDescriptor("ndvi")).resolves.toBeNull();
   });
 });

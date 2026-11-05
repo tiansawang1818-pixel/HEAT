@@ -18,7 +18,7 @@
 | Celery workers | discovery, download/export, validation, zonal analytics, publication |
 | Redis | durable-enough broker/result backend for local deployment, locks, event fan-out/cache |
 | PostgreSQL/PostGIS | metadata, geometry, versioned observations, scores, candidates, optimization lineage |
-| S3/MinIO | source/derived raster และ tile artifacts; database เก็บ URI/checksum/footprint เท่านั้น |
+| S3/MinIO | source/derived raster artifacts ที่ต้องถือครองเอง; database เก็บ URI/checksum/footprint เท่านั้น ส่วน GEE raster ใช้ virtual provider URI |
 
 Production ควรใช้ managed Redis ที่มี persistence/HA หรือ broker ที่ตรง SLO; local Compose ใช้ Redis AOF เพื่อความสะดวก ไม่ใช่ข้ออ้างว่าไม่มีโอกาสสูญเสีย message
 
@@ -53,7 +53,9 @@ scheduled → checking → no_change
 ## API and map loading
 
 - `/api/map/features` ต้องรับ `bbox`, layer, version, zoom และ pagination/limit
-- Raster ใช้ XYZ/COG tile service ตาม provider/storage capability; ห้ามส่ง raster Bangkok ทั้งก้อนไป browser
+- Raster ที่ publish จาก Earth Engine เก็บ immutable source asset/version และ virtual raster metadata แล้ว `/api/map/tiles/{layer}` สร้าง provider-backed XYZ descriptor จาก processing recipe เดียวกับ regional analytics
+- Frontend โหลดเฉพาะ tiles ใน viewport ด้วย MapLibre และเก็บ district GeoJSON เป็น fallback/click target; ห้ามส่ง raster Bangkok ทั้งก้อนไป browser
+- Earth Engine map token มีอายุจำกัด ระบบ cache descriptor ใน memory ตาม `GEE_TILE_DESCRIPTOR_TTL_SECONDS`, ตอบ `Cache-Control: private` และไม่บันทึก token ลงฐานข้อมูล
 - Vector ใช้ GeoJSON เฉพาะ viewport/pilot size; production scale ใช้ MVT
 - Response ใส่ ETag/Cache-Control และ dataset version
 - SSE event ระบุเฉพาะ affected layer IDs, area IDs, version และ observation metadata

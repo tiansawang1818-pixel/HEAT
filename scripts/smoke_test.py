@@ -22,7 +22,9 @@ def fetch(url: str) -> tuple[int, bytes, str]:
 
 def main() -> int:
     checks = [
-        ("API health", f"{API_URL}/api/health", True),
+        ("API liveness", f"{API_URL}/api/health/live", True),
+        ("API readiness", f"{API_URL}/api/health/ready", True),
+        ("API metrics", f"{API_URL}/api/metrics", False),
         ("Dataset status", f"{API_URL}/api/datasets/status", True),
         ("Web", WEB_URL, False),
     ]

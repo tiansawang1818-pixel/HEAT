@@ -17,6 +17,24 @@ class EarthEngineConnector(SourceConnector):
     min_publishable_coverage: float = 0.05
     processor_version = "gee-zonal-v1"
     requires_area_processing = True
+    produces_raster = True
+
+    def raster_metadata(self, asset: SourceAsset) -> Optional[Dict[str, Any]]:
+        return {
+            "storage_uri": "earthengine://%s" % asset.source_asset_id,
+            "media_type": "application/vnd.google-earth-engine.image",
+            "crs": "EPSG:4326",
+            "bounds": asset.geographic_extent,
+            "resolution_m": self.analysis_scale_m,
+            "band_metadata": {
+                "source_asset_id": asset.source_asset_id,
+                "source_checksum": asset.checksum,
+                "required_bands": self.required_bands,
+                "processing_recipe": self.processing_recipe,
+                "processor_version": self.processor_version,
+                "delivery": "provider-backed XYZ tiles generated from the validated image expression",
+            },
+        }
 
     def _earth_engine(self):
         try:

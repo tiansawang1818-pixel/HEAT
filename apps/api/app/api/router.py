@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, StreamingResponse
 from sqlalchemy import desc, func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -58,6 +58,9 @@ from app.services.optimizer import Candidate, optimize_portfolio
 from app.services.pipeline import run_monitor
 from app.services.priority import calculate_priority, sensitivity_range
 from app.services.geometry import to_geojson
+from app.services.forecasting import evaluate_temperature_scenario
+from app.services.tiles import earth_engine_tiles
+from app.services.observability import prometheus_metrics
 
 
 router = APIRouter()
@@ -167,6 +170,41 @@ def _source_status(db: Session, source: DataSource) -> Dict[str, Any]:
 def health(db: Session = Depends(get_db)) -> Dict[str, Any]:
     db.execute(select(1))
     return {"status": "ok", "service": settings.app_name, "time": datetime.now(timezone.utc).isoformat()}
+
+
+@router.get("/health/live")
+def health_live() -> Dict[str, Any]:
+    return {"status": "ok", "service": settings.app_name, "time": datetime.now(timezone.utc).isoformat()}
+
+
+@router.get("/health/ready")
+def health_ready(response: Response, db: Session = Depends(get_db)) -> Dict[str, Any]:
+    try:
+        db.execute(select(1))
+        enabled_sources = db.scalar(
+            select(func.count()).select_from(DataSource).where(DataSource.enabled.is_(True))
+        ) or 0
+    except Exception:
+        response.status_code = 503
+        return {"status": "not_ready", "database": "unavailable", "time": datetime.now(timezone.utc).isoformat()}
+    if enabled_sources == 0:
+        response.status_code = 503
+        return {"status": "not_ready", "database": "ready", "enabled_sources": 0, "time": datetime.now(timezone.utc).isoformat()}
+    return {
+        "status": "ready",
+        "database": "ready",
+        "enabled_sources": enabled_sources,
+        "time": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.get("/metrics", include_in_schema=False)
+def metrics(db: Session = Depends(get_db)) -> Response:
+    return Response(
+        content=prometheus_metrics(db),
+        media_type="text/plain; version=0.0.4",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.get("/datasets")
@@ -500,7 +538,8 @@ def map_layers(db: Session = Depends(get_db)) -> Dict[str, Any]:
                 "indicator_key": indicator,
                 "unit": unit,
                 "feature_url": "/api/map/features?layer=%s" % key,
-                "delivery": "viewport_geojson",
+                "tilejson_url": "/api/map/tiles/%s" % key if key in {"temperature", "vegetation", "ndvi", "built"} else None,
+                "delivery": "raster_xyz_with_viewport_geojson_fallback" if key in {"temperature", "vegetation", "ndvi", "built"} else "viewport_geojson",
                 "source_name": source_labels[key],
                 "status": "up_to_date" if layer_has_data(key, indicator) else "unavailable",
                 "status_reason": "มี geographic records ที่ผ่านการเผยแพร่" if layer_has_data(key, indicator) else "ยังไม่มี geographic records ที่ผ่านการเผยแพร่สำหรับชั้นนี้",
@@ -509,6 +548,18 @@ def map_layers(db: Session = Depends(get_db)) -> Dict[str, Any]:
             for key, name, indicator, unit in LAYER_DEFINITIONS
         ]
     }
+
+
+@router.get("/map/tiles/{layer}")
+def map_tile_descriptor(
+    layer: str,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    descriptor = earth_engine_tiles.describe(db, layer)
+    response.headers["Cache-Control"] = "private, max-age=300" if descriptor.get("available") else "no-store"
+    response.headers["Vary"] = "Accept-Encoding"
+    return descriptor
 
 
 @router.get("/map/features")
@@ -1407,43 +1458,15 @@ def forecast_run(request: ForecastRequest, db: Session = Depends(get_db)) -> Dic
     if request.area_ids:
         query = query.where(TemperatureObservation.area_id.in_(request.area_ids))
     rows = db.scalars(query).all()
-    years = len({row.observed_at.year for row in rows})
-    if years < 5:
-        result = {
-            "status": "insufficient_data",
-            "mode": "scenario_only",
-            "message_th": "ยังมีข้อมูลย้อนหลังไม่เพียงพอสำหรับพยากรณ์ห้าปีอย่างน่าเชื่อถือ",
-            "available_years": years,
-            "required_years": 5,
-            "projections": [],
-        }
-        method = "guardrail-insufficient-data"
-    else:
-        grouped: Dict[str, List[TemperatureObservation]] = {}
-        for row in rows:
-            grouped.setdefault(row.area_id, []).append(row)
-        projections = []
-        for area_id, observations in grouped.items():
-            first, last = observations[0], observations[-1]
-            elapsed = max((last.observed_at - first.observed_at).days / 365.25, 1.0)
-            slope = ((last.lst_c_mean or 0) - (first.lst_c_mean or 0)) / elapsed
-            projections.append(
-                {
-                    "area_id": area_id,
-                    "horizon_years": request.horizon_years,
-                    "scenario_change_c": round(slope * request.horizon_years, 2),
-                    "uncertainty_c": round(max(0.5, abs(slope) * request.horizon_years), 2),
-                    "label": "scenario_projection_not_forecast",
-                }
-            )
-        result = {"status": "completed", "mode": "trend_scenario", "projections": projections}
-        method = "transparent-linear-trend-scenario-v1"
+    result = evaluate_temperature_scenario(rows, request.horizon_years)
+    method = "validated-seasonal-trend-scenario-v2" if result["status"] == "completed" else "guardrail-validation-v2"
     run = ForecastRun(
         horizon_years=request.horizon_years,
         method=method,
-        model_version="scenario-v1",
+        model_version="scenario-v2",
         training_versions=_current_versions(db),
-        assumptions={"temporal_holdout_required_for_model": True, "spatial_holdout_required_for_model": True},
+        assumptions=result["assumptions"],
+        metrics=result["metrics"],
         results=result,
     )
     db.add(run)
@@ -1455,6 +1478,7 @@ def forecast_run(request: ForecastRequest, db: Session = Depends(get_db)) -> Dic
         "model_version": run.model_version,
         "training_versions": run.training_versions,
         "assumptions": run.assumptions,
+        "metrics": run.metrics,
         "created_at": _iso(run.created_at),
     }
 

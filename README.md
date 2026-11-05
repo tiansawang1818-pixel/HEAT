@@ -33,7 +33,11 @@ make up
 
 Data Observatory มี evidence gate ภาษาไทยสำหรับผู้ดูแล: บันทึก `CostAssumption` แบบ versioned พร้อม URL หลักฐาน และอนุมัติ candidate ได้ต่อเมื่อยืนยันการสำรวจหน้างาน สิทธิใช้พื้นที่ และการทบทวนการออกแบบ/การเข้าถึงครบ ระบบจะกัน candidate ที่ยังไม่มีต้นทุนหรือ feasibility ออกจาก OR-Tools และทำผล optimization เดิมเป็น outdated เมื่อ input ที่อนุมัติเปลี่ยน
 
+ชั้น Landsat LST, Sentinel-2 NDVI และ Dynamic World vegetation/built-up ใช้ XYZ tiles ที่สร้างจาก Earth Engine source asset version เดียวกับข้อมูลซึ่งผ่าน validation แล้ว MapLibre ขอเฉพาะ tile ใน viewport และยังใช้ขอบเขตเขตเป็น click target/fallback หากยังไม่ได้ตั้ง GEE credential ระบบจะแจ้งว่า raster ไม่พร้อมและไม่สร้าง heatmap ปลอม
+
 ตรวจสอบสถานะด้วย `docker compose ps` หรือ `make smoke` และดู worker ด้วย `make logs`
+
+เปิด metrics/alert evaluation สำหรับ local operations ด้วย `make observability` (Prometheus ที่พอร์ต 9090) และสร้าง Postgres backup ที่มี checksum ด้วย `make backup`; production ต้องส่ง alert ไปยังระบบ on-call และสำรอง object storage แยกจาก database dump
 
 ## โหมดข้อมูล
 

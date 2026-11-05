@@ -11,6 +11,7 @@ from app.models.entities import (
     GeographicArea,
     OptimizationRun,
     PriorityScore,
+    RasterAssetMetadata,
     TemperatureObservation,
 )
 from app.services.connectors.base import AreaProcessingRecord, ConnectorError, SourceAsset, SourceConnector
@@ -93,6 +94,20 @@ class ProcessedTemperatureConnector(SourceConnector):
             )
             for area in areas
         ]
+
+
+class RasterTemperatureConnector(ProcessedTemperatureConnector):
+    produces_raster = True
+
+    def raster_metadata(self, asset):
+        return {
+            "storage_uri": "earthengine://%s" % asset.source_asset_id,
+            "media_type": "application/vnd.google-earth-engine.image",
+            "crs": "EPSG:4326",
+            "bounds": asset.geographic_extent,
+            "resolution_m": 30,
+            "band_metadata": {"source_checksum": asset.checksum, "processor_version": "test-v1"},
+        }
 
 
 def add_test_areas(db):
@@ -237,6 +252,20 @@ def test_processed_satellite_records_publish_atomically_and_recalculate_priority
     assert len(scores) == 2
     assert scores[0].components["temperature_anomaly"] == 2.0
     assert scores[1].components["temperature_anomaly"] == -2.0
+
+
+def test_raster_provenance_is_published_with_virtual_provider_uri(db):
+    add_test_areas(db)
+    run_monitor(db, RasterTemperatureConnector(), requested_by="test")
+
+    version = db.scalar(select(DatasetVersion).where(DatasetVersion.source_asset_id == "landsat-real-1"))
+    raster = db.scalar(
+        select(RasterAssetMetadata).where(RasterAssetMetadata.dataset_version_id == version.id)
+    )
+    assert raster.storage_uri == "earthengine://landsat-real-1"
+    assert raster.media_type == "application/vnd.google-earth-engine.image"
+    assert raster.resolution_m == 30
+    assert raster.band_metadata["source_checksum"] == version.checksum
 
 
 def test_processing_error_preserves_retryable_version_and_succeeds_on_retry(db):

@@ -14,17 +14,66 @@ from app.models.entities import (
     PipelineEvent,
     PriorityScore,
     SourceCheck,
+    TemperatureObservation,
     ValidationReport,
 )
 
 
 def test_health_and_dataset_status(client):
     assert client.get("/api/health").status_code == 200
+    assert client.get("/api/health/live").json()["status"] == "ok"
+    ready = client.get("/api/health/ready")
+    assert ready.status_code == 200
+    assert ready.json()["status"] == "ready"
     response = client.get("/api/datasets/status")
     assert response.status_code == 200
     assert response.json()["items"]
     assert all("last_source_observation" in item and "last_system_check" in item for item in response.json()["items"])
     assert all(item["dataset_id"] != "local/integration-fixture" for item in response.json()["items"])
+
+
+def test_operational_headers_echo_safe_request_id_and_replace_invalid_value(client):
+    response = client.get("/api/health/live", headers={"X-Request-ID": "trace-123"})
+    assert response.headers["X-Request-ID"] == "trace-123"
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert response.headers["X-Frame-Options"] == "DENY"
+    assert response.headers["Referrer-Policy"] == "no-referrer"
+
+    replaced = client.get("/api/health/live", headers={"X-Request-ID": "bad request id with spaces"})
+    assert replaced.headers["X-Request-ID"] != "bad request id with spaces"
+    assert len(replaced.headers["X-Request-ID"]) == 32
+
+
+def test_prometheus_metrics_use_durable_pipeline_state_without_leaking_errors(client, db):
+    source = db.scalar(select(DataSource).where(DataSource.source_type != "test_fixture").limit(1))
+    version = DatasetVersion(
+        source_id=source.id,
+        source_asset_id="metrics-asset",
+        source_version="v1",
+        observed_at=datetime.now(timezone.utc) - timedelta(hours=2),
+        status="published",
+        quality_status="valid",
+        layer_version=1,
+    )
+    db.add(version)
+    db.flush()
+    db.add_all(
+        [
+            SourceCheck(source_id=source.id, status="success", completed_at=datetime.now(timezone.utc)),
+            IngestionJob(source_id=source.id, status="failed", error_message="secret-provider-payload"),
+            ValidationReport(dataset_version_id=version.id, passed=False, checks={}, errors=["range"], warnings=[]),
+        ]
+    )
+    db.commit()
+
+    response = client.get("/api/metrics")
+    assert response.status_code == 200
+    assert "text/plain" in response.headers["content-type"]
+    assert "heatshift_dataset_versions_total{status=\"published\"} 1" in response.text
+    assert "heatshift_ingestion_failed_jobs_24h 1" in response.text
+    assert "heatshift_validation_failures_24h 1" in response.text
+    assert "heatshift_data_source_last_observation_age_seconds" in response.text
+    assert "secret-provider-payload" not in response.text
 
 
 def test_weather_context_returns_only_latest_published_provider_payload(client, db):
@@ -411,9 +460,67 @@ def test_forecast_guardrail_returns_versioned_scenario_metadata(client):
     body = response.json()
     assert body["status"] == "insufficient_data"
     assert body["mode"] == "scenario_only"
-    assert body["model_version"] == "scenario-v1"
-    assert body["method"] == "guardrail-insufficient-data"
-    assert body["assumptions"]["spatial_holdout_required_for_model"] is True
+    assert body["model_version"] == "scenario-v2"
+    assert body["method"] == "guardrail-validation-v2"
+    assert body["assumptions"]["spatial_validation"] == "deterministic 20 percent district holdout"
+    assert body["metrics"]["validation_passed"] is False
+
+
+def test_forecast_publishes_only_after_temporal_spatial_and_baseline_validation(client, db):
+    source = db.scalar(select(DataSource).where(DataSource.dataset_id.like("LANDSAT/%")).limit(1))
+    version = DatasetVersion(
+        source_id=source.id,
+        source_asset_id="forecast-validation-history",
+        source_version="history-v1",
+        observed_at=datetime(2025, 4, 15, tzinfo=timezone.utc),
+        status="published",
+        quality_status="valid",
+        layer_version=1,
+    )
+    db.add(version)
+    db.flush()
+    for area_index in range(15):
+        area_id = "forecast-district-%02d" % area_index
+        db.add(
+            GeographicArea(
+                id=area_id,
+                name_th="เขตทดสอบ %02d" % area_index,
+                name_en="Forecast district %02d" % area_index,
+                geometry={"type": "Point", "coordinates": [100.4 + area_index * 0.01, 13.7]},
+                source_name="validated test fixture",
+            )
+        )
+        for year_index, year in enumerate(range(2018, 2026)):
+            db.add(
+                TemperatureObservation(
+                    area_id=area_id,
+                    dataset_version_id=version.id,
+                    observed_at=datetime(year, 4, 15, tzinfo=timezone.utc),
+                    lst_c_mean=30.0 + area_index * 0.05 + year_index * 0.3,
+                    lst_c_p90=32.0 + area_index * 0.05 + year_index * 0.3,
+                    coverage_fraction=0.9,
+                    uncertainty_c=0.2,
+                )
+            )
+    db.commit()
+
+    response = client.post("/api/forecast/run", json={"horizon_years": 5})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "completed"
+    assert body["mode"] == "trend_scenario"
+    assert body["method"] == "validated-seasonal-trend-scenario-v2"
+    assert body["metrics"]["validation_passed"] is True
+    assert body["metrics"]["temporal_holdout_samples"] == 30
+    assert body["metrics"]["spatial_holdout_samples"] == 21
+    assert body["metrics"]["temporal_model_mae_c"] < body["metrics"]["temporal_baseline_mae_c"]
+    assert body["metrics"]["spatial_model_mae_c"] < body["metrics"]["spatial_baseline_mae_c"]
+    assert len(body["projections"]) == 15
+    assert body["projections"][0]["label"] == "validated_historical_trend_scenario_not_forecast"
+    assert 1.4 <= body["projections"][0]["scenario_change_c"] <= 1.6
+
+    stored = db.get(ForecastRun, body["run_id"])
+    assert stored.metrics["validation_passed"] is True
 
 
 def test_saved_optimization_can_be_retrieved_and_exported(client, db):

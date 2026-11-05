@@ -13,6 +13,7 @@ import type {
   ObservatorySnapshot,
   OptimizationResult,
   PriorityRankingResult,
+  RasterTileDescriptor,
   SavedScenarioRecord,
   WeatherContext,
 } from "@/lib/utils";
@@ -184,6 +185,15 @@ export async function loadDashboardData() {
 export async function loadLayerFeatures(layer: string): Promise<FeatureCollection> {
   const value = await request<FeatureCollection>(`/api/map/features?layer=${encodeURIComponent(layer)}&limit=250&bbox=100.30,13.45,100.95,14.05`);
   return normalizeFeatureCollection(value, layer);
+}
+
+export async function loadRasterTileDescriptor(layer: string): Promise<RasterTileDescriptor | null> {
+  const value = await request<RasterTileDescriptor | { available: false; reason?: string }>(
+    `/api/map/tiles/${encodeURIComponent(layer)}`,
+  );
+  if (!value.available) return null;
+  if (!Array.isArray(value.tiles) || !value.tiles.length || value.layer !== layer) return null;
+  return value;
 }
 
 export async function loadAreaDetail(areaId: string): Promise<AreaProperties> {

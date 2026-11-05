@@ -60,6 +60,7 @@ import {
   loadEvidencePendingCandidates,
   loadIngestionStatus,
   loadLayerFeatures,
+  loadRasterTileDescriptor,
   loadObservatoryStatus,
   loadPriorityRankings,
   loadSavedScenario,
@@ -91,6 +92,7 @@ import {
   type ObservatorySnapshot,
   type OptimizationResult,
   type PriorityRankingResult,
+  type RasterTileDescriptor,
   type SavedScenarioRecord,
   type WeatherContext,
 } from "@/lib/utils";
@@ -186,6 +188,7 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
   const [data, setData] = useState<DashboardState>(initialState);
   const [loading, setLoading] = useState(true);
   const [activeLayer, setActiveLayer] = useState(initialView === "outlook" ? "future-risk" : "priority");
+  const [rasterTile, setRasterTile] = useState<RasterTileDescriptor | null>(null);
   const [selected, setSelected] = useState<GeoFeature | null>(null);
   const [history, setHistory] = useState<HistoryPoint[]>(emptyHistory);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -310,7 +313,10 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
     };
   }, [reload, reloadOptimizationStatus]);
 
+  const activeLayerVersion = data.layers.find((layer) => layer.id === activeLayer)?.layer_version;
+
   useEffect(() => {
+    setRasterTile(null);
     if (data.isDemo) return;
     let cancelled = false;
     loadLayerFeatures(activeLayer)
@@ -318,8 +324,15 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
         if (!cancelled) setData((current) => ({ ...current, features }));
       })
       .catch((error) => setActionError(error instanceof Error ? error.message : "โหลดชั้นข้อมูลไม่สำเร็จ"));
+    loadRasterTileDescriptor(activeLayer)
+      .then((descriptor) => {
+        if (!cancelled) setRasterTile(descriptor);
+      })
+      .catch(() => {
+        if (!cancelled) setRasterTile(null);
+      });
     return () => { cancelled = true; };
-  }, [activeLayer, data.isDemo]);
+  }, [activeLayer, activeLayerVersion, data.isDemo]);
 
   useEffect(() => {
     if (!updateNotice) return;
@@ -677,6 +690,7 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
         <HeatMap
           data={displayedFeatures}
           activeLayer={activeLayer}
+          rasterTile={rasterTile}
           selectedId={selected?.properties.id}
           projects={displayedProjects}
           onSelect={handleSelect}
@@ -728,8 +742,14 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
         </div>
         <div className="legend-card">
           <div className="legend-heading"><span>{currentLayer?.name_th || activeLayer}</span><Badge>{currentLayer?.unit || "INDEX"}</Badge></div>
-          <div className={cn("legend-ramp", (activeLayer === "vegetation" || activeLayer === "ndvi") && "green")} />
-          <div className="legend-labels"><span>ต่ำ</span><span>สูง</span></div>
+          <div
+            className={cn("legend-ramp", !rasterTile && (activeLayer === "vegetation" || activeLayer === "ndvi") && "green")}
+            style={rasterTile ? { background: `linear-gradient(90deg, ${rasterTile.legend.palette.map((color) => `#${color}`).join(", ")})` } : undefined}
+          />
+          <div className="legend-labels">
+            <span>{rasterTile ? rasterTile.legend.min : "ต่ำ"}</span>
+            <span>{rasterTile ? rasterTile.legend.max : "สูง"}</span>
+          </div>
           <div className="legend-meta"><StatusDot status={currentLayer?.status || "unavailable"} /><span>v{currentLayer?.layer_version ?? "—"}</span></div>
         </div>
         <button className="mobile-analysis" onClick={() => setMobilePanel("analysis")}><Activity size={15} /> วิเคราะห์พื้นที่</button>
@@ -987,7 +1007,7 @@ function FutureOutlookOverlay({
       {error && <div className="error-box">{error}</div>}
       {result?.status === "insufficient_data" && (
         <div className="outlook-guardrail">
-          <ShieldCheck size={17} /><div><strong>ยังไม่เผยแพร่คำพยากรณ์</strong><p>{result.message_th}</p><small>มีข้อมูล {result.available_years ?? 0} ปี · ต้องการอย่างน้อย {result.required_years ?? 5} ปี</small></div>
+          <ShieldCheck size={17} /><div><strong>ยังไม่เผยแพร่คำพยากรณ์</strong><p>{result.message_th}</p><small>เวลา {result.available_years ?? 0}/{result.required_years ?? 5} ปี · พื้นที่ผ่านเกณฑ์ {result.eligible_areas ?? 0}/{result.required_areas ?? 5}</small></div>
         </div>
       )}
       {result?.status === "completed" && (
@@ -1008,6 +1028,8 @@ function FutureOutlookOverlay({
         <div className="outlook-provenance">
           <span>Method</span><strong>{result.method || "scenario method not reported"}</strong>
           <span>Model version</span><strong>{result.model_version || "not reported"}</strong>
+          <span>Temporal holdout</span><strong>{result.metrics?.temporal_holdout_samples ?? "—"} samples · MAE {formatNumber(result.metrics?.temporal_model_mae_c as number | undefined, 2)}°C</strong>
+          <span>Spatial holdout</span><strong>{result.metrics?.spatial_holdout_samples ?? "—"} samples · MAE {formatNumber(result.metrics?.spatial_model_mae_c as number | undefined, 2)}°C</strong>
           <span>สร้างเมื่อ</span><strong>{formatThaiDate(result.created_at, true)}</strong>
         </div>
       )}
