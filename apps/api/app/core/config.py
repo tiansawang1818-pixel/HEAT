@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     open_meteo_longitude: float = 100.5018
     open_meteo_base_url: str = "https://api.open-meteo.com/v1/forecast"
     source_request_timeout_seconds: int = 30
+    scheduler_tick_seconds: int = Field(default=60, ge=2, le=300)
     worldpop_api_base_url: str = "https://api.worldpop.org/v3"
     worldpop_api_key: Optional[str] = None
     worldpop_reference_year: Optional[int] = None

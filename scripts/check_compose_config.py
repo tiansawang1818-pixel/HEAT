@@ -16,8 +16,8 @@ def inspect(config):
 
     for name, service in services.items():
         check(name == "caddy" or not service.get("ports"), f"{name}: unexpected published port")
-    check(set(services) >= {"api", "web", "worker", "beat", "postgres", "redis", "caddy", "migrate"}, "Production services are missing")
-    for name in ("api", "worker", "beat", "migrate"):
+    check(set(services) >= {"api", "web", "worker", "dispatcher", "beat", "postgres", "redis", "caddy", "migrate"}, "Production services are missing")
+    for name in ("api", "worker", "dispatcher", "beat", "migrate"):
         service = services.get(name, {})
         env = service.get("environment", {})
         check(env.get("ENVIRONMENT") == "production", f"{name}: production mode is required")

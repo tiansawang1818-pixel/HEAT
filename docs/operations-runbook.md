@@ -57,6 +57,8 @@ Future-outlook validation gates ปรับได้ด้วย `FORECAST_MIN_
 
 ## Queue backlog
 
+Beat ส่ง heartbeat ไป queue `control` ทุก 60 วินาที โดย `dispatcher` worker แยกจาก ETL worker งานค้นหา provider รอบแรกจึงไม่รอครบ 1 ชั่วโมง/1 สัปดาห์ ระบบอ่าน cadence จาก `data_sources` และเวลาตรวจจริงในฐานข้อมูล การ restart ไม่ทำให้เริ่มนับรอบใหม่ งาน geospatial รอขอบเขตทางการที่ผ่าน validation; Open-Meteo ตรวจได้อิสระ งานที่ถูกส่งเข้าคิวมี job ID ถาวรและไม่ถูกส่งซ้ำก่อน lease หมด หาก process หยุดระหว่างบันทึกกับส่งคิว ระบบ replay ID เดิมและใช้ job/source locks ป้องกันประมวลผลซ้ำ
+
 - ตรวจ scheduled vs active/reserved tasks, lock TTL, worker memory และ provider latency
 - scale worker ตาม task class; raster jobs ไม่ควรแย่ง queue ของ status/notification
 - revoke เฉพาะ job ที่พิสูจน์แล้วว่าค้าง และต้องแน่ใจว่า task รองรับ safe retry

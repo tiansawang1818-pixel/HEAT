@@ -179,6 +179,15 @@ services:
         condition: service_completed_successfully
     stop_grace_period: 30s
 
+  dispatcher:
+    <<: *api-base
+    command: ["celery", "-A", "app.worker.celery_app", "worker", "-Q", "control", "--loglevel=INFO", "--concurrency=1"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
   beat:
     <<: *api-base
     command: ["celery", "-A", "app.worker.celery_app", "beat", "--loglevel=INFO", "--schedule=/tmp/celerybeat-schedule"]

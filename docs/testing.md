@@ -15,6 +15,8 @@ SSE ต้องมี `Cache-Control: no-cache, no-transform` เพื่อ�
 
 fixtures ในงานนี้ระบุ `synthetic_demo` และไม่มีการเรียก Earth Engine หรือผู้ให้บริการภายนอก การผ่าน CI จึงยืนยันการเชื่อมต่อส่วนประกอบของระบบ ไม่ได้ยืนยัน provider credentials, ความถูกต้องของข้อมูลจริง หรือผล cooling ของ intervention
 
+การทดสอบ scheduler ใช้ฐานข้อมูลใหม่ชื่อ `heatshift_scheduler_ci`, Redis DB 3 และ HTTP provider จำลองบน localhost แล้วเริ่ม Celery Beat/worker จริงโดยไม่เรียก manual-refresh API ตรวจการพบข้อมูลครั้งแรก การข้าม asset เดิม การเผยแพร่ revision ถัดไป และการคงข้อมูลเดิมเมื่อ provider ส่งข้อมูลไม่ผ่าน validation ค่าใน mock provider ใช้เฉพาะการทดสอบโครงสร้างระบบและไม่ใช่ข้อมูลอากาศจริง
+
 รัน unit/API tests ในเครื่อง:
 
 ```bash

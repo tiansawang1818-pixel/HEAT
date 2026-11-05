@@ -10,19 +10,13 @@ from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.entities import IngestionJob
 from app.services.bootstrap import ensure_sources
-from app.services.connectors import (
-    BangkokBoundaryConnector,
-    DynamicWorldConnector,
-    FixtureConnector,
-    LandsatConnector,
-    OpenMeteoConnector,
-    OpenStreetMapConnector,
-    SentinelConnector,
-    WorldPopConnector,
-)
+from app.services.connectors import FixtureConnector
 from app.services.connectors.base import ConnectorError, ProviderRateLimitError
 from app.services.pipeline import run_monitor
 from app.services.locks import MONITOR_HARD_TIME_LIMIT_SECONDS, MONITOR_SOFT_TIME_LIMIT_SECONDS
+from app.services.locks import LockBackendUnavailable, distributed_lock
+from app.services.source_registry import CONNECTOR_TYPES
+from app.services.scheduling import dispatch_due_sources
 
 
 celery_app = Celery("heatshift", broker=settings.redis_url, backend=settings.redis_url)
@@ -36,35 +30,28 @@ celery_app.conf.update(
     task_soft_time_limit=MONITOR_SOFT_TIME_LIMIT_SECONDS,
     task_time_limit=MONITOR_HARD_TIME_LIMIT_SECONDS,
     broker_connection_retry_on_startup=True,
+    task_routes={"app.worker.dispatch_ingestion": {"queue": "control"}},
     beat_schedule={
-        "monitor-bma-boundaries-weekly": {"task": "app.worker.run_ingestion", "schedule": 7 * 86400, "args": ["bma-boundaries"]},
-        "monitor-landsat-daily": {"task": "app.worker.run_ingestion", "schedule": 86400, "args": ["landsat"]},
-        "monitor-sentinel-six-hourly": {"task": "app.worker.run_ingestion", "schedule": 21600, "args": ["sentinel"]},
-        "monitor-dynamic-world-six-hourly": {"task": "app.worker.run_ingestion", "schedule": 21600, "args": ["dynamic-world"]},
-        "monitor-weather-hourly": {"task": "app.worker.run_ingestion", "schedule": 3600, "args": ["open-meteo"]},
-        "monitor-worldpop-monthly": {"task": "app.worker.run_ingestion", "schedule": 30 * 86400, "args": ["worldpop"]},
-        "monitor-osm-weekly": {"task": "app.worker.run_ingestion", "schedule": 7 * 86400, "args": ["osm"]},
+        "dispatch-due-source-checks": {"task": "app.worker.dispatch_ingestion", "schedule": settings.scheduler_tick_seconds},
     },
 )
 
 
 def connector_for(source: str, fixture_path: Optional[str] = None):
-    connectors = {
-        "bma-boundaries": BangkokBoundaryConnector,
-        "landsat": LandsatConnector,
-        "sentinel": SentinelConnector,
-        "dynamic-world": DynamicWorldConnector,
-        "open-meteo": OpenMeteoConnector,
-        "worldpop": WorldPopConnector,
-        "osm": OpenStreetMapConnector,
-    }
     if source == "fixture":
         if not settings.allow_fixture_ingestion or not fixture_path:
             raise ValueError("Fixture ingestion is disabled or missing path")
         return FixtureConnector(Path(fixture_path))
-    if source not in connectors:
+    if source not in CONNECTOR_TYPES:
         raise ValueError("Unsupported source: %s" % source)
-    return connectors[source]()
+    return CONNECTOR_TYPES[source]()
+
+
+@celery_app.task(name="app.worker.dispatch_ingestion", soft_time_limit=45, time_limit=60)
+def dispatch_ingestion():
+    with SessionLocal() as db:
+        ensure_sources(db)
+        return dispatch_due_sources(db, lambda job_id, source: run_manual_ingestion.delay(job_id, source))
 
 
 @celery_app.task(
@@ -88,8 +75,15 @@ def run_ingestion(self, source: str, fixture_path: Optional[str] = None):
         db.close()
 
 
-@celery_app.task(bind=True, max_retries=5, name="app.worker.run_manual_ingestion")
+@celery_app.task(bind=True, max_retries=5, autoretry_for=(LockBackendUnavailable,), retry_backoff=True, retry_jitter=True, name="app.worker.run_manual_ingestion")
 def run_manual_ingestion(self, job_id: str, source: str, fixture_path: Optional[str] = None):
+    with distributed_lock("queued-job:%s" % job_id) as acquired:
+        if not acquired:
+            return {"status": "duplicate_delivery", "job_id": job_id}
+        return _execute_queued_ingestion(self, job_id, source, fixture_path)
+
+
+def _execute_queued_ingestion(self, job_id: str, source: str, fixture_path: Optional[str] = None):
     db = SessionLocal()
     try:
         job = db.get(IngestionJob, job_id)
@@ -102,7 +96,7 @@ def run_manual_ingestion(self, job_id: str, source: str, fixture_path: Optional[
         job.error_message, job.finished_at = None, None
         job.checkpoint = {"celery_task_id": self.request.id}
         db.commit()
-        result = run_monitor(db, connector_for(source, fixture_path), requested_by="admin:%s" % self.request.id)
+        result = run_monitor(db, connector_for(source, fixture_path), requested_by=job.requested_by)
         if result.get("status") == "locked":
             raise ConnectorError("Another worker is processing this source; retry has been scheduled")
         job = db.get(IngestionJob, job_id)

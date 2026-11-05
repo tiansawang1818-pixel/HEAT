@@ -2009,12 +2009,14 @@ def refresh_schedule(db: Session = Depends(get_db)) -> Dict[str, Any]:
     sources = db.scalars(select(DataSource).where(DataSource.enabled.is_(True)).order_by(DataSource.check_interval_seconds)).all()
     return {
         "timezone": "UTC",
+        "dispatcher_interval_seconds": settings.scheduler_tick_seconds,
+        "first_check": "next_dispatcher_tick_after_dependencies_are_ready",
         "items": [
             {
                 "source_name": source.name,
                 "interval_seconds": source.check_interval_seconds,
                 "stale_after_seconds": source.stale_after_seconds,
-                "schedule_managed_by": "Celery Beat",
+                "schedule_managed_by": "Celery Beat + durable due-source dispatcher",
             }
             for source in sources
         ],

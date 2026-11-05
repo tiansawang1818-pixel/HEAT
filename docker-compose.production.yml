@@ -74,6 +74,13 @@ services:
     depends_on: !override
       migrate: {condition: service_completed_successfully}
       redis: {condition: service_healthy}
+  dispatcher:
+    <<: *production-api
+    env_file: !reset []
+    volumes: !reset []
+    depends_on: !override
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
   web:
     ports: !reset []
     networks: [default, ingress]
