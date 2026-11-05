@@ -2,6 +2,8 @@
 
 Local Compose ใช้ shared admin key เพื่อให้เริ่มระบบได้ง่ายเท่านั้น Production backend ปฏิเสธ admin operation ทุกกรณีจนกว่าจะตั้ง `ADMIN_AUTH_MODE=oidc` พร้อม issuer, audience, JWKS URL และ role ที่อนุญาต
 
+Next.js ที่ build แบบ optimized ยังใช้ทดสอบใน local Compose ได้ จึงแยก `ENVIRONMENT=development` ที่ระบุชัดเจนจาก `NODE_ENV=production` ของ framework หากไม่ได้ระบุ development หรือใช้ deployment mode production ระบบเว็บจะปฏิเสธ shared admin key เสมอ ชุด production บังคับทั้ง frontend/backend เป็น production และไม่มีค่า local admin secret
+
 การป้องกันที่มีแล้วสำหรับ local/pilot: backend เปรียบเทียบ admin secret แบบ constant-time, sanitize `X-Admin-Actor` ก่อนเขียน audit trail และ Next.js server proxy ไม่เปิดเผย backend key ต่อ browser พร้อมจำกัด body ของคำขอ admin ส่วนการอนุมัติต้นทุน/candidate สร้าง `PipelineEvent` ที่ตรวจสอบย้อนหลังได้
 
 OIDC mode ตรวจลายเซ็นจาก JWKS, allowlist asymmetric algorithms, `iss`, `aud`, `exp`, `sub` และ role claim; JWKS cache มี TTL และ production บังคับ HTTPS actor ใน audit trail มาจาก verified `preferred_username`, `email` หรือ `sub` เท่านั้น ไม่เชื่อ `X-Admin-Actor` จาก client ในโหมดนี้

@@ -204,6 +204,7 @@ services:
       NEXT_PUBLIC_DEMO_MODE: ${NEXT_PUBLIC_DEMO_MODE:-true}
       BACKEND_INTERNAL_URL: http://api:8000
       API_INTERNAL_URL: http://api:8000
+      ENVIRONMENT: ${ENVIRONMENT:-development}
       ADMIN_API_KEY: ${ADMIN_API_KEY:-local-admin-key-change-me}
       ADMIN_AUTH_MODE: ${ADMIN_AUTH_MODE:-local_key}
       DASHBOARD_ADMIN_TOKEN: ${DASHBOARD_ADMIN_TOKEN:-local-dashboard-admin-change-me}

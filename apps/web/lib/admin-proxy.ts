@@ -18,7 +18,12 @@ export async function proxyAdminPost(request: NextRequest, backendPath: string, 
   if (authMode === "local_key" && (!operatorSecret || !backendSecret)) {
     return NextResponse.json({ detail: "ยังไม่ได้ตั้งค่า server-side admin credentials" }, { status: 503 });
   }
-  if (process.env.NODE_ENV === "production" && authMode !== "oidc") {
+  // An optimized Next build also runs in local Compose. Only an explicit
+  // development deployment may use the local operator credential there.
+  const environment = process.env.ENVIRONMENT?.trim().toLowerCase();
+  const productionDeployment = environment === "production"
+    || (process.env.NODE_ENV === "production" && environment !== "development");
+  if (productionDeployment && authMode !== "oidc") {
     return NextResponse.json({ detail: "production ต้องใช้ OIDC สำหรับงานผู้ดูแลระบบ" }, { status: 503 });
   }
   if (authMode === "local_key" && !equalSecret(providedCredential, operatorSecret!)) {

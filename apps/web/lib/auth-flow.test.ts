@@ -82,6 +82,22 @@ async function login() {
 }
 
 describe("server-side administrator login", () => {
+  it("permits an optimized local Compose build only when development is explicit and refuses production shared keys", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("ADMIN_AUTH_MODE", "local_key");
+    vi.stubEnv("DASHBOARD_ADMIN_TOKEN", "ci-local-operator");
+    vi.stubEnv("ADMIN_API_KEY", "ci-backend-key");
+    const localRequest = () => new NextRequest("https://heat.example.org/api/admin/ingestion", {
+      method: "POST", headers: { "X-Local-Admin-Token": "ci-local-operator" }, body: JSON.stringify({ source: "open-meteo" }),
+    });
+    vi.stubEnv("ENVIRONMENT", "production");
+    expect((await proxyAdminPost(localRequest(), "/api/ingestion/run")).status).toBe(503);
+    vi.stubEnv("ENVIRONMENT", "");
+    expect((await proxyAdminPost(localRequest(), "/api/ingestion/run")).status).toBe(503);
+    vi.stubEnv("ENVIRONMENT", "development");
+    expect((await proxyAdminPost(localRequest(), "/api/ingestion/run")).status).toBe(200);
+  });
+
   it("completes real OIDC code/PKCE/nonce validation and encrypts the token in server storage", async () => {
     const { loginCookie, state } = await login();
     const response = await callback(new NextRequest(`https://heat.example.org/api/auth/callback?code=test-code&state=${state}`, { headers: { cookie: `${loginCookieName}=${loginCookie}` } }));

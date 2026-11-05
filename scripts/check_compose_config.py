@@ -30,6 +30,7 @@ def inspect(config):
         check(bool(service.get("secrets")), f"{name}: credential secret mount is missing")
     api = services.get("api", {}).get("environment", {})
     web = services.get("web", {}).get("environment", {})
+    check(web.get("ENVIRONMENT") == "production", "web: production deployment mode is required")
     check(web.get("ADMIN_AUTH_MODE") == "oidc", "web: OIDC is required")
     check(not web.get("ADMIN_API_KEY") and not web.get("DASHBOARD_ADMIN_TOKEN"), "web: local admin credentials remain")
     check(str(web.get("NEXT_PUBLIC_DEMO_MODE")).lower() == "false", "web: demo mode must be false")
