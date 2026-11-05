@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { askAssistant, compareScenarios, loadDashboardData, loadDatasetVersions, loadLayerFeatures, loadProductionReadiness, loadRasterTileDescriptor, runForecastScenario, saveScenario, searchAreaDirectory } from "./api";
+import { askAssistant, compareScenarios, loadAreaDetail, loadDashboardData, loadDatasetVersions, loadLayerFeatures, loadProductionReadiness, loadRasterTileDescriptor, runForecastScenario, saveScenario, searchAreaDirectory } from "./api";
 import { formatBaht, formatNumber, freshnessLabel } from "./utils";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -266,6 +266,17 @@ describe("Thai presentation helpers", () => {
     expect(readiness.configuration_ready).toBe(false);
     expect(readiness.secrets_exposed).toBe(false);
     expect(String(fetchMock.mock.calls[0][0])).toContain("probe_dependencies=true");
+  });
+
+  it("keeps a synthetic observation labelled even when its boundary is official", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      id: "official-area", name_th: "เขตทดสอบ", boundary_provenance: { quality_status: "verified_official_boundary" },
+      indicators: { lst_c_mean: { value: 38.4, observed_at: "2026-11-05T03:00:00Z", quality_status: "synthetic_demo" } },
+      priority: null,
+    })));
+    const area = await loadAreaDetail("official-area");
+    expect(area.quality_status).toBe("synthetic_demo");
+    expect(area.surface_temperature_c).toBe(38.4);
   });
 
   it("loads only the active viewport and carries the requested layer version", async () => {

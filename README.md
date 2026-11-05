@@ -105,6 +105,8 @@ make down
 
 หากรันโดยไม่ใช้ Docker ให้ดูคำสั่งและ version ใน `apps/api/pyproject.toml` กับ `apps/web/package.json` โดยตรง
 
+GitHub Actions ทดสอบ PostGIS + Redis + Celery จริงแยกจาก unit tests โดยตรวจงานตั้งแต่ enqueue ถึง versioned map API และ SSE stream ต่อเนื่อง fixtures ถูกระบุเป็นข้อมูลสังเคราะห์เสมอ ดูขอบเขตหลักฐานและวิธีรันใน [docs/testing.md](docs/testing.md)
+
 ## Credential ที่ต้องใช้สำหรับ production ingestion
 
 - Google Earth Engine project + service account ที่มีสิทธิ์อ่าน Landsat, Sentinel-2 และ Dynamic World

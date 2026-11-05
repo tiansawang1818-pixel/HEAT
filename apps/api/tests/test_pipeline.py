@@ -353,3 +353,13 @@ def test_publication_failure_rolls_back_observations_and_can_recover_on_next_mon
     assert run_monitor(db, RasterTemperatureConnector())["processed"] == 1
     assert len(db.scalars(select(TemperatureObservation)).all()) == 2
     assert len(db.scalars(select(PipelineEvent)).all()) == 1
+
+
+def test_priority_recalculation_excludes_synthetic_inputs_from_real_observations(db):
+    add_test_areas(db)
+    db.add(AreaIndicator(area_id="area-a", indicator_key="population_density", value=999_999, observed_at=datetime.now(timezone.utc), quality_status="synthetic_demo"))
+    db.commit()
+    run_monitor(db, ProcessedTemperatureConnector())
+    score = db.scalar(select(PriorityScore).where(PriorityScore.area_id == "area-a"))
+    assert score.components["population_exposure"] is None
+    assert "population_exposure" in score.missing_inputs

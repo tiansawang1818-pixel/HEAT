@@ -150,6 +150,10 @@ export interface FeatureCollection {
   features: GeoFeature[];
 }
 
+export function isSyntheticQuality(value: unknown): boolean {
+  return typeof value === "string" && ["synthetic_demo", "demo_only", "test_only"].includes(value);
+}
+
 export interface AreaDirectoryItem {
   id: string;
   name_th: string;
@@ -165,6 +169,7 @@ export interface MapLayerMeta {
   description_th?: string;
   unit?: string;
   status: FreshnessState;
+  status_reason?: string;
   layer_version?: number;
   observation_date?: string | null;
   source_name?: string;

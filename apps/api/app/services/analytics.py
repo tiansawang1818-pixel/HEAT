@@ -19,7 +19,10 @@ from app.services.priority import calculate_priority
 def _latest_indicator(db: Session, area_id: str, key: str) -> Optional[AreaIndicator]:
     return db.scalar(
         select(AreaIndicator)
-        .where(AreaIndicator.area_id == area_id, AreaIndicator.indicator_key == key)
+        .where(
+            AreaIndicator.area_id == area_id, AreaIndicator.indicator_key == key,
+            AreaIndicator.quality_status.notin_(["synthetic_demo", "demo_only", "test_only"]),
+        )
         .order_by(desc(AreaIndicator.observed_at))
         .limit(1)
     )

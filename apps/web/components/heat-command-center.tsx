@@ -82,6 +82,7 @@ import {
   formatNumber,
   formatThaiDate,
   freshnessLabel,
+  isSyntheticQuality,
   type AreaProperties,
   type AreaDirectoryItem,
   type CandidateReviewRecord,
@@ -510,15 +511,24 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
     setSelected(feature);
     setRightTab("area");
     setMobilePanel("analysis");
-    setHistoryLoading(true);
-    loadAreaDetail(feature.properties.id)
-      .then((detail) => setSelected((current) => current ? { ...current, properties: { ...current.properties, ...detail } } : current))
-      .catch(() => undefined);
-    loadAreaHistory(feature.properties.id)
-      .then(setHistory)
-      .catch(() => setHistory([]))
-      .finally(() => setHistoryLoading(false));
   }, []);
+
+  const selectedAreaId = selected?.properties.id;
+  useEffect(() => {
+    if (!selectedAreaId) return;
+    let cancelled = false;
+    setHistoryLoading(true);
+    loadAreaDetail(selectedAreaId)
+      .then((detail) => {
+        if (!cancelled) setSelected((current) => current?.properties.id === selectedAreaId ? { ...current, properties: { ...current.properties, ...detail } } : current);
+      })
+      .catch(() => undefined);
+    loadAreaHistory(selectedAreaId)
+      .then((points) => { if (!cancelled) setHistory(points); })
+      .catch(() => { if (!cancelled) setHistory([]); })
+      .finally(() => { if (!cancelled) setHistoryLoading(false); });
+    return () => { cancelled = true; };
+  }, [selectedAreaId, data.layers]);
 
   const handleSearchResult = useCallback(async (area: AreaDirectoryItem) => {
     try {
@@ -707,6 +717,9 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
       }),
     };
   }, [data.features, forecastResult, initialView]);
+  const containsSynthetic = data.features.features.some((feature) =>
+    isSyntheticQuality(feature.properties.quality_status) || isSyntheticQuality(feature.properties.boundary_quality_status)
+  ) || isSyntheticQuality(selected?.properties.quality_status);
 
   return (
     <main className="command-center">
@@ -741,11 +754,11 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
         </Button>
       </header>
 
-      {data.isDemo && (
+      {(data.isDemo || containsSynthetic) && (
         <div className="demo-banner" role="status">
           <ShieldCheck size={14} />
-          <strong>โหมดสาธิตเฉพาะโครง UX</strong>
-          <span>backend หรือชุดข้อมูลจริงยังไม่พร้อม — รูปร่างบนแผนที่เป็นพื้นที่ตัวอย่างและไม่มีค่าการวัดสมมติ</span>
+          <strong>{data.isDemo ? "โหมดสาธิตเฉพาะโครง UX" : "มีข้อมูลสังเคราะห์สำหรับทดสอบ"}</strong>
+          <span>{data.isDemo ? "backend หรือชุดข้อมูลจริงยังไม่พร้อม — รูปร่างบนแผนที่เป็นพื้นที่ตัวอย่างและไม่มีค่าการวัดสมมติ" : "ข้อมูลที่ระบุ synthetic/demo ใช้ตรวจการทำงานของระบบเท่านั้น ไม่ใช่การสังเกตจริง"}</span>
         </div>
       )}
 
@@ -865,6 +878,7 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
             <span>{rasterTile ? rasterTile.legend.max : "สูง"}</span>
           </div>
           <div className="legend-meta"><StatusDot status={currentLayer?.status || "unavailable"} /><span>v{currentLayer?.layer_version ?? "—"}</span></div>
+          {currentLayer?.status_reason && <p className="legend-source-reason">{currentLayer.status_reason}</p>}
         </div>
         <button className="mobile-analysis" onClick={() => setMobilePanel("analysis")}><Activity size={15} /> วิเคราะห์พื้นที่</button>
         <AnimatePresence>
@@ -1216,14 +1230,14 @@ function ScenarioComparisonMaps({
 function AreaPanel({ area, loading, onOptimize }: { area: AreaProperties | null; loading: boolean; onOptimize: () => void }) {
   if (loading) return <div className="empty-state"><Activity className="animate-pulse text-cyan" /><LoadingLine /><p>กำลังเชื่อมข้อมูลที่ผ่านการตรวจสอบ</p></div>;
   if (!area) return <div className="empty-state"><MapIcon /><h2>เลือกพื้นที่บนแผนที่</h2><p>คลิกเขตเพื่อดูข้อมูลจริง วันที่สังเกตการณ์ และเหตุผลของคะแนน</p></div>;
-  const isDemo = area.quality_status === "demo_only";
+  const isDemo = isSyntheticQuality(area.quality_status);
   return (
     <>
       <div className="area-heading">
         <div><span>AREA ANALYSIS</span><h2>{area.name_th}</h2><p>{area.name_en}</p></div>
         <div className="score-ring"><strong>{formatNumber(area.priority_score)}</strong><span>/100</span></div>
       </div>
-      {isDemo && <div className="inline-warning">พื้นที่ตัวอย่าง — ไม่มีค่าการวัดสมมติ</div>}
+      {isDemo && <div className="inline-warning">ข้อมูลสาธิตหรือสังเคราะห์สำหรับทดสอบ ไม่ใช่การสังเกตจริง</div>}
       <div className="observation-strip"><Clock3 size={13} /><span>สังเกตการณ์จากแหล่งต้นทาง</span><strong>{formatThaiDate(area.observation_date)}</strong></div>
       <div className="metrics-grid">
         <Metric label="อุณหภูมิพื้นผิว" value={formatNumber(area.surface_temperature_c, 1)} suffix={area.surface_temperature_c == null ? "" : "°C"} tone="hot" />

@@ -162,6 +162,8 @@ def _source_status(db: Session, source: DataSource) -> Dict[str, Any]:
         status, reason = "updating", "กำลังตรวจสอบและประมวลผลเวอร์ชันใหม่"
     elif latest_any and latest_any.status == "failed" and (not latest or _aware(latest_any.discovered_at) > _aware(latest.published_at)):
         status, reason = "error", "เวอร์ชันล่าสุดไม่ผ่านการตรวจสอบ; ระบบยังคงใช้เวอร์ชันก่อนหน้า"
+    elif check and check.status == "failed" and (not latest or not latest.published_at or _aware(check.checked_at) > _aware(latest.published_at)):
+        status, reason = "error", "ตรวจสอบผู้ให้บริการครั้งล่าสุดไม่สำเร็จ; ยังคงใช้ข้อมูลที่เผยแพร่ก่อนหน้าเมื่อมี"
     elif latest and latest.observed_at:
         age = (now - _aware(latest.observed_at)).total_seconds()
         if age > source.stale_after_seconds:
@@ -527,7 +529,7 @@ def map_layers(db: Session = Depends(get_db)) -> Dict[str, Any]:
         "vegetation": ["GOOGLE/DYNAMICWORLD/V1"],
         "ndvi": ["COPERNICUS/S2_SR_HARMONIZED"],
         "built": ["GOOGLE/DYNAMICWORLD/V1"],
-        "priority": [],
+        "priority": ["LANDSAT/LC08_C02_T1_L2+LANDSAT/LC09_C02_T1_L2", "COPERNICUS/S2_SR_HARMONIZED", "GOOGLE/DYNAMICWORLD/V1", "worldpop/global"],
         "candidates": ["osm/bangkok"],
         "historical": ["LANDSAT/LC08_C02_T1_L2+LANDSAT/LC09_C02_T1_L2"],
         "future-risk": [],
@@ -554,26 +556,34 @@ def map_layers(db: Session = Depends(get_db)) -> Dict[str, Any]:
         if layer == "future-risk":
             latest_forecast = db.scalar(select(ForecastRun).order_by(desc(ForecastRun.created_at)).limit(1))
             return bool(latest_forecast and latest_forecast.results and latest_forecast.results.get("projections"))
-        return bool(db.scalar(select(func.count()).select_from(AreaIndicator).where(AreaIndicator.indicator_key == indicator)))
+        return bool(db.scalar(select(func.count()).select_from(AreaIndicator).where(
+            AreaIndicator.indicator_key == indicator,
+            AreaIndicator.quality_status.notin_(["synthetic_demo", "demo_only", "test_only"]),
+        )))
 
-    return {
-        "items": [
-            {
-                "id": key,
-                "name_th": name,
-                "indicator_key": indicator,
-                "unit": unit,
-                "feature_url": "/api/map/features?layer=%s" % key,
-                "tilejson_url": "/api/map/tiles/%s" % key if key in {"temperature", "vegetation", "ndvi", "built"} else None,
-                "delivery": "raster_xyz_with_viewport_geojson_fallback" if key in {"temperature", "vegetation", "ndvi", "built"} else "viewport_geojson",
-                "source_name": source_labels[key],
-                "status": "up_to_date" if layer_has_data(key, indicator) else "unavailable",
-                "status_reason": "มี geographic records ที่ผ่านการเผยแพร่" if layer_has_data(key, indicator) else "ยังไม่มี geographic records ที่ผ่านการเผยแพร่สำหรับชั้นนี้",
-                "source_status": {dataset_id: versions[dataset_id] for dataset_id in source_ids[key] if dataset_id in versions},
-            }
-            for key, name, indicator, unit in LAYER_DEFINITIONS
-        ]
-    }
+    items = []
+    for key, name, indicator, unit in LAYER_DEFINITIONS:
+        relevant = {dataset_id: versions[dataset_id] for dataset_id in source_ids[key] if dataset_id in versions}
+        has_data = layer_has_data(key, indicator)
+        status = next((state for state in ["error", "updating", "stale", "unavailable", "up_to_date"]
+                       if any(item["status"] == state for item in relevant.values())), "up_to_date" if has_data else "unavailable")
+        if not has_data and status not in {"updating", "error"}:
+            status = "unavailable"
+        reasons = list(dict.fromkeys(item["status_reason"] for item in relevant.values() if item["status"] == status))
+        items.append({
+            "id": key,
+            "name_th": name,
+            "indicator_key": indicator,
+            "unit": unit,
+            "feature_url": "/api/map/features?layer=%s" % key,
+            "tilejson_url": "/api/map/tiles/%s" % key if key in {"temperature", "vegetation", "ndvi", "built"} else None,
+            "delivery": "raster_xyz_with_viewport_geojson_fallback" if key in {"temperature", "vegetation", "ndvi", "built"} else "viewport_geojson",
+            "source_name": source_labels[key],
+            "status": status,
+            "status_reason": " · ".join(reasons) if reasons else "มีข้อมูลที่ผ่านการเผยแพร่" if has_data else "ยังไม่มีข้อมูลจริงที่ผ่านการเผยแพร่สำหรับชั้นนี้",
+            "source_status": relevant,
+        })
+    return {"items": items}
 
 
 @router.get("/map/tiles/{layer}")
@@ -691,6 +701,7 @@ def map_features(
                         "unit": known[layer][3],
                         "observed_at": _iso(observed_at),
                         "quality_status": quality,
+                        "boundary_quality_status": area.quality_status,
                         "scenario_horizon_years": scenario_horizon,
                         "scenario_uncertainty_c": scenario_uncertainty,
                     },
@@ -1932,7 +1943,9 @@ async def events_stream(request: Request, after: Optional[str] = None, db: Sessi
                     cursor = latest.id if latest else None
                     rows = []
             else:
-                rows = []
+                rows = list(db.scalars(
+                    select(PipelineEvent).order_by(PipelineEvent.created_at, PipelineEvent.id).limit(50)
+                ).all())
             if rows:
                 for event in rows:
                     cursor = event.id

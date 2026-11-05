@@ -494,7 +494,7 @@ def ingest_asset(db: Session, source: DataSource, connector: SourceConnector, as
     _persist_boundary_records(db, version, boundary_records)
     _persist_candidate_records(db, connector, version, candidate_records)
     _persist_raster_metadata(db, connector, version, asset)
-    if connector.layer_key == "fixture":
+    if connector.layer_key == "fixture" and isinstance(asset.payload, dict):
         _publish_fixture_indicators(db, version, asset.payload)
     version.status = ProcessingStatus.publishing.value
     version.quality_status = "valid"
@@ -530,6 +530,14 @@ def ingest_asset(db: Session, source: DataSource, connector: SourceConnector, as
         "weather": ["weather"],
         "fixture": ["fixture"],
     }.get(connector.layer_key, [connector.layer_key])
+    if connector.layer_key == "fixture" and isinstance(asset.payload, dict):
+        fixture_layer_by_indicator = {"lst_c_mean": "temperature", "ndvi": "ndvi", "tree_cover_fraction": "vegetation", "built_fraction": "built", "population_density": "population"}
+        affected_layers = sorted({
+            "fixture",
+            *(fixture_layer_by_indicator[entry["indicator_key"]]
+              for entry in asset.payload.get("area_indicators", [])
+              if isinstance(entry, dict) and entry.get("indicator_key") in fixture_layer_by_indicator),
+        })
     db.add(
         PipelineEvent(
             event_type="layer.published",

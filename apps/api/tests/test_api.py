@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from app.models.entities import (
+    AreaIndicator,
     CandidateIntervention,
     DataSource,
     DatasetVersion,
@@ -292,6 +293,64 @@ def test_sse_cursor_orders_same_timestamp_events_without_replaying_history(db):
     rows = _events_after_cursor(db, "event-b")
     assert [item.id for item in rows] == ["event-c"]
     assert _events_after_cursor(db, "event-missing") is None
+
+
+def test_sse_delivers_the_first_publication_to_an_already_connected_client(db):
+    import asyncio
+    from app.api.router import events_stream
+
+    class ConnectedRequest:
+        headers = {}
+
+        async def is_disconnected(self):
+            return False
+
+    async def scenario():
+        response = await events_stream(ConnectedRequest(), db=db)
+        body = response.body_iterator
+        assert "connected" in await body.__anext__()
+        db.add(PipelineEvent(id="first-live-publication", event_type="layer.published", layer_key="temperature", payload={"affected_layers": ["temperature"]}))
+        db.commit()
+        wire = await asyncio.wait_for(body.__anext__(), timeout=1)
+        assert "event: data-update" in wire
+        assert "id: first-live-publication" in wire
+        await body.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_layer_freshness_uses_observation_age_and_failed_checks_preserve_map(client, db):
+    now = datetime.now(timezone.utc)
+    observed_at = now - timedelta(days=90)
+    source = db.scalar(select(DataSource).where(DataSource.name == "Landsat 8/9"))
+    area = GeographicArea(id="freshness-area", name_th="พื้นที่ทดสอบ", name_en="Test area", geometry={"type": "MultiPolygon", "coordinates": [[[[100.5, 13.7], [100.51, 13.7], [100.51, 13.71], [100.5, 13.71], [100.5, 13.7]]]]})
+    version = DatasetVersion(source_id=source.id, source_asset_id="old-validated-asset", source_version="v1", status="published", quality_status="valid", layer_version=1, observed_at=observed_at, published_at=now - timedelta(hours=1))
+    db.add_all([area, version])
+    db.flush()
+    db.add(AreaIndicator(area_id=area.id, dataset_version_id=version.id, indicator_key="lst_c_mean", value=35.0, observed_at=observed_at, quality_status="valid"))
+    check = SourceCheck(source_id=source.id, status="success", checked_at=now, completed_at=now)
+    db.add(check)
+    db.commit()
+    layer = next(item for item in client.get("/api/map/layers").json()["items"] if item["id"] == "temperature")
+    assert layer["status"] == "stale"
+    check.status = "failed"
+    db.commit()
+    layer = next(item for item in client.get("/api/map/layers").json()["items"] if item["id"] == "temperature")
+    assert layer["status"] == "error"
+    assert client.get("/api/map/features?layer=temperature").json()["features"][0]["properties"]["value"] == 35.0
+
+
+def test_synthetic_records_do_not_make_a_provider_layer_current(client, db):
+    area = GeographicArea(id="fixture-only-area", name_th="พื้นที่สังเคราะห์", name_en="Synthetic test", quality_status="synthetic_demo", geometry={"type": "MultiPolygon", "coordinates": [[[[100.5, 13.7], [100.51, 13.7], [100.51, 13.71], [100.5, 13.71], [100.5, 13.7]]]]})
+    db.add(area)
+    db.flush()
+    db.add(AreaIndicator(area_id=area.id, indicator_key="lst_c_mean", value=99.0, observed_at=datetime.now(timezone.utc), quality_status="synthetic_demo"))
+    db.commit()
+    layer = next(item for item in client.get("/api/map/layers").json()["items"] if item["id"] == "temperature")
+    assert layer["status"] == "unavailable"
+    feature = client.get("/api/map/features?layer=temperature").json()["features"][0]
+    assert feature["properties"]["quality_status"] == "synthetic_demo"
+    assert feature["properties"]["boundary_quality_status"] == "synthetic_demo"
 
 
 def test_priority_calculation_endpoint(client):

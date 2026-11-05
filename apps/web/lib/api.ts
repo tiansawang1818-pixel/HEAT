@@ -1,4 +1,5 @@
 import { defaultLayers, demoDatasets, demoFeatures } from "@/lib/demo-data";
+import { isSyntheticQuality } from "@/lib/utils";
 import type {
   AreaProperties,
   AreaDirectoryItem,
@@ -126,6 +127,7 @@ function normalizeLayers(value: unknown, datasets: DatasetStatus[]): MapLayerMet
       description_th: typeof raw.description_th === "string" ? raw.description_th : undefined,
       unit: typeof raw.unit === "string" ? raw.unit : undefined,
       status,
+      status_reason: typeof raw.status_reason === "string" ? raw.status_reason : undefined,
       layer_version: Math.max(0, ...versions),
       observation_date: observations.sort().at(-1) || null,
       source_name: typeof raw.source_name === "string"
@@ -255,7 +257,9 @@ export async function loadAreaMapFeature(areaId: string): Promise<GeoFeature> {
 
 export async function loadAreaDetail(areaId: string): Promise<AreaProperties> {
   const raw = await request<Record<string, unknown>>(`/api/areas/${encodeURIComponent(areaId)}`);
-  const indicators = (raw.indicators || {}) as Record<string, { value?: number; observed_at?: string }>;
+  const indicators = (raw.indicators || {}) as Record<string, { value?: number; observed_at?: string; quality_status?: string }>;
+  const boundaryQuality = (raw.boundary_provenance as { quality_status?: string } | undefined)?.quality_status;
+  const synthetic = isSyntheticQuality(boundaryQuality) || Object.values(indicators).some((item) => isSyntheticQuality(item.quality_status));
   const priority = raw.priority as { score?: number; components?: Record<string, number>; missing_inputs?: string[]; calculated_at?: string } | null;
   const value = (...keys: string[]) => keys.map((key) => indicators[key]?.value).find((item) => typeof item === "number");
   const observed = Object.values(indicators).map((item) => item.observed_at).filter(Boolean) as string[];
@@ -274,7 +278,7 @@ export async function loadAreaDetail(areaId: string): Promise<AreaProperties> {
     tree_coverage_pct: value("tree_cover_fraction", "tree_coverage_pct"),
     ndvi: value("ndvi"),
     built_up_pct: value("built_fraction", "built_up_pct"),
-    quality_status: (raw.boundary_provenance as { quality_status?: string } | undefined)?.quality_status,
+    quality_status: synthetic ? "synthetic_demo" : boundaryQuality,
     observation_date: (observed.sort().at(-1) || priority?.calculated_at || null),
     priority_explanation: explanations.length ? explanations : priority?.missing_inputs?.map((item) => `ยังขาดข้อมูล: ${item}`),
   };
