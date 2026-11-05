@@ -53,6 +53,8 @@ import {
   downloadSavedScenarioReport,
   downloadOptimizationReport,
   loadAreaDetail,
+  loadAdminSession,
+  logoutAdmin,
   loadAreaMapFeature,
   loadAreaHistory,
   loadCostAssumptions,
@@ -85,6 +87,7 @@ import {
   freshnessLabel,
   isSyntheticQuality,
   type AreaProperties,
+  type AdminSessionStatus,
   type AreaDirectoryItem,
   type CandidateReviewRecord,
   type CostAssumptionRecord,
@@ -1677,6 +1680,22 @@ function ObservatoryOverlay({ datasets, snapshot, readiness, readinessError, loa
 }) {
   const [source, setSource] = useState("open-meteo");
   const [operatorToken, setOperatorToken] = useState("");
+  const [adminSession, setAdminSession] = useState<AdminSessionStatus | null>(null);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  const credential = adminSession?.authenticated ? "__session__" : operatorToken;
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => void loadAdminSession().then((session) => {
+      if (!cancelled) { setAdminSession(session); setSessionError(null); }
+    }).catch(() => { if (!cancelled) setSessionError("ตรวจสิทธิ์ผู้ดูแลไม่สำเร็จ"); });
+    refresh();
+    const timer = setInterval(refresh, 30_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, []);
+  const signOut = async () => {
+    try { await logoutAdmin(); setAdminSession((value) => value ? { ...value, authenticated: false, actor: undefined, csrf_token: undefined } : null); }
+    catch { setSessionError("ออกจากระบบไม่สำเร็จ กรุณาลองอีกครั้ง"); }
+  };
   const [versionHistory, setVersionHistory] = useState<DatasetVersionHistory | null>(null);
   const [versionHistoryLoading, setVersionHistoryLoading] = useState(false);
   const [versionHistoryError, setVersionHistoryError] = useState<string | null>(null);
@@ -1740,10 +1759,15 @@ function ObservatoryOverlay({ datasets, snapshot, readiness, readinessError, loa
       </div>
       <div className="refresh-controls">
         <label><span>แหล่งข้อมูล</span><select value={source} onChange={(event) => setSource(event.target.value)}><option value="bma-boundaries">ขอบเขต 50 เขต กทม.</option><option value="open-meteo">Open-Meteo</option><option value="landsat">Landsat 8/9</option><option value="sentinel">Sentinel-2</option><option value="dynamic-world">Dynamic World</option><option value="worldpop">WorldPop</option><option value="osm">OpenStreetMap</option></select></label>
-        <label><span>สิทธิ์ผู้ดูแล / OIDC token (ส่งเฉพาะ server)</span><input type="password" autoComplete="current-password" value={operatorToken} onChange={(event) => setOperatorToken(event.target.value)} placeholder="Local token หรือ OIDC access token" /></label>
-        <Button onClick={() => onRefresh(source, operatorToken)} disabled={refreshing || !operatorToken} variant="outline">{refreshing ? <RefreshCw className="animate-spin" size={14} /> : <RefreshCw size={14} />} ตรวจสอบตอนนี้</Button>
+        <div className="admin-login-control">
+          {adminSession?.authenticated ? <><span>ผู้ดูแล: {adminSession.actor}</span><button onClick={() => void signOut()}>ออกจาก HEAT//SHIFT</button></>
+            : adminSession?.mode === "local_key" ? <label><span>สิทธิ์ผู้ดูแลสำหรับพัฒนาในเครื่อง</span><input type="password" autoComplete="current-password" value={operatorToken} onChange={(event) => setOperatorToken(event.target.value)} placeholder="Local operator token" /></label>
+              : adminSession?.configured ? <a href="/api/auth/login">เข้าสู่ระบบผู้ดูแลด้วย SSO</a> : <span>{sessionError || "ยังไม่ได้ตั้งค่า SSO สำหรับผู้ดูแล"}</span>}
+        </div>
+        <Button onClick={() => onRefresh(source, credential)} disabled={refreshing || !credential} variant="outline">{refreshing ? <RefreshCw className="animate-spin" size={14} /> : <RefreshCw size={14} />} ตรวจสอบตอนนี้</Button>
       </div>
-      <EvidenceApprovalPanel operatorToken={operatorToken} />
+      {sessionError && <div className="error-box">{sessionError}</div>}
+      <EvidenceApprovalPanel operatorToken={credential} />
       {error && <div className="error-box">{error}</div>}
       {job && <div className="job-box"><Activity size={14} /><span>Job {job.job_id}</span><strong>{job.status}</strong></div>}
       {loading && <div className="observatory-loading"><RefreshCw className="animate-spin" size={14} /> กำลังโหลดสถานะ pipeline</div>}

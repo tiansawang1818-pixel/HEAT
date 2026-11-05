@@ -4,7 +4,11 @@ Local Compose ใช้ shared admin key เพื่อให้เริ่ม
 
 การป้องกันที่มีแล้วสำหรับ local/pilot: backend เปรียบเทียบ admin secret แบบ constant-time, sanitize `X-Admin-Actor` ก่อนเขียน audit trail และ Next.js server proxy ไม่เปิดเผย backend key ต่อ browser พร้อมจำกัด body ของคำขอ admin ส่วนการอนุมัติต้นทุน/candidate สร้าง `PipelineEvent` ที่ตรวจสอบย้อนหลังได้
 
-OIDC mode ตรวจลายเซ็นจาก JWKS, allowlist asymmetric algorithms, `iss`, `aud`, `exp`, `sub` และ role claim; JWKS cache มี TTL และ production บังคับ HTTPS actor ใน audit trail มาจาก verified `preferred_username`, `email` หรือ `sub` เท่านั้น ไม่เชื่อ `X-Admin-Actor` จาก client ในโหมดนี้ Next.js proxy รับ access token เฉพาะใน request แล้ว forward เป็น bearer โดยไม่บันทึก/ส่งกลับ response ระบบยังไม่สร้าง login/session เอง องค์กรต้องผูกกับ IdP/SSO flow ที่ได้รับอนุมัติและกำหนด token lifetime/rotation ตามนโยบาย
+OIDC mode ตรวจลายเซ็นจาก JWKS, allowlist asymmetric algorithms, `iss`, `aud`, `exp`, `sub` และ role claim; JWKS cache มี TTL และ production บังคับ HTTPS actor ใน audit trail มาจาก verified `preferred_username`, `email` หรือ `sub` เท่านั้น ไม่เชื่อ `X-Admin-Actor` จาก client ในโหมดนี้
+
+หน้า Data Observatory เข้าสู่ระบบผ่าน `/api/auth/login` ด้วย Authorization Code + PKCE S256, state และ nonce โดยใช้ `openid-client` การแลก code และตรวจ ID token เกิดบน Next.js server จากนั้น backend `/api/admin/identity` ตรวจ access token และ role ก่อนสร้าง session กำหนด `APP_ORIGIN`, `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` (เฉพาะ confidential client), scopes และ audience ที่ตรงกับ backend ลงทะเบียน redirect URI เป็น `https://<domain>/api/auth/callback` แบบตรงตัว IdP ต้องออก JWT access token ที่ backend ตรวจได้และมี role ที่อนุญาต ทดสอบกับ IdP จริงก่อน release
+
+Browser เก็บเฉพาะ random session ID ใน HttpOnly, Secure, SameSite=Lax, `__Host-` cookie เมื่อ production ส่วน access token เข้ารหัส AES-256-GCM ใน Redis (`AUTH_REDIS_URL`) ด้วย `AUTH_SESSION_SECRET` สุ่มอย่างน้อย 32 ตัวอักษร Session มีอายุไม่เกิน 15 นาทีและไม่เกิน token expiry ไม่มี refresh token หรือต่ออายุเงียบ การหมุน secret ทำให้ session เดิมใช้ไม่ได้ งาน admin ต้องผ่าน exact Origin และ CSRF token และ backend ตรวจสิทธิ์ซ้ำทุกครั้ง Logout ลบ session ฝั่ง Redis; ไม่ได้ออกจาก IdP ทั้งองค์กร คำขอ admin ทุกชนิดอ่าน body แบบจำกัด 32 KiB ก่อน parse หาก Redis/SSO ไม่พร้อมจะปฏิเสธงานผู้ดูแล
 
 - ปิด `ALLOW_FIXTURE_INGESTION` และ `NEXT_PUBLIC_DEMO_MODE` ใน production
 - เก็บ `ADMIN_API_KEY` และ `DASHBOARD_ADMIN_TOKEN` เป็น server-side secrets เท่านั้น ห้ามใช้ชื่อ `NEXT_PUBLIC_*`

@@ -201,6 +201,12 @@ def health(db: Session = Depends(get_db)) -> Dict[str, Any]:
     return {"status": "ok", "service": settings.app_name, "time": datetime.now(timezone.utc).isoformat()}
 
 
+@router.get("/admin/identity")
+def admin_identity(response: Response, actor: str = Depends(require_admin)) -> Dict[str, Any]:
+    response.headers["Cache-Control"] = "no-store"
+    return {"authenticated": True, "actor": actor}
+
+
 @router.get("/health/live")
 def health_live() -> Dict[str, Any]:
     return {"status": "ok", "service": settings.app_name, "time": datetime.now(timezone.utc).isoformat()}

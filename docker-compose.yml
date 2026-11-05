@@ -207,6 +207,14 @@ services:
       ADMIN_API_KEY: ${ADMIN_API_KEY:-local-admin-key-change-me}
       ADMIN_AUTH_MODE: ${ADMIN_AUTH_MODE:-local_key}
       DASHBOARD_ADMIN_TOKEN: ${DASHBOARD_ADMIN_TOKEN:-local-dashboard-admin-change-me}
+      APP_ORIGIN: ${APP_ORIGIN:-http://localhost:3000}
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      OIDC_SCOPES: ${OIDC_SCOPES:-openid profile email}
+      OIDC_RESOURCE: ${OIDC_RESOURCE:-}
+      AUTH_SESSION_SECRET: ${AUTH_SESSION_SECRET:-}
+      AUTH_REDIS_URL: ${AUTH_REDIS_URL:-redis://redis:6379/2}
     ports:
       - "3000:3000"
     depends_on:

@@ -995,6 +995,11 @@ def test_oidc_admin_requires_role_and_uses_verified_identity(client, monkeypatch
     )
     assert created.status_code == 201
     assert created.json()["assumptions"]["approved_by"] == "climate.admin@example.org"
+    identity = client.get("/api/admin/identity", headers={"Authorization": "Bearer verified-token"})
+    assert identity.status_code == 200
+    assert identity.json() == {"actor": "climate.admin@example.org", "authenticated": True}
+    assert identity.headers["cache-control"] == "no-store"
+    assert client.get("/api/admin/identity").status_code == 401
 
     monkeypatch.setattr(
         oidc_verifier,
@@ -1007,6 +1012,7 @@ def test_oidc_admin_requires_role_and_uses_verified_identity(client, monkeypatch
         headers={"Authorization": "Bearer viewer-token"},
     )
     assert denied.status_code == 403
+    assert client.get("/api/admin/identity", headers={"Authorization": "Bearer viewer-token"}).status_code == 403
 
 
 def test_production_refuses_local_admin_mode_even_with_custom_key(client, monkeypatch):

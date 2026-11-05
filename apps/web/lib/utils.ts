@@ -343,6 +343,15 @@ export interface ProductionReadinessCheck {
   action_th?: string;
 }
 
+export interface AdminSessionStatus {
+  mode: string;
+  configured: boolean;
+  authenticated: boolean;
+  actor?: string;
+  csrf_token?: string;
+  expires_at?: number;
+}
+
 export interface ProductionReadiness {
   status: "ready" | "not_ready";
   configuration_ready: boolean;

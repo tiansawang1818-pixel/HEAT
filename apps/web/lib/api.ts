@@ -2,6 +2,7 @@ import { defaultLayers, demoDatasets, demoFeatures, isDemoFallbackEnabled } from
 import { isSyntheticQuality } from "@/lib/utils";
 import type {
   AreaProperties,
+  AdminSessionStatus,
   AreaDirectoryItem,
   CandidateReviewRecord,
   CostAssumptionRecord,
@@ -484,7 +485,7 @@ export async function loadPriorityRankings(pageSize = 50): Promise<PriorityRanki
 export async function triggerRefresh(source: string, operatorToken: string) {
   const response = await fetch("/api/admin/ingestion", {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-Local-Admin-Token": operatorToken },
+    headers: await adminHeaders(operatorToken),
     body: JSON.stringify({ source }),
   });
   if (!response.ok) {
@@ -525,7 +526,7 @@ export async function loadEvidencePendingCandidates(pageSize = 100): Promise<Can
 async function adminPost<T>(path: string, operatorToken: string, body: Record<string, unknown>): Promise<T> {
   const response = await fetch(path, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-Local-Admin-Token": operatorToken },
+    headers: await adminHeaders(operatorToken),
     body: JSON.stringify(body),
   });
   if (!response.ok) {
@@ -533,6 +534,24 @@ async function adminPost<T>(path: string, operatorToken: string, body: Record<st
     throw new Error(payload.detail || `API ${response.status}`);
   }
   return response.json() as Promise<T>;
+}
+
+export async function loadAdminSession(): Promise<AdminSessionStatus> {
+  const response = await fetch("/api/auth/session", { cache: "no-store" });
+  if (!response.ok) throw new Error("ตรวจ session ไม่สำเร็จ");
+  return response.json() as Promise<AdminSessionStatus>;
+}
+
+async function adminHeaders(operatorToken: string): Promise<Record<string, string>> {
+  if (operatorToken !== "__session__") return { "Content-Type": "application/json", "X-Local-Admin-Token": operatorToken };
+  const session = await loadAdminSession();
+  if (!session.authenticated || !session.csrf_token) throw new Error("Session หมดอายุ กรุณาเข้าสู่ระบบอีกครั้ง");
+  return { "Content-Type": "application/json", "X-CSRF-Token": session.csrf_token };
+}
+
+export async function logoutAdmin() {
+  const response = await fetch("/api/auth/logout", { method: "POST", headers: await adminHeaders("__session__") });
+  if (!response.ok) throw new Error("ออกจากระบบไม่สำเร็จ");
 }
 
 export async function createCostAssumption(
