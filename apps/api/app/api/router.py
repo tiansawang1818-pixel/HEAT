@@ -1696,9 +1696,14 @@ def _run_manual_job(job_id: str, source: str, fixture_path: Optional[str]) -> No
     db = SessionLocal()
     try:
         job = db.get(IngestionJob, job_id)
+        if job is None or job.status == "completed":
+            return
         job.status, job.stage, job.started_at, job.progress = "running", "source_check", datetime.now(timezone.utc), 0.1
+        job.attempts += 1
         db.commit()
         result = run_monitor(db, _connector_for(source, fixture_path), requested_by="admin")
+        if result.get("status") == "locked":
+            raise RuntimeError("Another worker is processing this source; try again after it completes")
         job = db.get(IngestionJob, job_id)
         job.status, job.stage, job.finished_at, job.progress = "completed", "completed", datetime.now(timezone.utc), 1.0
         job.checkpoint = result
@@ -1876,7 +1881,7 @@ def ingestion_run(
         run_manual_ingestion.delay(job.id, request.source, fixture_path)
         dispatch_mode = "celery-durable-queue"
     except Exception:
-        if settings.environment == "production":
+        if settings.environment.lower() == "production":
             job.status = "failed"
             job.stage = "dispatch_failed"
             job.error_message = "Durable queue is unavailable; job was not executed"

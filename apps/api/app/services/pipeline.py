@@ -43,6 +43,35 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _recover_interrupted_source(db: Session, source_id: str) -> None:
+    """Called only after acquiring exclusive ownership of the source monitor.
+
+    Publication is one transaction, so unfinished versions have no committed
+    observations to remove. Preserve their IDs and make them retryable instead.
+    """
+    unfinished = [ProcessingStatus.staged.value, ProcessingStatus.validating.value,
+                  ProcessingStatus.processing.value, ProcessingStatus.publishing.value]
+    for version in db.scalars(select(DatasetVersion).where(
+        DatasetVersion.source_id == source_id, DatasetVersion.status.in_(unfinished)
+    )).all():
+        version.status = ProcessingStatus.failed.value
+        version.quality_status = "processing_error"
+        version.quality_summary = {"recovery": "Previous source monitor ended before publication"}
+    for job in db.scalars(select(IngestionJob).where(
+        IngestionJob.source_id == source_id, IngestionJob.status == "running"
+    )).all():
+        job.status, job.stage = "failed", "interrupted"
+        job.error_message = "Previous worker ended before completion; asset is eligible for safe retry"
+        job.finished_at = utcnow()
+    for check in db.scalars(select(SourceCheck).where(
+        SourceCheck.source_id == source_id, SourceCheck.status == "running"
+    )).all():
+        check.status = "failed"
+        check.error_message = "Previous source monitor ended before completion"
+        check.completed_at = utcnow()
+    db.commit()
+
+
 def _latest_version(db: Session, source_id: str) -> Optional[DatasetVersion]:
     return db.scalar(
         select(DatasetVersion)
@@ -540,6 +569,7 @@ def run_monitor(db: Session, connector: SourceConnector, requested_by: str = "sc
     with distributed_lock("monitor:%s" % source.id) as acquired:
         if not acquired:
             return {"status": "locked", "source": source.name, "discovered": 0, "processed": 0}
+        _recover_interrupted_source(db, source.id)
         check = SourceCheck(source_id=source.id)
         db.add(check)
         db.commit()

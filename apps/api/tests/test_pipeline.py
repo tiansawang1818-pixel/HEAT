@@ -9,10 +9,12 @@ from app.models.entities import (
     DataSource,
     DatasetVersion,
     GeographicArea,
+    IngestionJob,
     OptimizationRun,
     PriorityScore,
     PipelineEvent,
     RasterAssetMetadata,
+    SourceCheck,
     TemperatureObservation,
 )
 from app.services.connectors.base import AreaProcessingRecord, ConnectorError, SourceAsset, SourceConnector
@@ -301,3 +303,53 @@ def test_processing_error_preserves_retryable_version_and_succeeds_on_retry(db):
     assert failed.status == "published"
     assert connector.process_calls == 2
     assert len(db.scalars(select(TemperatureObservation)).all()) == 2
+
+
+@pytest.mark.parametrize("stage", ["staged", "validating", "processing", "publishing"])
+def test_next_exclusive_monitor_recovers_interrupted_versions_without_duplicate_publication(db, stage):
+    run_monitor(db, StaticConnector(), requested_by="test")
+    source = db.scalar(select(DataSource).where(DataSource.dataset_id == StaticConnector.dataset_id))
+    interrupted = DatasetVersion(
+        source_id=source.id, source_asset_id="asset-2", source_version="v2",
+        observed_at=datetime(2026, 3, 1, tzinfo=timezone.utc), status=stage, quality_status="pending",
+    )
+    db.add(interrupted)
+    db.flush()
+    previous_job = IngestionJob(source_id=source.id, dataset_version_id=interrupted.id, status="running", stage=stage)
+    previous_check = SourceCheck(source_id=source.id, status="running")
+    db.add_all([previous_job, previous_check])
+    db.commit()
+
+    result = run_monitor(db, UpdatedConnector(), requested_by="worker-recovery-test")
+    db.refresh(interrupted)
+    db.refresh(previous_job)
+    db.refresh(previous_check)
+    assert result["processed"] == 1
+    assert interrupted.status == "published"
+    assert interrupted.layer_version == 2
+    assert previous_job.status == "failed"
+    assert previous_job.stage == "interrupted"
+    assert previous_check.status == "failed"
+    assert len(db.scalars(select(DatasetVersion)).all()) == 2
+    assert len(db.scalars(select(PipelineEvent)).all()) == 2
+    assert run_monitor(db, UpdatedConnector())["processed"] == 0
+    assert len(db.scalars(select(PipelineEvent)).all()) == 2
+
+
+def test_publication_failure_rolls_back_observations_and_can_recover_on_next_monitor(db, monkeypatch):
+    from app.services import pipeline
+
+    add_test_areas(db)
+    persist_metadata = pipeline._persist_raster_metadata
+    def unavailable_store(*args):
+        raise ConnectorError("raster store temporarily down")
+
+    monkeypatch.setattr(pipeline, "_persist_raster_metadata", unavailable_store)
+    with pytest.raises(ConnectorError, match="raster store"):
+        run_monitor(db, RasterTemperatureConnector())
+    assert db.scalars(select(TemperatureObservation)).all() == []
+    assert db.scalars(select(PipelineEvent)).all() == []
+    monkeypatch.setattr(pipeline, "_persist_raster_metadata", persist_metadata)
+    assert run_monitor(db, RasterTemperatureConnector())["processed"] == 1
+    assert len(db.scalars(select(TemperatureObservation)).all()) == 2
+    assert len(db.scalars(select(PipelineEvent)).all()) == 1

@@ -29,10 +29,12 @@ Manual refresh เป็น admin operation และ enqueue background job จ
 curl -fsS -X POST http://localhost:8000/api/ingestion/run \
   -H "Content-Type: application/json" \
   -H "X-Admin-Key: $ADMIN_API_KEY" \
-  -d '{"source":"open_meteo"}'
+  -d '{"source":"open-meteo"}'
 ```
 
 บันทึก job ID แล้วติดตามผ่าน `/api/ingestion/status?job_id=...` หรือ Data Observatory อย่ากดซ้ำเมื่อ job ยังถือ distributed lock
+
+งาน manual ผ่าน Celery ใช้ job ID เดิมตลอด retry สูงสุด 5 ครั้งหลังครั้งแรก transient errors ใช้ exponential backoff + jitter ส่วน rate limit เคารพ `Retry-After` สถานะระหว่างรอคือ `queued/retry_scheduled` และ `checkpoint.next_retry_at` บอกเวลาลองใหม่ การส่งซ้ำหลัง job สำเร็จจะคืนผลที่บันทึกไว้ การใช้ API background fallback มีเฉพาะ development และไม่มี durable retry
 
 ## Provider outage / rate limit
 
@@ -59,6 +61,8 @@ Future-outlook validation gates ปรับได้ด้วย `FORECAST_MIN_
 - scale worker ตาม task class; raster jobs ไม่ควรแย่ง queue ของ status/notification
 - revoke เฉพาะ job ที่พิสูจน์แล้วว่าค้าง และต้องแน่ใจว่า task รองรับ safe retry
 - หาก publication commit สำเร็จแต่ event ล้มเหลว ให้ replay outbox ห้าม publish ซ้ำ
+
+Production ต้องได้ Redis lock ก่อนเริ่ม source check; Redis ขัดข้องจะให้ retry แทนการใช้ process-local lock worker มี soft deadline 50 นาที, hard deadline 60 นาที และ lock lease 65 นาที หลัง worker หยุดกลางทาง monitor ถัดไปที่ได้ exclusive lock จะทำเครื่องหมาย check/job เดิมเป็น interrupted และให้ asset version ที่ยังไม่ publish เข้า safe retry โดยใช้ version ID เดิม Published observations และ publication events ไม่ถูกเขียนซ้ำ
 
 ## Database / object storage
 

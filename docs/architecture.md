@@ -37,6 +37,8 @@ scheduled → checking → no_change
 - ทุก task ใช้ idempotency key เช่น `{source}:{asset_id}:{processor_version}`
 - distributed lock ต้องมี owner token + expiry และ release เฉพาะ owner
 - retry เฉพาะ transient error ด้วย exponential backoff + jitter; validation failure ไม่ควรถูก retry โดยอัตโนมัติ
+- Production ใช้ Redis lock เท่านั้นและหยุดเริ่ม monitor เมื่อ lock backend ล่ม ค่า lease 65 นาทีมากกว่า Celery hard deadline 60 นาที; local fallback ใช้เฉพาะ development/test
+- เมื่อ monitor ใหม่ได้ exclusive source lock จะกู้ unfinished dataset versions เป็น retryable processing error และปิด audit jobs/checks ที่ worker เดิมทำไม่เสร็จ transaction การเผยแพร่ทำให้ observation/event ที่ยังไม่ commit ถูก rollback และ retry ใช้ version ID เดิม
 
 ## Publication transaction
 
