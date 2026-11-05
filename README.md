@@ -107,7 +107,7 @@ make seed          # development seed; must remain visibly labelled demo
 make down
 ```
 
-หากรันโดยไม่ใช้ Docker ให้ดูคำสั่งและ version ใน `apps/api/pyproject.toml` กับ `apps/web/package.json` โดยตรง
+หากรันโดยไม่ใช้ Docker ให้ใช้ Python 3.12 ขึ้นไป และ Node.js 22.12 ขึ้นไป ดู dependencies ใน `apps/api/pyproject.toml` กับ `apps/web/package.json` สร้าง virtual environment ใหม่หากของเดิมใช้ Python รุ่นเก่า
 
 GitHub Actions ทดสอบ PostGIS + Redis + Celery จริงแยกจาก unit tests โดยตรวจงานตั้งแต่ enqueue ถึง versioned map API และ SSE stream ต่อเนื่อง fixtures ถูกระบุเป็นข้อมูลสังเคราะห์เสมอ ดูขอบเขตหลักฐานและวิธีรันใน [docs/testing.md](docs/testing.md)
 

@@ -7,7 +7,7 @@
 1. คัดลอก `.env.production.example` เป็น `.env.production` แล้วจำกัดสิทธิ์ไฟล์ด้วย `chmod 600 .env.production`
 2. ตั้งโดเมน, อีเมลต่ออายุใบรับรอง, รหัส PostgreSQL แบบสุ่ม และ `DATABASE_URL` ที่ใช้รหัสเดียวกัน แนะนำ `openssl rand -hex 32` เพื่อเลี่ยงอักขระที่ต้อง encode ใน URL
 3. ลงทะเบียน SSO client พร้อม redirect URI `https://<domain>/api/auth/callback` กำหนด issuer, audience, JWKS และ role claim ให้ตรงกับ token ขององค์กร `AUTH_SESSION_SECRET` ต้องเป็นค่าสุ่มคนละค่ากับรหัสฐานข้อมูล
-4. วาง Earth Engine service-account JSON นอก Git และกำหนด `GEE_CREDENTIALS_FILE` เป็น host path ของไฟล์จริง Compose mount เป็น secret ให้เฉพาะ API, migration และ workers ตรวจ project/สิทธิ์/quota ด้วย source check จริง ไม่ใช้บัญชีตัวอย่าง
+4. วาง Earth Engine service-account JSON นอก Git และกำหนด `GEE_CREDENTIALS_FILE` เป็น host path ของไฟล์จริง Compose mount เป็น secret ให้เฉพาะ API, migration และ workers บน Linux ให้ไฟล์อ่านได้โดย service UID/GID `10001:10001` เท่านั้น เช่น owner UID 10001 และ mode 0400 (Compose file-backed secret ใช้ bind mount จึงต้องจัดสิทธิ์ที่ host) ตรวจ project/สิทธิ์/quota ด้วย source check จริง ไม่ใช้บัญชีตัวอย่าง
 5. กำหนด `NEXT_PUBLIC_MAP_STYLE_URL` จากผู้ให้บริการที่อนุญาตการใช้งานและปริมาณ traffic ของโครงการ ค่า frontend เหล่านี้ถูกฝังตอน build จึงต้อง rebuild เมื่อเปลี่ยน
 6. ตรวจ subnet ของ Docker ไม่ชนกับเครือข่ายเซิร์ฟเวอร์ หากเปลี่ยนให้แก้ `HEATSHIFT_PROXY_SUBNET` และ `HEATSHIFT_PROXY_IP` คู่กัน Uvicorn เชื่อ forwarded client IP เฉพาะ Caddy address นี้ ห้ามเปิด API port หรือเพิ่ม wildcard trust
 
