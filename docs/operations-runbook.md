@@ -76,6 +76,6 @@ Postgres dump ไม่รวม object storage ให้เปิด bucket ver
 1. tests + migration rehearsal ผ่าน
 2. ไม่มี demo mode/fixture ingestion ใน production
 3. provider terms/quota/attribution ผ่าน review
-4. admin auth, CORS, TLS, secrets และ rate limits พร้อม
+4. OIDC admin auth, CORS, TLS, secrets และ Redis rate limits พร้อม (`RATE_LIMIT_ENABLED=true`)
 5. check update/rollback สำหรับ database + artifact formats
 6. smoke API, map tiles, SSE/polling และหนึ่ง read-only provider check

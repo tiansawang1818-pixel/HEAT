@@ -1559,7 +1559,7 @@ function ObservatoryOverlay({ datasets, snapshot, loading, onRefresh, refreshing
       </div>
       <div className="refresh-controls">
         <label><span>แหล่งข้อมูล</span><select value={source} onChange={(event) => setSource(event.target.value)}><option value="bma-boundaries">ขอบเขต 50 เขต กทม.</option><option value="open-meteo">Open-Meteo</option><option value="landsat">Landsat 8/9</option><option value="sentinel">Sentinel-2</option><option value="dynamic-world">Dynamic World</option><option value="worldpop">WorldPop</option><option value="osm">OpenStreetMap</option></select></label>
-        <label><span>รหัสผู้ดูแล (ส่งเฉพาะ server)</span><input type="password" autoComplete="current-password" value={operatorToken} onChange={(event) => setOperatorToken(event.target.value)} placeholder="DASHBOARD_ADMIN_TOKEN" /></label>
+        <label><span>สิทธิ์ผู้ดูแล / OIDC token (ส่งเฉพาะ server)</span><input type="password" autoComplete="current-password" value={operatorToken} onChange={(event) => setOperatorToken(event.target.value)} placeholder="Local token หรือ OIDC access token" /></label>
         <Button onClick={() => onRefresh(source, operatorToken)} disabled={refreshing || !operatorToken} variant="outline">{refreshing ? <RefreshCw className="animate-spin" size={14} /> : <RefreshCw size={14} />} ตรวจสอบตอนนี้</Button>
       </div>
       <EvidenceApprovalPanel operatorToken={operatorToken} />

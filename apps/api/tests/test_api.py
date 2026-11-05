@@ -32,6 +32,22 @@ def test_health_and_dataset_status(client):
     assert all(item["dataset_id"] != "local/integration-fixture" for item in response.json()["items"])
 
 
+def test_expensive_endpoint_returns_rate_limit_metadata(client, monkeypatch):
+    from app.main import rate_limiter
+    from app.services.rate_limit import RateLimitDecision
+
+    monkeypatch.setattr(
+        rate_limiter,
+        "check",
+        lambda *args, **kwargs: RateLimitDecision(False, 6, 0, 42),
+    )
+    response = client.post("/api/forecast/run", json={"horizon_years": 5})
+    assert response.status_code == 429
+    assert response.headers["Retry-After"] == "42"
+    assert response.headers["X-RateLimit-Limit"] == "6"
+    assert response.headers["X-RateLimit-Remaining"] == "0"
+
+
 def test_operational_headers_echo_safe_request_id_and_replace_invalid_value(client):
     response = client.get("/api/health/live", headers={"X-Request-ID": "trace-123"})
     assert response.headers["X-Request-ID"] == "trace-123"
@@ -841,5 +857,68 @@ def test_production_rejects_known_default_admin_key(client, monkeypatch):
             "evidence_title": "หลักฐานต้นทุน",
         },
         headers={"X-Admin-Key": "local-admin-key-change-me"},
+    )
+    assert response.status_code == 503
+
+
+def test_oidc_admin_requires_role_and_uses_verified_identity(client, monkeypatch):
+    from app.core.config import settings
+    from app.services.auth import oidc_verifier
+
+    monkeypatch.setattr(settings, "admin_auth_mode", "oidc")
+    monkeypatch.setattr(settings, "oidc_admin_roles", ["heatshift.admin"])
+    monkeypatch.setattr(
+        oidc_verifier,
+        "verify",
+        lambda token: {
+            "sub": "identity-42",
+            "preferred_username": "climate.admin@example.org",
+            "roles": ["heatshift.admin"],
+        },
+    )
+    payload = {
+        "intervention_type": "tree_planting",
+        "version": "oidc-approved-v1",
+        "unit_cost_thb": 100_000,
+        "evidence_url": "https://example.org/cost",
+        "evidence_title": "หลักฐานต้นทุน",
+    }
+    created = client.post(
+        "/api/cost-assumptions",
+        json=payload,
+        headers={"Authorization": "Bearer verified-token"},
+    )
+    assert created.status_code == 201
+    assert created.json()["assumptions"]["approved_by"] == "climate.admin@example.org"
+
+    monkeypatch.setattr(
+        oidc_verifier,
+        "verify",
+        lambda token: {"sub": "viewer-1", "roles": ["heatshift.viewer"]},
+    )
+    denied = client.post(
+        "/api/cost-assumptions",
+        json={**payload, "version": "oidc-denied-v1"},
+        headers={"Authorization": "Bearer viewer-token"},
+    )
+    assert denied.status_code == 403
+
+
+def test_production_refuses_local_admin_mode_even_with_custom_key(client, monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "environment", "production")
+    monkeypatch.setattr(settings, "admin_auth_mode", "local_key")
+    monkeypatch.setattr(settings, "admin_api_key", "a-strong-but-shared-key")
+    response = client.post(
+        "/api/cost-assumptions",
+        json={
+            "intervention_type": "tree_planting",
+            "version": "production-local-blocked",
+            "unit_cost_thb": 100_000,
+            "evidence_url": "https://example.org/cost",
+            "evidence_title": "หลักฐานต้นทุน",
+        },
+        headers={"X-Admin-Key": "a-strong-but-shared-key"},
     )
     assert response.status_code == 503

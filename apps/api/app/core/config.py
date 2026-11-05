@@ -13,6 +13,23 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+pysqlite:///./heatshift.db"
     redis_url: str = "redis://redis:6379/0"
     admin_api_key: str = "change-me-in-production"
+    admin_auth_mode: str = "local_key"
+    oidc_issuer: Optional[str] = None
+    oidc_audience: Optional[str] = None
+    oidc_jwks_url: Optional[str] = None
+    oidc_roles_claim: str = "roles"
+    oidc_admin_roles: List[str] = Field(default_factory=lambda: ["heatshift.admin"])
+    oidc_allowed_algorithms: List[str] = Field(default_factory=lambda: ["RS256"])
+    oidc_jwks_cache_seconds: int = 3600
+    oidc_http_timeout_seconds: int = 5
+    oidc_clock_skew_seconds: int = 30
+    rate_limit_enabled: bool = False
+    rate_limit_optimization_per_minute: int = 20
+    rate_limit_scenario_per_minute: int = 30
+    rate_limit_forecast_per_minute: int = 6
+    rate_limit_assistant_per_minute: int = 30
+    rate_limit_admin_per_minute: int = 15
+    rate_limit_fail_closed_admin: bool = True
     demo_mode: bool = False
     allow_fixture_ingestion: bool = False
     fixture_root: Path = Path("/workspace/data/fixtures")

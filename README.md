@@ -110,6 +110,7 @@ make down
 - Overture release URL/version (หากเปิด connector)
 - S3-compatible object storage สำหรับ raster/derived tiles
 - `ADMIN_API_KEY` ใช้ได้เฉพาะ local/pilot; ต้องเปลี่ยนเป็น OIDC/SSO + RBAC ขององค์กรก่อนเปิดสู่ภายนอก
+- Production admin API บังคับ `ADMIN_AUTH_MODE=oidc` และตรวจ JWT signature/issuer/audience/expiry/role จาก JWKS; local shared key ถูกปฏิเสธแม้เปลี่ยนเป็นค่าที่คาดเดายาก
 
 Open-Meteo ไม่ควรถูกอธิบายว่าเป็นข้อมูลดาวเทียม และ WorldPop ต้องแสดง reference year เสมอ ดูรายละเอียดที่ [docs/data-sources.md](docs/data-sources.md)
 
