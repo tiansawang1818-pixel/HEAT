@@ -154,6 +154,13 @@ jobs:
           for path in ['/', '/insights', '/optimizer', '/scenarios', '/outlook', '/observatory', '/methodology', '/api/health/ready', '/api/map/layers', '/api/auth/session']:
               with urllib.request.urlopen(base + path, timeout=15) as response:
                   assert response.status == 200, path
+                  content_type = response.headers.get('Content-Type', '')
+                  body = response.read()
+                  if path.startswith('/api/'):
+                      assert 'application/json' in content_type, (path, content_type)
+                      assert json.loads(body) is not None, path
+                  else:
+                      assert 'text/html' in content_type and b'HEAT//SHIFT' in body, path
           with urllib.request.urlopen(base + '/api/auth/session', timeout=5) as response:
               session = json.load(response)
               assert session['mode'] == 'oidc' and session['configured'] and not session['authenticated']

@@ -2,5 +2,5 @@
 services:
   caddy:
     environment:
-      HEATSHIFT_DOMAIN: http://localhost
+      HEATSHIFT_DOMAIN: ":80"
     ports: !override ["127.0.0.1:18080:80"]
