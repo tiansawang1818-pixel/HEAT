@@ -106,7 +106,10 @@ services:
   prometheus:
     ports: !reset []
   caddy:
-    image: caddy:2.11.9-alpine
+    image: heatshift-caddy:2.11.9
+    build:
+      context: .
+      dockerfile: infra/docker/caddy.Dockerfile
     environment:
       HEATSHIFT_DOMAIN: ${HEATSHIFT_DOMAIN}
       ACME_EMAIL: ${ACME_EMAIL:?Set the certificate renewal contact}

@@ -140,7 +140,8 @@ jobs:
       - name: Verify production isolation and configuration
         run: |
           docker compose --env-file /tmp/heatshift-production-ci.env -f docker-compose.yml -f docker-compose.production.yml config --format json | python3 scripts/check_compose_config.py
-          docker run --rm -e HEATSHIFT_DOMAIN=heatshift.example.org -e ACME_EMAIL=operator@example.org -v "$PWD/infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.11.9-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          docker compose --env-file /tmp/heatshift-production-ci.env -f docker-compose.yml -f docker-compose.production.yml build caddy
+          docker run --rm -e HEATSHIFT_DOMAIN=heatshift.example.org -e ACME_EMAIL=operator@example.org -v "$PWD/infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" heatshift-caddy:2.11.9 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
       - name: Build and start release containers without source monitors
         run: docker compose --env-file /tmp/heatshift-production-ci.env -f docker-compose.yml -f docker-compose.production.yml -f infra/ci/docker-compose.smoke.yml up -d --build --wait --wait-timeout 180 api web caddy
       - name: Verify pages, internal API rewrite, authentication gate and SSE

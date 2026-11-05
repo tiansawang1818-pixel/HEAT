@@ -2,6 +2,8 @@
 
 ชุดนี้เตรียมสำหรับ Linux server ที่มี Docker Engine และ Docker Compose 2.24.4 ขึ้นไป ยังไม่ได้เลือกหรือเปิดเซิร์ฟเวอร์จริง Caddy รับ HTTP/HTTPS ที่พอร์ต 80/443 และออก/ต่ออายุใบรับรองอัตโนมัติเมื่อโดเมนชี้มาที่เซิร์ฟเวอร์ ระบบฐานข้อมูล Redis API และเว็บไม่มีพอร์ตสาธารณะของตนเอง
 
+Image `heatshift-caddy:2.11.9` ใช้ official Caddy Alpine runtime และ executable จาก upstream release 2.11.9 ที่ตรวจ SHA-256 แยก amd64/arm64 เนื่องจาก official Docker tag ยังตามหลัง release นี้ ตรวจสอบและอัปเดตทั้งเวอร์ชันกับ checksum เมื่อเปลี่ยนรุ่น ไม่ใช้ floating download URL
+
 ## ตั้งค่าก่อนเริ่ม
 
 1. คัดลอก `.env.production.example` เป็น `.env.production` แล้วจำกัดสิทธิ์ไฟล์ด้วย `chmod 600 .env.production`
