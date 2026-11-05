@@ -244,6 +244,7 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
   const [refreshing, setRefreshing] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [mapError, setMapError] = useState<string | null>(null);
+  const mapNeedsRetry = useRef(false);
   const [assistantQuestion, setAssistantQuestion] = useState("");
   const [assistantAnswer, setAssistantAnswer] = useState<string | null>(null);
   const [assistantOptimization, setAssistantOptimization] = useState<OptimizationResult | null>(null);
@@ -351,7 +352,7 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
       // Source checks can change freshness/error state without publishing data.
       // Keep metadata current even while SSE is healthy; only fallback forces
       // a feature refresh when no publication event has arrived.
-      const fallback = !eventSource || eventSource.readyState === EventSource.CLOSED;
+      const fallback = !eventSource || eventSource.readyState === EventSource.CLOSED || mapNeedsRetry.current;
       void reload(false, true, fallback);
       void reloadOptimizationStatus();
     }, 60_000);
@@ -387,10 +388,12 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
       void loadLayerFeatures(activeLayer, mainViewport.bounds, controller.signal, activeLayerVersion, dataRevision, activeSnapshotId)
         .then((features) => {
           setData((current) => ({ ...current, features }));
+          mapNeedsRetry.current = false;
           setMapError(null);
         })
         .catch((error) => {
           if (error instanceof DOMException && error.name === "AbortError") return;
+          mapNeedsRetry.current = true;
           setMapError("โหลดชั้นข้อมูลไม่สำเร็จ ระบบจะลองใหม่และคงแผนที่เดิมไว้");
         });
     }, 180);
