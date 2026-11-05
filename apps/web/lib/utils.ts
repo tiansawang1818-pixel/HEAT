@@ -321,6 +321,29 @@ export interface ObservatorySnapshot {
   }>;
 }
 
+export interface ProductionReadinessCheck {
+  code: string;
+  category: "runtime" | "storage" | "queue" | "security" | "providers";
+  status: "ready" | "warning" | "blocked";
+  label_th: string;
+  detail_th: string;
+  action_th?: string;
+}
+
+export interface ProductionReadiness {
+  status: "ready" | "not_ready";
+  configuration_ready: boolean;
+  scope: "configuration_and_dependencies";
+  limitations_th: string;
+  environment: string;
+  generated_at: string;
+  summary: { ready: number; warning: number; blocked: number };
+  checks: ProductionReadinessCheck[];
+  blockers: Array<{ code: string; message_th: string; action_th?: string }>;
+  warnings: Array<{ code: string; message_th: string; action_th?: string }>;
+  secrets_exposed: false;
+}
+
 export interface ForecastResult {
   run_id: string;
   status: "completed" | "insufficient_data";

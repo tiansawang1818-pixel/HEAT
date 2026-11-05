@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { askAssistant, compareScenarios, loadDashboardData, loadDatasetVersions, loadLayerFeatures, loadRasterTileDescriptor, runForecastScenario, saveScenario, searchAreaDirectory } from "./api";
+import { askAssistant, compareScenarios, loadDashboardData, loadDatasetVersions, loadLayerFeatures, loadProductionReadiness, loadRasterTileDescriptor, runForecastScenario, saveScenario, searchAreaDirectory } from "./api";
 import { formatBaht, formatNumber, freshnessLabel } from "./utils";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -244,6 +244,28 @@ describe("Thai presentation helpers", () => {
     })));
 
     await expect(loadRasterTileDescriptor("ndvi")).resolves.toBeNull();
+  });
+
+  it("loads a secret-free production readiness audit with live dependency probes", async () => {
+    const fetchMock = vi.fn(async (_url: string) => Response.json({
+      status: "not_ready",
+      configuration_ready: false,
+      scope: "configuration_and_dependencies",
+      limitations_th: "ต้องยืนยันการ ingest จริงก่อนเปิดใช้งาน",
+      environment: "development",
+      generated_at: "2026-11-05T08:00:00+00:00",
+      summary: { ready: 3, warning: 2, blocked: 6 },
+      checks: [{ code: "storage.postgis", category: "storage", status: "blocked", label_th: "PostgreSQL / PostGIS", detail_th: "ใช้ sqlite" }],
+      blockers: [],
+      warnings: [],
+      secrets_exposed: false,
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const readiness = await loadProductionReadiness();
+    expect(readiness.configuration_ready).toBe(false);
+    expect(readiness.secrets_exposed).toBe(false);
+    expect(String(fetchMock.mock.calls[0][0])).toContain("probe_dependencies=true");
   });
 
   it("loads only the active viewport and carries the requested layer version", async () => {

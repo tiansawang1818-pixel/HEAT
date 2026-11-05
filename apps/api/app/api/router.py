@@ -62,6 +62,7 @@ from app.services.geometry import to_geojson
 from app.services.forecasting import evaluate_temperature_scenario
 from app.services.tiles import earth_engine_tiles
 from app.services.observability import prometheus_metrics
+from app.services.readiness import production_readiness
 
 
 router = APIRouter()
@@ -1964,3 +1965,14 @@ def refresh_schedule(db: Session = Depends(get_db)) -> Dict[str, Any]:
             for source in sources
         ],
     }
+
+
+@router.get("/system/readiness")
+def system_readiness(
+    response: Response,
+    probe_dependencies: bool = Query(default=True),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Audit production configuration without returning secrets or endpoints."""
+    response.headers["Cache-Control"] = "no-store"
+    return production_readiness(db, probe_dependencies=probe_dependencies)

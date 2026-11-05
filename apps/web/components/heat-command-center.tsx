@@ -63,6 +63,7 @@ import {
   loadLayerFeatures,
   loadRasterTileDescriptor,
   loadObservatoryStatus,
+  loadProductionReadiness,
   loadPriorityRankings,
   loadSavedScenario,
   loadSavedScenarios,
@@ -95,6 +96,7 @@ import {
   type ObservatorySnapshot,
   type OptimizationResult,
   type PriorityRankingResult,
+  type ProductionReadiness,
   type RasterTileDescriptor,
   type SavedScenarioRecord,
   type WeatherContext,
@@ -236,6 +238,8 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
   const [assistantOptimization, setAssistantOptimization] = useState<OptimizationResult | null>(null);
   const [assistantLoading, setAssistantLoading] = useState(false);
   const [observatory, setObservatory] = useState<ObservatorySnapshot | null>(null);
+  const [productionReadiness, setProductionReadiness] = useState<ProductionReadiness | null>(null);
+  const [readinessError, setReadinessError] = useState<string | null>(null);
   const [observatoryLoading, setObservatoryLoading] = useState(initialView === "observatory");
   const [forecastHorizon, setForecastHorizon] = useState<1 | 3 | 5>(5);
   const [forecastResult, setForecastResult] = useState<ForecastResult | null>(null);
@@ -410,6 +414,16 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
         .catch(() => undefined)
         .finally(() => {
           if (!cancelled) setObservatoryLoading(false);
+        });
+      void loadProductionReadiness()
+        .then((readiness) => {
+          if (!cancelled) {
+            setProductionReadiness(readiness);
+            setReadinessError(null);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setReadinessError("ตรวจความพร้อมระบบไม่สำเร็จ ระบบจะลองใหม่อัตโนมัติ");
         });
     };
     refresh();
@@ -864,6 +878,8 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
           <ObservatoryOverlay
             datasets={data.datasets}
             snapshot={observatory}
+            readiness={productionReadiness}
+            readinessError={readinessError}
             loading={observatoryLoading}
             onRefresh={handleRefresh}
             refreshing={refreshing}
@@ -1607,9 +1623,11 @@ function EvidenceApprovalPanel({ operatorToken }: { operatorToken: string }) {
   );
 }
 
-function ObservatoryOverlay({ datasets, snapshot, loading, onRefresh, refreshing, job, error }: {
+function ObservatoryOverlay({ datasets, snapshot, readiness, readinessError, loading, onRefresh, refreshing, job, error }: {
   datasets: DatasetStatus[];
   snapshot: ObservatorySnapshot | null;
+  readiness: ProductionReadiness | null;
+  readinessError: string | null;
   loading: boolean;
   onRefresh: (source: string, operatorToken: string) => void;
   refreshing: boolean;
@@ -1651,6 +1669,28 @@ function ObservatoryOverlay({ datasets, snapshot, loading, onRefresh, refreshing
   return (
     <motion.div className="map-overlay-panel observatory" initial={false} animate={{ opacity: 1, scale: 1 }}>
       <div className="overlay-heading"><div><Badge>PIPELINE MONITOR</Badge><h2>สุขภาพระบบข้อมูล</h2><p>เวลาสังเกตการณ์และเวลาที่ระบบตรวจสอบถูกแสดงแยกกันเสมอ</p></div></div>
+      <section className={cn("readiness-panel", readiness?.configuration_ready ? "ready" : "blocked")}>
+        <div className="readiness-heading">
+          <div><span>ตรวจความพร้อมระบบ</span><strong>{readiness?.configuration_ready ? "ผ่านการตรวจเบื้องต้น" : readiness ? "ยังมีรายการต้องจัดการ" : readinessError ? "ยังตรวจสอบไม่ได้" : "กำลังตรวจสอบ"}</strong><small>{readiness ? `ตรวจ ${formatThaiDate(readiness.generated_at, true)} · โหมด ${readiness.environment}` : "ตรวจการตั้งค่าและการเชื่อมต่อบริการ"}</small></div>
+          {readiness && <Badge>{readiness.summary.ready} พร้อม · {readiness.summary.warning} เตือน · {readiness.summary.blocked} ติดขัด</Badge>}
+        </div>
+        {readinessError && <p className="readiness-error" role="status">{readinessError}{readiness ? " · ด้านล่างเป็นผลตรวจครั้งก่อน" : ""}</p>}
+        {readiness ? (
+          <details className="readiness-details">
+            <summary>ดูผลตรวจ {readiness.checks.length} รายการและวิธีแก้ไข</summary>
+            <div className="readiness-check-grid">
+              {readiness.checks.map((check) => (
+                <article key={check.code} className={check.status}>
+                  <span className="readiness-status-dot" role="img" aria-label={check.status === "ready" ? "ผ่าน" : check.status === "warning" ? "ควรตรวจเพิ่ม" : "ต้องแก้ไข"} />
+                  <span><strong>{check.label_th}</strong><small>{check.detail_th}</small>{check.action_th && <em>{check.action_th}</em>}</span>
+                </article>
+              ))}
+            </div>
+            <p className="readiness-scope">{readiness.limitations_th}</p>
+          </details>
+        ) : !readinessError && <div className="observatory-loading"><RefreshCw className="animate-spin" size={13} /> กำลังตรวจความพร้อมระบบ</div>}
+        <p className="readiness-privacy"><ShieldCheck size={12} /> ผลตรวจแสดงเฉพาะสถานะการตั้งค่าและการเชื่อมต่อ</p>
+      </section>
       <div className="pipeline-summary-grid">
         <Card><span>กำลังรอ / ทำงาน</span><strong>{queue.queued} / {queue.running}</strong><small>durable job queue</small></Card>
         <Card><span>Asset ที่พบ / ประมวลผล</span><strong>{summary.discovered_assets_latest_checks} / {summary.processed_assets_latest_checks}</strong><small>จาก source check ล่าสุด</small></Card>

@@ -14,6 +14,7 @@ import type {
   ObservatorySnapshot,
   OptimizationResult,
   PriorityRankingResult,
+  ProductionReadiness,
   RasterTileDescriptor,
   SavedScenarioRecord,
   WeatherContext,
@@ -490,6 +491,10 @@ export async function loadIngestionStatus(jobId: string) {
 
 export async function loadObservatoryStatus(): Promise<ObservatorySnapshot> {
   return request<ObservatorySnapshot>("/api/ingestion/status");
+}
+
+export async function loadProductionReadiness(): Promise<ProductionReadiness> {
+  return request<ProductionReadiness>("/api/system/readiness?probe_dependencies=true");
 }
 
 export async function loadDatasetVersions(sourceId: string): Promise<DatasetVersionHistory> {

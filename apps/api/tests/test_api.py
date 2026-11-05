@@ -32,6 +32,26 @@ def test_health_and_dataset_status(client):
     assert all(item["dataset_id"] != "local/integration-fixture" for item in response.json()["items"])
 
 
+def test_production_readiness_reports_actionable_safe_blockers(client):
+    response = client.get("/api/system/readiness?probe_dependencies=false")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["configuration_ready"] is False
+    assert "production_ready" not in payload
+    assert payload["scope"] == "configuration_and_dependencies"
+    assert response.headers["Cache-Control"] == "no-store"
+    assert payload["status"] == "not_ready"
+    assert payload["secrets_exposed"] is False
+    assert payload["summary"]["blocked"] > 0
+    assert {item["code"] for item in payload["checks"]}.issuperset(
+        {"storage.postgis", "security.oidc", "provider.earth_engine_project"}
+    )
+    wire = response.text
+    assert "test-admin-key" not in wire
+    assert "redis://" not in wire
+    assert "jwks_url" not in wire
+
+
 def test_expensive_endpoint_returns_rate_limit_metadata(client, monkeypatch):
     from app.main import rate_limiter
     from app.services.rate_limit import RateLimitDecision

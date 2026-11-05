@@ -73,9 +73,11 @@ Postgres dump ไม่รวม object storage ให้เปิด bucket ver
 
 ## Release checklist
 
-1. tests + migration rehearsal ผ่าน
+1. tests + migration rehearsal ผ่าน และ `make readiness` จบด้วย exit code 0 (ผ่านการตรวจ configuration/dependencies เบื้องต้น)
 2. ไม่มี demo mode/fixture ingestion ใน production
 3. provider terms/quota/attribution ผ่าน review
 4. OIDC admin auth, CORS, TLS, secrets และ Redis rate limits พร้อม (`RATE_LIMIT_ENABLED=true`)
 5. check update/rollback สำหรับ database + artifact formats
 6. smoke API, map tiles, SSE/polling และหนึ่ง read-only provider check
+
+`GET /api/system/readiness?probe_dependencies=true` ใช้ตรวจรายการเดียวกับหน้า Data Observatory และ CLI โดย probe PostGIS/Redis แบบ timeout สั้น พร้อมตรวจ configuration ของ OIDC, CORS, rate limit และ Earth Engine ผลลัพธ์ `configuration_ready` ระบุเฉพาะขอบเขต `configuration_and_dependencies` ไม่ใช่การรับรอง production ทั้งระบบ การข้าม Redis probe จะยังติด blocker ผลลัพธ์ไม่คืนค่า secret, token, endpoint URL หรือ credential path สถานะ Earth Engine identity เป็นเพียง configuration hint; ต้องยืนยันสิทธิ์จริงด้วย source check, worker/Beat, frontend demo mode และ ingestion-to-map ก่อน release ทุกครั้ง

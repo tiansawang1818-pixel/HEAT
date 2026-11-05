@@ -44,6 +44,13 @@ def require_admin(
             detail="Production admin authentication requires OIDC",
         )
     if mode == "oidc":
+        if not settings.oidc_roles_claim.strip() or not settings.oidc_admin_roles or any(
+            not role.strip() for role in settings.oidc_admin_roles
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="OIDC admin role configuration is required",
+            )
         scheme, separator, token = authorization.partition(" ")
         if not separator or scheme.lower() != "bearer" or not token:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="OIDC bearer token is required")
