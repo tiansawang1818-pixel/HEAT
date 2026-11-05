@@ -75,7 +75,7 @@ import {
   streamUrl,
   triggerRefresh,
 } from "@/lib/api";
-import { defaultLayers, demoDatasets, demoFeatures, emptyHistory } from "@/lib/demo-data";
+import { defaultLayers, demoDatasets, demoFeatures, emptyHistory, isDemoFallbackEnabled } from "@/lib/demo-data";
 import {
   cn,
   formatBaht,
@@ -170,9 +170,9 @@ interface DashboardState {
 const initialState: DashboardState = {
   datasets: demoDatasets,
   layers: defaultLayers,
-  features: demoFeatures,
+  features: isDemoFallbackEnabled() ? demoFeatures : { type: "FeatureCollection", features: [] },
   weather: null,
-  isDemo: true,
+  isDemo: isDemoFallbackEnabled(),
 };
 
 function Metric({ label, value, suffix, tone = "default" }: { label: string; value: string; suffix?: string; tone?: "default" | "hot" | "green" }) {

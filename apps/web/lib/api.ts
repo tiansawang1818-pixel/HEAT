@@ -1,4 +1,4 @@
-import { defaultLayers, demoDatasets, demoFeatures } from "@/lib/demo-data";
+import { defaultLayers, demoDatasets, demoFeatures, isDemoFallbackEnabled } from "@/lib/demo-data";
 import { isSyntheticQuality } from "@/lib/utils";
 import type {
   AreaProperties,
@@ -165,6 +165,7 @@ function normalizeWeather(value: unknown): WeatherContext | null {
 }
 
 export async function loadDashboardData(includeFeatures = true) {
+  const demoEnabled = isDemoFallbackEnabled();
   const [datasets, layers, features, weather] = await Promise.allSettled([
     request<unknown>("/api/datasets/status"),
     request<unknown>("/api/map/layers"),
@@ -180,13 +181,13 @@ export async function loadDashboardData(includeFeatures = true) {
     : demoDatasets;
   const normalizedFeatures = includeFeatures && features.status === "fulfilled" && features.value?.type === "FeatureCollection"
     ? normalizeFeatureCollection(features.value, "priority")
-    : demoFeatures;
+    : demoEnabled ? demoFeatures : { type: "FeatureCollection" as const, features: [] };
   return {
     datasets: normalizedDatasets,
     layers: layers.status === "fulfilled" ? normalizeLayers(layers.value, normalizedDatasets) : defaultLayers,
     features: normalizedFeatures,
     weather: weather.status === "fulfilled" ? normalizeWeather(weather.value) : null,
-    isDemo: !apiReachable || (includeFeatures && normalizedFeatures === demoFeatures),
+    isDemo: demoEnabled && (!apiReachable || (includeFeatures && normalizedFeatures === demoFeatures)),
   };
 }
 

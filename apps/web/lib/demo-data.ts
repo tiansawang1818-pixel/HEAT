@@ -1,5 +1,9 @@
 import type { DatasetStatus, FeatureCollection, HistoryPoint, MapLayerMeta } from "@/lib/utils";
 
+export function isDemoFallbackEnabled(): boolean {
+  return process.env.NEXT_PUBLIC_DEMO_MODE === "true";
+}
+
 // These fixtures intentionally contain no measured values. They provide geometry and
 // UI states only when the API is unavailable, and are always accompanied by a demo banner.
 export const demoFeatures: FeatureCollection = {

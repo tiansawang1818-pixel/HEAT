@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { askAssistant, compareScenarios, loadAreaDetail, loadDashboardData, loadDatasetVersions, loadLayerFeatures, loadProductionReadiness, loadRasterTileDescriptor, runForecastScenario, saveScenario, searchAreaDirectory } from "./api";
 import { formatBaht, formatNumber, freshnessLabel } from "./utils";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
 
 describe("Thai presentation helpers", () => {
   it("formats a million-baht budget compactly", () => {
@@ -12,6 +15,18 @@ describe("Thai presentation helpers", () => {
 
   it("does not invent a number for missing values", () => {
     expect(formatNumber(null)).toBe("—");
+  });
+
+  it.each(["false", "true"])("honors NEXT_PUBLIC_DEMO_MODE=%s when the API is unavailable", async (mode) => {
+    vi.stubEnv("NEXT_PUBLIC_DEMO_MODE", mode);
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("API offline"); }));
+    const dashboard = await loadDashboardData();
+    expect(dashboard.isDemo).toBe(mode === "true");
+    if (mode === "false") expect(dashboard.features.features).toHaveLength(0);
+    else {
+      expect(dashboard.features.features.length).toBeGreaterThan(0);
+      expect(dashboard.features.features.every((feature) => feature.properties.quality_status === "demo_only" && feature.properties.surface_temperature_c == null)).toBe(true);
+    }
   });
 
   it("translates freshness states", () => {
