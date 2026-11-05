@@ -164,6 +164,7 @@ def test_authorized_queue_to_postgis_map_and_continuous_sse(running_stack):
     # Hold one real HTTP stream across both publications; the first connects to an empty event history.
     with client.stream("GET", "/api/events/stream") as stream:
         assert stream.status_code == 200
+        assert "no-transform" in stream.headers["Cache-Control"]
         lines = stream.iter_lines()
         assert next(lines) == "retry: 5000"
         assert next(lines) == ": connected"

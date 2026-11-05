@@ -62,6 +62,7 @@ scheduled → checking → no_change
 - MapLibre ส่ง bounds หลัง load/moveend; client debounce 180 ms, abort request เก่า และคง center/zoom ระหว่าง SSE update การค้นหาเขตใช้ directory endpoint ที่ไม่มี boundary geometry แล้วโหลด geometry เฉพาะเมื่อเลือก
 - Response GeoJSON ใส่ content-derived ETag และ private `Cache-Control`; URL มี layer/refresh version ทำให้กลับไป viewport เดิมใช้ browser cache ได้โดยไม่เสี่ยงค้างหลัง publication event
 - SSE event ระบุเฉพาะ affected layer IDs, area IDs, version และ observation metadata
+- Event stream ส่ง `no-transform` เพื่อเลี่ยงการบีบอัด/รวมข้อความเล็กใน Next proxy ส่วน frontend ตรวจ metadata ทุก 60 วินาทีแม้ SSE ยังเชื่อมต่อ เพราะ source check ที่ไม่มี asset ใหม่อาจเปลี่ยน freshness/error state โดยไม่มี publication event
 - SSE เริ่มจาก event ล่าสุดเพื่อไม่ replay ประวัติทั้งระบบ รองรับ `Last-Event-ID` และเรียง `(created_at, id)` เพื่อ reconnect โดยไม่ข้าม event ที่มี timestamp เดียวกัน Client refresh metadata ก่อนและขอ feature ใหม่เฉพาะเมื่อ active layer อยู่ใน `affected_layers`
 
 ## Reproducibility lineage

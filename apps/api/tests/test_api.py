@@ -307,6 +307,7 @@ def test_sse_delivers_the_first_publication_to_an_already_connected_client(db):
 
     async def scenario():
         response = await events_stream(ConnectedRequest(), db=db)
+        assert "no-transform" in response.headers["Cache-Control"]
         body = response.body_iterator
         assert "connected" in await body.__anext__()
         db.add(PipelineEvent(id="first-live-publication", event_type="layer.published", layer_key="temperature", payload={"affected_layers": ["temperature"]}))

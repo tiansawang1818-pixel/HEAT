@@ -347,10 +347,12 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
       setConnection("polling");
     }
     pollTimer = setInterval(() => {
-      if (!eventSource || eventSource.readyState === EventSource.CLOSED) {
-        void reload(false, true, true);
-        void reloadOptimizationStatus();
-      }
+      // Source checks can change freshness/error state without publishing data.
+      // Keep metadata current even while SSE is healthy; only fallback forces
+      // a feature refresh when no publication event has arrived.
+      const fallback = !eventSource || eventSource.readyState === EventSource.CLOSED;
+      void reload(false, true, fallback);
+      void reloadOptimizationStatus();
     }, 60_000);
     return () => {
       eventSource?.close();

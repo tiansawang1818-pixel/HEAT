@@ -2000,7 +2000,8 @@ async def events_stream(request: Request, after: Optional[str] = None, db: Sessi
 
             await asyncio.sleep(5)
 
-    return StreamingResponse(generate(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    # Next.js and intermediate proxies must not gzip/coalesce small SSE frames.
+    return StreamingResponse(generate(), media_type="text/event-stream", headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"})
 
 
 @router.get("/system/refresh-schedule")

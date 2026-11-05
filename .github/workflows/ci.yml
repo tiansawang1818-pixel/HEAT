@@ -172,11 +172,13 @@ jobs:
               assert error.code == 401
           with urllib.request.urlopen(base + '/api/events/stream', timeout=10) as response:
               assert response.headers['Content-Type'].startswith('text/event-stream')
+              assert 'no-transform' in response.headers.get('Cache-Control', '')
               assert response.readline().strip() == b'retry: 5000'
               assert response.readline().strip() == b': connected'
           print('All pages, SSO gate and live SSE respond through release containers.')
           PY
           docker compose --env-file /tmp/heatshift-production-ci.env -f docker-compose.yml -f docker-compose.production.yml -f infra/ci/docker-compose.smoke.yml exec -T web node -e "fetch('http://127.0.0.1:3000/api/health').then(async r=>{if(!r.ok || (await r.json()).status!=='ok')process.exit(1)}).catch(()=>process.exit(1))"
+          docker compose --env-file /tmp/heatshift-production-ci.env -f docker-compose.yml -f docker-compose.production.yml -f infra/ci/docker-compose.smoke.yml exec -T web node --input-type=module < scripts/check_web_stream.mjs
       - name: Container diagnostics
         if: failure()
         run: docker compose --env-file /tmp/heatshift-production-ci.env -f docker-compose.yml -f docker-compose.production.yml -f infra/ci/docker-compose.smoke.yml logs --tail 80 api web migrate caddy
