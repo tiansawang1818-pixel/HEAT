@@ -257,6 +257,23 @@ def test_ingestion_status_exposes_observability_snapshot(client, db):
     assert all(item["dataset_id"] != "local/integration-fixture" for item in body["source_checks"])
 
 
+def test_sse_cursor_orders_same_timestamp_events_without_replaying_history(db):
+    from app.api.router import _events_after_cursor
+
+    created = datetime(2026, 11, 5, 1, 0, tzinfo=timezone.utc)
+    db.add_all(
+        [
+            PipelineEvent(id="event-a", event_type="layer.published", created_at=created, payload={}),
+            PipelineEvent(id="event-b", event_type="layer.published", created_at=created, payload={}),
+            PipelineEvent(id="event-c", event_type="layer.published", created_at=created, payload={}),
+        ]
+    )
+    db.commit()
+    rows = _events_after_cursor(db, "event-b")
+    assert [item.id for item in rows] == ["event-c"]
+    assert _events_after_cursor(db, "event-missing") is None
+
+
 def test_priority_calculation_endpoint(client):
     response = client.post(
         "/api/priority/calculate",
@@ -426,9 +443,18 @@ def test_map_features_applies_viewport_bbox(client, db):
         ]
     )
     db.commit()
-    response = client.get("/api/map/features?layer=priority&bbox=100.4,13.6,100.7,13.9")
+    response = client.get("/api/map/features?layer=priority&bbox=100.4,13.6,100.7,13.9&layer_version=3")
     assert response.status_code == 200
     assert [feature["id"] for feature in response.json()["features"]] == ["inside"]
+    assert response.json()["metadata"]["requested_layer_version"] == 3
+    assert response.json()["metadata"]["spatial_filter"] == "application_bounds_fallback"
+    assert response.headers["Cache-Control"].startswith("private, max-age=60")
+    assert response.headers["ETag"].startswith('"')
+    cached = client.get(
+        "/api/map/features?layer=priority&bbox=100.4,13.6,100.7,13.9&layer_version=3",
+        headers={"If-None-Match": response.headers["ETag"]},
+    )
+    assert cached.status_code == 304
 
 
 def test_map_features_rejects_invalid_bbox(client):

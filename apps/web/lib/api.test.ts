@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { askAssistant, compareScenarios, loadDashboardData, loadDatasetVersions, loadRasterTileDescriptor, runForecastScenario, saveScenario } from "./api";
+import { askAssistant, compareScenarios, loadDashboardData, loadDatasetVersions, loadLayerFeatures, loadRasterTileDescriptor, runForecastScenario, saveScenario, searchAreaDirectory } from "./api";
 import { formatBaht, formatNumber, freshnessLabel } from "./utils";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -95,6 +95,21 @@ describe("Thai presentation helpers", () => {
     expect(dashboard.weather?.data_class).toBe("model_estimate_and_forecast");
     expect(dashboard.weather?.limitations_th).toContain("ไม่ใช่ LST");
     expect(dashboard.layers[0]).toMatchObject({ id: "priority", layer_version: 0, observation_date: null });
+    expect(dashboard.isDemo).toBe(false);
+  });
+
+  it("refreshes dashboard metadata after an event without redownloading map features", async () => {
+    const requested: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      requested.push(url);
+      if (url.includes("/api/datasets/status")) return Response.json({ items: [] });
+      if (url.includes("/api/map/layers")) return Response.json({ items: [] });
+      if (url.includes("/api/weather/context")) return Response.json({ status: "unavailable" });
+      return new Response(null, { status: 404 });
+    }));
+
+    const dashboard = await loadDashboardData(false);
+    expect(requested.some((url) => url.includes("/api/map/features"))).toBe(false);
     expect(dashboard.isDemo).toBe(false);
   });
 
@@ -229,5 +244,36 @@ describe("Thai presentation helpers", () => {
     })));
 
     await expect(loadRasterTileDescriptor("ndvi")).resolves.toBeNull();
+  });
+
+  it("loads only the active viewport and carries the requested layer version", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => Response.json({ type: "FeatureCollection", features: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
+
+    await loadLayerFeatures("temperature", [100.401234, 13.612345, 100.589876, 13.834567], controller.signal, 7, 9);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain("layer=temperature");
+    expect(String(url)).toContain("bbox=100.40123,13.61234,100.58988,13.83457");
+    expect(String(url)).toContain("layer_version=7");
+    expect(String(url)).toContain("refresh_version=9");
+    expect(init?.signal).toBe(controller.signal);
+    expect(init?.cache).toBe("force-cache");
+  });
+
+  it("searches the lightweight area directory without downloading boundaries", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      items: [{
+        id: "bma-khlong-toei",
+        name_th: "คลองเตย",
+        name_en: "Khlong Toei",
+        area_type: "district",
+        centroid: { type: "Point", coordinates: [100.57, 13.71] },
+      }],
+    })));
+
+    const [area] = await searchAreaDirectory("คลองเตย");
+    expect(area).toMatchObject({ id: "bma-khlong-toei", name_en: "Khlong Toei" });
+    expect(area.centroid).toEqual({ type: "Point", coordinates: [100.57, 13.71] });
   });
 });

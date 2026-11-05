@@ -1,6 +1,7 @@
 import { defaultLayers, demoDatasets, demoFeatures } from "@/lib/demo-data";
 import type {
   AreaProperties,
+  AreaDirectoryItem,
   CandidateReviewRecord,
   CostAssumptionRecord,
   DatasetStatus,
@@ -19,6 +20,7 @@ import type {
 } from "@/lib/utils";
 
 const configuredBase = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "";
+const defaultViewportBbox: [number, number, number, number] = [100.36, 13.59, 100.66, 13.91];
 
 function endpoint(path: string) {
   return `${configuredBase}${path}`;
@@ -28,7 +30,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(endpoint(path), {
     ...init,
     headers: { "Content-Type": "application/json", ...init?.headers },
-    cache: "no-store",
+    cache: init?.cache || "no-store",
   });
   if (!response.ok) {
     const message = await response.text().catch(() => "");
@@ -159,18 +161,21 @@ function normalizeWeather(value: unknown): WeatherContext | null {
   };
 }
 
-export async function loadDashboardData() {
+export async function loadDashboardData(includeFeatures = true) {
   const [datasets, layers, features, weather] = await Promise.allSettled([
     request<unknown>("/api/datasets/status"),
     request<unknown>("/api/map/layers"),
-    request<FeatureCollection>("/api/map/features?limit=250&bbox=100.30,13.45,100.95,14.05"),
+    includeFeatures
+      ? request<FeatureCollection>(`/api/map/features?limit=250&bbox=${defaultViewportBbox.join(",")}`)
+      : Promise.resolve<FeatureCollection>({ type: "FeatureCollection", features: [] }),
     request<unknown>("/api/weather/context"),
   ]);
-  const apiReachable = datasets.status === "fulfilled" || layers.status === "fulfilled" || features.status === "fulfilled";
+  const apiReachable = datasets.status === "fulfilled" || layers.status === "fulfilled" || weather.status === "fulfilled"
+    || (includeFeatures && features.status === "fulfilled");
   const normalizedDatasets = datasets.status === "fulfilled"
     ? asItems<Record<string, unknown>>(datasets.value).map(normalizeDataset)
     : demoDatasets;
-  const normalizedFeatures = features.status === "fulfilled" && features.value?.type === "FeatureCollection"
+  const normalizedFeatures = includeFeatures && features.status === "fulfilled" && features.value?.type === "FeatureCollection"
     ? normalizeFeatureCollection(features.value, "priority")
     : demoFeatures;
   return {
@@ -178,12 +183,28 @@ export async function loadDashboardData() {
     layers: layers.status === "fulfilled" ? normalizeLayers(layers.value, normalizedDatasets) : defaultLayers,
     features: normalizedFeatures,
     weather: weather.status === "fulfilled" ? normalizeWeather(weather.value) : null,
-    isDemo: !apiReachable || normalizedFeatures === demoFeatures,
+    isDemo: !apiReachable || (includeFeatures && normalizedFeatures === demoFeatures),
   };
 }
 
-export async function loadLayerFeatures(layer: string): Promise<FeatureCollection> {
-  const value = await request<FeatureCollection>(`/api/map/features?layer=${encodeURIComponent(layer)}&limit=250&bbox=100.30,13.45,100.95,14.05`);
+export async function loadLayerFeatures(
+  layer: string,
+  bbox: [number, number, number, number] = defaultViewportBbox,
+  signal?: AbortSignal,
+  layerVersion?: number,
+  refreshVersion = 0,
+): Promise<FeatureCollection> {
+  const normalizedBbox = [
+    Math.floor(bbox[0] * 100_000) / 100_000,
+    Math.floor(bbox[1] * 100_000) / 100_000,
+    Math.ceil(bbox[2] * 100_000) / 100_000,
+    Math.ceil(bbox[3] * 100_000) / 100_000,
+  ].join(",");
+  const version = layerVersion == null ? "" : `&layer_version=${encodeURIComponent(layerVersion)}`;
+  const value = await request<FeatureCollection>(
+    `/api/map/features?layer=${encodeURIComponent(layer)}&limit=500&bbox=${normalizedBbox}${version}&refresh_version=${refreshVersion}`,
+    { signal, cache: "force-cache" },
+  );
   return normalizeFeatureCollection(value, layer);
 }
 
@@ -194,6 +215,41 @@ export async function loadRasterTileDescriptor(layer: string): Promise<RasterTil
   if (!value.available) return null;
   if (!Array.isArray(value.tiles) || !value.tiles.length || value.layer !== layer) return null;
   return value;
+}
+
+export async function searchAreaDirectory(query: string, signal?: AbortSignal): Promise<AreaDirectoryItem[]> {
+  const value = await request<unknown>(
+    `/api/areas?search=${encodeURIComponent(query)}&page=1&page_size=10`,
+    { signal },
+  );
+  return asItems<Record<string, unknown>>(value).map((item) => ({
+    id: String(item.id),
+    name_th: String(item.name_th || "ไม่ทราบชื่อพื้นที่"),
+    name_en: typeof item.name_en === "string" ? item.name_en : undefined,
+    area_type: typeof item.area_type === "string" ? item.area_type : undefined,
+    centroid: item.centroid && typeof item.centroid === "object" ? item.centroid as AreaDirectoryItem["centroid"] : null,
+    quality_status: typeof item.quality_status === "string" ? item.quality_status : undefined,
+  }));
+}
+
+export async function loadAreaMapFeature(areaId: string): Promise<GeoFeature> {
+  const raw = await request<Record<string, unknown>>(`/api/areas/${encodeURIComponent(areaId)}`);
+  if (!raw.geometry || typeof raw.geometry !== "object") throw new Error("พื้นที่นี้ยังไม่มี geometry ที่เผยแพร่");
+  const featureCollection = normalizeFeatureCollection({
+    type: "FeatureCollection",
+    features: [{
+      type: "Feature",
+      id: String(raw.id || areaId),
+      geometry: raw.geometry as GeoFeature["geometry"],
+      properties: {
+        id: String(raw.id || areaId),
+        name_th: String(raw.name_th || "ไม่ทราบชื่อพื้นที่"),
+        name_en: typeof raw.name_en === "string" ? raw.name_en : undefined,
+        quality_status: (raw.boundary_provenance as { quality_status?: string } | undefined)?.quality_status,
+      },
+    }],
+  }, "priority");
+  return featureCollection.features[0];
 }
 
 export async function loadAreaDetail(areaId: string): Promise<AreaProperties> {

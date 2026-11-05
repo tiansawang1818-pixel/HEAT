@@ -52,13 +52,15 @@ scheduled → checking → no_change
 
 ## API and map loading
 
-- `/api/map/features` ต้องรับ `bbox`, layer, version, zoom และ pagination/limit
+- `/api/map/features` รับ `bbox`, layer/version และ limit; production PostGIS ใช้ `ST_Intersects(ST_MakeEnvelope(...))` กับ GiST index ก่อนอ่าน geometry ส่วน SQLite fixture ใช้ application bounds fallback
 - Raster ที่ publish จาก Earth Engine เก็บ immutable source asset/version และ virtual raster metadata แล้ว `/api/map/tiles/{layer}` สร้าง provider-backed XYZ descriptor จาก processing recipe เดียวกับ regional analytics
 - Frontend โหลดเฉพาะ tiles ใน viewport ด้วย MapLibre และเก็บ district GeoJSON เป็น fallback/click target; ห้ามส่ง raster Bangkok ทั้งก้อนไป browser
 - Earth Engine map token มีอายุจำกัด ระบบ cache descriptor ใน memory ตาม `GEE_TILE_DESCRIPTOR_TTL_SECONDS`, ตอบ `Cache-Control: private` และไม่บันทึก token ลงฐานข้อมูล
 - Vector ใช้ GeoJSON เฉพาะ viewport/pilot size; production scale ใช้ MVT
-- Response ใส่ ETag/Cache-Control และ dataset version
+- MapLibre ส่ง bounds หลัง load/moveend; client debounce 180 ms, abort request เก่า และคง center/zoom ระหว่าง SSE update การค้นหาเขตใช้ directory endpoint ที่ไม่มี boundary geometry แล้วโหลด geometry เฉพาะเมื่อเลือก
+- Response GeoJSON ใส่ content-derived ETag และ private `Cache-Control`; URL มี layer/refresh version ทำให้กลับไป viewport เดิมใช้ browser cache ได้โดยไม่เสี่ยงค้างหลัง publication event
 - SSE event ระบุเฉพาะ affected layer IDs, area IDs, version และ observation metadata
+- SSE เริ่มจาก event ล่าสุดเพื่อไม่ replay ประวัติทั้งระบบ รองรับ `Last-Event-ID` และเรียง `(created_at, id)` เพื่อ reconnect โดยไม่ข้าม event ที่มี timestamp เดียวกัน Client refresh metadata ก่อนและขอ feature ใหม่เฉพาะเมื่อ active layer อยู่ใน `affected_layers`
 
 ## Reproducibility lineage
 

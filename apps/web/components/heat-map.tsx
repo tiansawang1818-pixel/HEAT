@@ -69,6 +69,7 @@ export interface MapViewport {
   zoom: number;
   bearing: number;
   pitch: number;
+  bounds?: [number, number, number, number];
 }
 
 export function HeatMap({
@@ -134,16 +135,22 @@ export function HeatMap({
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
     const overlay = new MapboxOverlay({ interleaved: false, layers: [] });
     map.addControl(overlay as unknown as maplibregl.IControl);
-    map.on("load", () => readyCallbackRef.current?.());
-    map.on("moveend", () => {
+    const emitViewport = () => {
       const center = map.getCenter();
+      const bounds = map.getBounds();
       viewportCallbackRef.current?.({
         center: [center.lng, center.lat],
         zoom: map.getZoom(),
         bearing: map.getBearing(),
         pitch: map.getPitch(),
+        bounds: [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()],
       });
+    };
+    map.on("load", () => {
+      readyCallbackRef.current?.();
+      emitViewport();
     });
+    map.on("moveend", emitViewport);
     mapRef.current = map;
     overlayRef.current = overlay;
     return () => {

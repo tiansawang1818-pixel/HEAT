@@ -53,6 +53,7 @@ import {
   downloadSavedScenarioReport,
   downloadOptimizationReport,
   loadAreaDetail,
+  loadAreaMapFeature,
   loadAreaHistory,
   loadCostAssumptions,
   loadDashboardData,
@@ -68,6 +69,7 @@ import {
   loadOptimizationRun,
   runForecastScenario,
   runOptimization,
+  searchAreaDirectory,
   saveScenario,
   streamUrl,
   triggerRefresh,
@@ -80,6 +82,7 @@ import {
   formatThaiDate,
   freshnessLabel,
   type AreaProperties,
+  type AreaDirectoryItem,
   type CandidateReviewRecord,
   type CostAssumptionRecord,
   type DatasetStatus,
@@ -189,10 +192,20 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
   const [loading, setLoading] = useState(true);
   const [activeLayer, setActiveLayer] = useState(initialView === "outlook" ? "future-risk" : "priority");
   const [rasterTile, setRasterTile] = useState<RasterTileDescriptor | null>(null);
+  const [mainViewport, setMainViewport] = useState<MapViewport>({
+    center: [100.5018, 13.7563],
+    zoom: 10.4,
+    bearing: 0,
+    pitch: 0,
+    bounds: [100.36, 13.59, 100.66, 13.91],
+  });
+  const [dataRevision, setDataRevision] = useState(0);
   const [selected, setSelected] = useState<GeoFeature | null>(null);
   const [history, setHistory] = useState<HistoryPoint[]>(emptyHistory);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [query, setQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<AreaDirectoryItem[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
   const [connection, setConnection] = useState<"connecting" | "live" | "polling">("connecting");
   const [updateNotice, setUpdateNotice] = useState<string | null>(null);
   const [mobilePanel, setMobilePanel] = useState<"nav" | "analysis" | null>(null);
@@ -230,10 +243,20 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
   const [priorityRankings, setPriorityRankings] = useState<PriorityRankingResult | null>(null);
   const [rankingsLoading, setRankingsLoading] = useState(initialView === "insights");
 
-  const reload = useCallback(async (notify = false) => {
+  const reload = useCallback(async (notify = false, metadataOnly = false, refreshActiveLayer = true) => {
     try {
-      const next = await loadDashboardData();
-      setData(next);
+      const next = await loadDashboardData(!metadataOnly);
+      setData((current) => {
+        if (metadataOnly) {
+          return {
+            ...next,
+            features: current.features,
+            isDemo: next.isDemo ? current.isDemo : false,
+          };
+        }
+        return !current.isDemo && !next.isDemo ? { ...next, features: current.features } : next;
+      });
+      if (refreshActiveLayer) setDataRevision((value) => value + 1);
       if (notify) setUpdateNotice("เผยแพร่ข้อมูลเวอร์ชันใหม่แล้ว — แผนที่อัปเดตโดยไม่เปลี่ยนมุมมอง");
     } finally {
       setLoading(false);
@@ -274,12 +297,20 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
     try {
       eventSource = new EventSource(streamUrl());
       eventSource.onopen = () => setConnection("live");
-      eventSource.addEventListener("data-update", () => {
-        void reload(true);
+      eventSource.addEventListener("data-update", (event) => {
+        let refreshActive = true;
+        try {
+          const payload = JSON.parse((event as MessageEvent).data) as { affected_layers?: string[]; layer?: string };
+          const affected = payload.affected_layers || (payload.layer ? [payload.layer] : []);
+          refreshActive = !affected.length || affected.includes(activeLayer);
+        } catch {
+          // Unknown event shapes conservatively refresh the active layer.
+        }
+        void reload(true, true, refreshActive);
         void reloadOptimizationStatus();
       });
       eventSource.addEventListener("candidate.approved", () => {
-        void reload(true);
+        void reload(true, true, activeLayer === "candidates");
         void reloadOptimizationStatus();
         setUpdateNotice("candidate ผ่านหลักฐานแล้ว — ชั้นจุดลงทุนและสถานะแผนถูกอัปเดต");
       });
@@ -287,7 +318,7 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
         try {
           const payload = JSON.parse(event.data) as { type?: string };
           if (payload.type === "data-update" || payload.type === "dataset_published") {
-            void reload(true);
+            void reload(true, true, true);
             void reloadOptimizationStatus();
           }
         } catch {
@@ -303,7 +334,7 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
     }
     pollTimer = setInterval(() => {
       if (!eventSource || eventSource.readyState === EventSource.CLOSED) {
-        void reload();
+        void reload(false, true, true);
         void reloadOptimizationStatus();
       }
     }, 60_000);
@@ -311,19 +342,32 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
       eventSource?.close();
       if (pollTimer) clearInterval(pollTimer);
     };
-  }, [reload, reloadOptimizationStatus]);
+  }, [activeLayer, reload, reloadOptimizationStatus]);
 
   const activeLayerVersion = data.layers.find((layer) => layer.id === activeLayer)?.layer_version;
+  const viewportBoundsKey = mainViewport.bounds?.map((value) => value.toFixed(4)).join(",") || "default";
 
   useEffect(() => {
-    setRasterTile(null);
     if (data.isDemo) return;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      void loadLayerFeatures(activeLayer, mainViewport.bounds, controller.signal, activeLayerVersion, dataRevision)
+        .then((features) => setData((current) => ({ ...current, features })))
+        .catch((error) => {
+          if (error instanceof DOMException && error.name === "AbortError") return;
+          setActionError(error instanceof Error ? error.message : "โหลดชั้นข้อมูลไม่สำเร็จ");
+        });
+    }, 180);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [activeLayer, activeLayerVersion, data.isDemo, dataRevision, viewportBoundsKey]);
+
+  useEffect(() => {
+    if (data.isDemo) return;
+    setRasterTile((current) => current?.layer === activeLayer ? current : null);
     let cancelled = false;
-    loadLayerFeatures(activeLayer)
-      .then((features) => {
-        if (!cancelled) setData((current) => ({ ...current, features }));
-      })
-      .catch((error) => setActionError(error instanceof Error ? error.message : "โหลดชั้นข้อมูลไม่สำเร็จ"));
     loadRasterTileDescriptor(activeLayer)
       .then((descriptor) => {
         if (!cancelled) setRasterTile(descriptor);
@@ -332,7 +376,7 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
         if (!cancelled) setRasterTile(null);
       });
     return () => { cancelled = true; };
-  }, [activeLayer, activeLayerVersion, data.isDemo]);
+  }, [activeLayer, activeLayerVersion, data.isDemo, dataRevision]);
 
   useEffect(() => {
     if (!updateNotice) return;
@@ -347,7 +391,7 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
         .then(({ job }) => {
           if (!job) return;
           setRefreshJob({ job_id: job.id, status: job.status });
-          if (job.status === "completed") void reload(true);
+          if (job.status === "completed") void reload(true, true, true);
           if (job.status === "failed" && job.error_message) setActionError(job.error_message);
         })
         .catch(() => undefined);
@@ -404,6 +448,50 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
     return () => { cancelled = true; };
   }, [initialView]);
 
+  useEffect(() => {
+    const normalized = query.trim();
+    if (!normalized) {
+      setSearchResults([]);
+      setSearchLoading(false);
+      return;
+    }
+    if (data.isDemo) {
+      const lowered = normalized.toLocaleLowerCase("th-TH");
+      setSearchResults(
+        data.features.features
+          .filter((feature) => `${feature.properties.name_th} ${feature.properties.name_en || ""}`.toLocaleLowerCase("th-TH").includes(lowered))
+          .slice(0, 10)
+          .map((feature) => ({
+            id: feature.properties.id,
+            name_th: feature.properties.name_th,
+            name_en: feature.properties.name_en,
+            quality_status: feature.properties.quality_status,
+          })),
+      );
+      return;
+    }
+    const controller = new AbortController();
+    let cancelled = false;
+    setSearchLoading(true);
+    const timer = setTimeout(() => {
+      void searchAreaDirectory(normalized, controller.signal)
+        .then((items) => {
+          if (!cancelled) setSearchResults(items);
+        })
+        .catch((error) => {
+          if (!cancelled && !(error instanceof DOMException && error.name === "AbortError")) setSearchResults([]);
+        })
+        .finally(() => {
+          if (!cancelled) setSearchLoading(false);
+        });
+    }, 220);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [data.isDemo, query]);
+
   const handleSelect = useCallback((feature: GeoFeature) => {
     setSelected(feature);
     setRightTab("area");
@@ -418,13 +506,22 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
       .finally(() => setHistoryLoading(false));
   }, []);
 
-  const visibleFeatures = useMemo(() => {
-    const normalized = query.trim().toLocaleLowerCase("th-TH");
-    if (!normalized) return data.features.features;
-    return data.features.features.filter((feature) =>
-      `${feature.properties.name_th} ${feature.properties.name_en || ""}`.toLocaleLowerCase("th-TH").includes(normalized),
-    );
-  }, [data.features.features, query]);
+  const handleSearchResult = useCallback(async (area: AreaDirectoryItem) => {
+    try {
+      const existing = data.features.features.find((feature) => feature.properties.id === area.id);
+      const feature = existing || await loadAreaMapFeature(area.id);
+      handleSelect(feature);
+      if (area.centroid?.type === "Point") {
+        const [longitude, latitude] = area.centroid.coordinates;
+        if (typeof longitude === "number" && typeof latitude === "number") {
+          setMainViewport((current) => ({ ...current, center: [longitude, latitude], zoom: Math.max(12, current.zoom) }));
+        }
+      }
+      setQuery("");
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "เปิดพื้นที่ไม่สำเร็จ");
+    }
+  }, [data.features.features, handleSelect]);
 
   const newestObservation = useMemo(() => {
     const valid = data.datasets.map((item) => item.last_source_observed_at).filter(Boolean) as string[];
@@ -657,10 +754,11 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
           <div className="search-box"><Search size={14} /><input id="area-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="เขต / แขวง" /></div>
           {query && (
             <div className="search-results">
-              {visibleFeatures.slice(0, 5).map((feature) => (
-                <button key={feature.properties.id} onClick={() => handleSelect(feature)}>{feature.properties.name_th}</button>
+              {searchResults.slice(0, 5).map((area) => (
+                <button key={area.id} onClick={() => void handleSearchResult(area)}>{area.name_th}</button>
               ))}
-              {!visibleFeatures.length && <p>ไม่พบพื้นที่</p>}
+              {searchLoading && <p>กำลังค้นหา…</p>}
+              {!searchLoading && !searchResults.length && <p>ไม่พบพื้นที่</p>}
             </div>
           )}
         </div>
@@ -691,6 +789,8 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
           data={displayedFeatures}
           activeLayer={activeLayer}
           rasterTile={rasterTile}
+          viewport={mainViewport}
+          onViewportChange={setMainViewport}
           selectedId={selected?.properties.id}
           projects={displayedProjects}
           onSelect={handleSelect}

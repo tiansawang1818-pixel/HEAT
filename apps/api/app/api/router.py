@@ -1,3 +1,4 @@
+import hashlib
 import html
 import json
 import re
@@ -7,7 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, StreamingResponse
-from sqlalchemy import desc, func, or_, select
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -118,6 +119,30 @@ def _geometry_intersects_bbox(geometry: Any, bbox: Optional[tuple[float, float, 
     geom_north = max(point[1] for point in points)
     west, south, east, north = bbox
     return geom_west <= east and geom_east >= west and geom_south <= north and geom_north >= south
+
+
+def _viewport_rows(
+    db: Session,
+    entity: Any,
+    bbox: Optional[tuple[float, float, float, float]],
+    limit: int,
+    *filters: Any,
+) -> List[Any]:
+    query = select(entity)
+    if filters:
+        query = query.where(*filters)
+    if bbox and settings.database_url.startswith("postgresql"):
+        west, south, east, north = bbox
+        query = query.where(
+            func.ST_Intersects(entity.geometry, func.ST_MakeEnvelope(west, south, east, north, 4326))
+        )
+    query = query.order_by(entity.id)
+    if settings.database_url.startswith("postgresql") or bbox is None:
+        query = query.limit(limit)
+    rows = list(db.scalars(query).all())
+    if bbox and not settings.database_url.startswith("postgresql"):
+        rows = [row for row in rows if _geometry_intersects_bbox(row.geometry, bbox)][:limit]
+    return rows
 
 
 def _source_status(db: Session, source: DataSource) -> Dict[str, Any]:
@@ -564,9 +589,13 @@ def map_tile_descriptor(
 
 @router.get("/map/features")
 def map_features(
+    request: Request,
+    response: Response,
     layer: str = Query(default="priority"),
     bbox: Optional[str] = None,
     limit: int = Query(default=500, ge=1, le=5000),
+    layer_version: Optional[int] = Query(default=None, ge=0),
+    refresh_version: Optional[int] = Query(default=None, ge=0),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     known = {item[0]: item for item in LAYER_DEFINITIONS}
@@ -575,10 +604,14 @@ def map_features(
     parsed_bbox = _parse_bbox(bbox)
     features: List[Dict[str, Any]] = []
     if layer == "candidates":
-        rows = db.scalars(select(CandidateIntervention).where(CandidateIntervention.active.is_(True))).all()
+        rows = _viewport_rows(
+            db,
+            CandidateIntervention,
+            parsed_bbox,
+            limit,
+            CandidateIntervention.active.is_(True),
+        )
         for row in rows:
-            if not _geometry_intersects_bbox(row.geometry, parsed_bbox):
-                continue
             features.append(
                 {
                     "type": "Feature",
@@ -594,33 +627,53 @@ def map_features(
                     },
                 }
             )
-            if len(features) >= limit:
-                break
     else:
         indicator_key = known[layer][2]
-        areas_rows = db.scalars(select(GeographicArea)).all()
+        areas_rows = _viewport_rows(db, GeographicArea, parsed_bbox, limit)
+        area_ids = [area.id for area in areas_rows]
+        score_by_area: Dict[str, PriorityScore] = {}
+        observation_by_area: Dict[str, AreaIndicator] = {}
+        forecast = None
+        projection_by_area: Dict[str, Dict[str, Any]] = {}
+        if layer == "priority" and area_ids:
+            for score in db.scalars(
+                select(PriorityScore)
+                .where(PriorityScore.area_id.in_(area_ids))
+                .order_by(PriorityScore.area_id, desc(PriorityScore.calculated_at))
+            ).all():
+                score_by_area.setdefault(score.area_id, score)
+        elif layer == "future-risk":
+            forecast = db.scalar(select(ForecastRun).order_by(desc(ForecastRun.created_at)).limit(1))
+            projections = forecast.results.get("projections", []) if forecast and forecast.results else []
+            projection_by_area = {
+                str(item["area_id"]): item
+                for item in projections
+                if isinstance(item, dict) and item.get("area_id") is not None
+            }
+        elif area_ids:
+            for observation in db.scalars(
+                select(AreaIndicator)
+                .where(AreaIndicator.area_id.in_(area_ids), AreaIndicator.indicator_key == indicator_key)
+                .order_by(AreaIndicator.area_id, desc(AreaIndicator.observed_at))
+            ).all():
+                observation_by_area.setdefault(observation.area_id, observation)
         for area in areas_rows:
-            if not _geometry_intersects_bbox(area.geometry, parsed_bbox):
-                continue
+            scenario_horizon = None
+            scenario_uncertainty = None
             if layer == "priority":
-                score = db.scalar(select(PriorityScore).where(PriorityScore.area_id == area.id).order_by(desc(PriorityScore.calculated_at)).limit(1))
+                score = score_by_area.get(area.id)
                 value, observed_at, quality = (score.score, score.calculated_at, "derived") if score else (None, None, "unavailable")
             elif layer == "future-risk":
-                forecast = db.scalar(select(ForecastRun).order_by(desc(ForecastRun.created_at)).limit(1))
-                projections = forecast.results.get("projections", []) if forecast and forecast.results else []
-                projection = next((item for item in projections if item.get("area_id") == area.id), None)
+                projection = projection_by_area.get(area.id)
                 value, observed_at, quality = (
                     (projection.get("scenario_change_c"), forecast.created_at, "scenario_projection")
                     if projection
                     else (None, None, "unavailable")
                 )
+                scenario_horizon = forecast.horizon_years if forecast and projection else None
+                scenario_uncertainty = projection.get("uncertainty_c") if projection else None
             else:
-                observation = db.scalar(
-                    select(AreaIndicator)
-                    .where(AreaIndicator.area_id == area.id, AreaIndicator.indicator_key == indicator_key)
-                    .order_by(desc(AreaIndicator.observed_at))
-                    .limit(1)
-                )
+                observation = observation_by_area.get(area.id)
                 value, observed_at, quality = (
                     (observation.value, observation.observed_at, observation.quality_status) if observation else (None, None, "unavailable")
                 )
@@ -637,14 +690,36 @@ def map_features(
                         "unit": known[layer][3],
                         "observed_at": _iso(observed_at),
                         "quality_status": quality,
-                        "scenario_horizon_years": forecast.horizon_years if layer == "future-risk" and forecast and projection else None,
-                        "scenario_uncertainty_c": projection.get("uncertainty_c") if layer == "future-risk" and projection else None,
+                        "scenario_horizon_years": scenario_horizon,
+                        "scenario_uncertainty_c": scenario_uncertainty,
                     },
                 }
             )
-            if len(features) >= limit:
-                break
-    return {"type": "FeatureCollection", "features": features, "metadata": {"layer": layer, "bbox_filter": list(parsed_bbox) if parsed_bbox else None, "count": len(features)}}
+    payload = {
+        "type": "FeatureCollection",
+        "features": features,
+        "metadata": {
+            "layer": layer,
+            "requested_layer_version": layer_version,
+            "requested_refresh_version": refresh_version,
+            "bbox_filter": list(parsed_bbox) if parsed_bbox else None,
+            "count": len(features),
+            "spatial_filter": "postgis_st_intersects" if parsed_bbox and settings.database_url.startswith("postgresql") else "application_bounds_fallback",
+        },
+    }
+    etag = '"%s"' % hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    cache_headers = {
+        "ETag": etag,
+        "Cache-Control": "private, max-age=60, stale-while-revalidate=120",
+        "Vary": "Accept-Encoding",
+    }
+    if request.headers.get("If-None-Match") == etag:
+        return Response(status_code=304, headers=cache_headers)
+    for key, value in cache_headers.items():
+        response.headers[key] = value
+    return payload
 
 
 @router.get("/candidates")
@@ -1810,15 +1885,48 @@ def ingestion_run(
     return {"job_id": job.id, "status": "queued", "status_url": "/api/ingestion/status?job_id=%s" % job.id, "dispatch_mode": dispatch_mode}
 
 
+def _events_after_cursor(db: Session, cursor: str, limit: int = 50) -> Optional[List[PipelineEvent]]:
+    cursor_event = db.get(PipelineEvent, cursor)
+    if cursor_event is None:
+        return None
+    return list(
+        db.scalars(
+            select(PipelineEvent)
+            .where(
+                or_(
+                    PipelineEvent.created_at > cursor_event.created_at,
+                    and_(PipelineEvent.created_at == cursor_event.created_at, PipelineEvent.id > cursor_event.id),
+                )
+            )
+            .order_by(PipelineEvent.created_at, PipelineEvent.id)
+            .limit(limit)
+        ).all()
+    )
+
+
 @router.get("/events/stream")
 async def events_stream(request: Request, after: Optional[str] = None, db: Session = Depends(get_db)) -> StreamingResponse:
     async def generate():
-        cursor = after
+        cursor = after or request.headers.get("Last-Event-ID")
+        if cursor and db.get(PipelineEvent, cursor) is None:
+            cursor = None
+        if cursor is None:
+            latest = db.scalar(
+                select(PipelineEvent).order_by(desc(PipelineEvent.created_at), desc(PipelineEvent.id)).limit(1)
+            )
+            cursor = latest.id if latest else None
+        yield "retry: 5000\n: connected\n\n"
         while not await request.is_disconnected():
-            query = select(PipelineEvent).order_by(PipelineEvent.created_at).limit(50)
             if cursor:
-                query = query.where(PipelineEvent.id != cursor, PipelineEvent.created_at >= select(PipelineEvent.created_at).where(PipelineEvent.id == cursor).scalar_subquery())
-            rows = db.scalars(query).all()
+                rows = _events_after_cursor(db, cursor)
+                if rows is None:
+                    latest = db.scalar(
+                        select(PipelineEvent).order_by(desc(PipelineEvent.created_at), desc(PipelineEvent.id)).limit(1)
+                    )
+                    cursor = latest.id if latest else None
+                    rows = []
+            else:
+                rows = []
             if rows:
                 for event in rows:
                     cursor = event.id

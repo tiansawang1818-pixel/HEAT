@@ -11,6 +11,7 @@ from app.models.entities import (
     GeographicArea,
     OptimizationRun,
     PriorityScore,
+    PipelineEvent,
     RasterAssetMetadata,
     TemperatureObservation,
 )
@@ -235,7 +236,7 @@ def test_new_publication_marks_saved_optimization_outdated(db):
     assert optimization_without_source.is_outdated is True
 
 
-def test_processed_satellite_records_publish_atomically_and_recalculate_priority(db):
+def test_processed_satellite_records_publish_atomically_and_recalculate_priority(db, client):
     add_test_areas(db)
     result = run_monitor(db, ProcessedTemperatureConnector(), requested_by="test")
 
@@ -252,6 +253,20 @@ def test_processed_satellite_records_publish_atomically_and_recalculate_priority
     assert len(scores) == 2
     assert scores[0].components["temperature_anomaly"] == 2.0
     assert scores[1].components["temperature_anomaly"] == -2.0
+    event = db.scalar(
+        select(PipelineEvent).where(PipelineEvent.dataset_version_id == version.id)
+    )
+    assert event.event_type == "layer.published"
+    assert event.layer_version == version.layer_version
+    assert event.payload["affected_layers"] == ["temperature", "historical", "priority"]
+
+    map_response = client.get(
+        "/api/map/features?layer=temperature&bbox=100.49,13.69,100.58,13.77&layer_version=%s"
+        % version.layer_version
+    )
+    assert map_response.status_code == 200
+    assert map_response.json()["metadata"]["requested_layer_version"] == version.layer_version
+    assert sorted(feature["properties"]["value"] for feature in map_response.json()["features"]) == [34.0, 38.0]
 
 
 def test_raster_provenance_is_published_with_virtual_provider_uri(db):

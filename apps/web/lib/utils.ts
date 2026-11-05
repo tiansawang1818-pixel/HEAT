@@ -150,6 +150,15 @@ export interface FeatureCollection {
   features: GeoFeature[];
 }
 
+export interface AreaDirectoryItem {
+  id: string;
+  name_th: string;
+  name_en?: string;
+  area_type?: string;
+  centroid?: Geometry | null;
+  quality_status?: string;
+}
+
 export interface MapLayerMeta {
   id: string;
   name_th: string;
