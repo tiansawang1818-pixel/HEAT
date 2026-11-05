@@ -243,6 +243,7 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
   const [refreshJob, setRefreshJob] = useState<{ job_id: string; status: string } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [mapError, setMapError] = useState<string | null>(null);
   const [assistantQuestion, setAssistantQuestion] = useState("");
   const [assistantAnswer, setAssistantAnswer] = useState<string | null>(null);
   const [assistantOptimization, setAssistantOptimization] = useState<OptimizationResult | null>(null);
@@ -384,10 +385,13 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
     const controller = new AbortController();
     const timer = setTimeout(() => {
       void loadLayerFeatures(activeLayer, mainViewport.bounds, controller.signal, activeLayerVersion, dataRevision, activeSnapshotId)
-        .then((features) => setData((current) => ({ ...current, features })))
+        .then((features) => {
+          setData((current) => ({ ...current, features }));
+          setMapError(null);
+        })
         .catch((error) => {
           if (error instanceof DOMException && error.name === "AbortError") return;
-          setActionError(error instanceof Error ? error.message : "โหลดชั้นข้อมูลไม่สำเร็จ");
+          setMapError("โหลดชั้นข้อมูลไม่สำเร็จ ระบบจะลองใหม่และคงแผนที่เดิมไว้");
         });
     }, 180);
     return () => {
@@ -844,6 +848,7 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
       </aside>
 
       <section className="map-stage">
+        {mapError && <div className="map-load-error error-box" role="status">{mapError}</div>}
         <HeatMap
           data={displayedFeatures}
           activeLayer={activeLayer}
