@@ -129,7 +129,11 @@ services:
 networks:
   ingress:
     ipam:
-      config: [{subnet: "${HEATSHIFT_PROXY_SUBNET:-172.30.10.0/24}"}]
+      config:
+        - subnet: ${HEATSHIFT_PROXY_SUBNET:-172.30.10.0/24}
+          # Reserve the lower half for explicit addresses such as Caddy.
+          # Otherwise the API can auto-allocate Caddy's IP before it starts.
+          ip_range: ${HEATSHIFT_PROXY_DYNAMIC_RANGE:-172.30.10.128/25}
 volumes:
   caddy-data:
   caddy-config:

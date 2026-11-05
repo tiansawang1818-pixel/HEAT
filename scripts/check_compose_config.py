@@ -60,6 +60,8 @@ def inspect(config):
         caddy_address = services.get("caddy", {}).get("networks", {}).get("ingress", {}).get("ipv4_address")
         subnet = config["networks"]["ingress"]["ipam"]["config"][0]["subnet"]
         check(str(address) == caddy_address and address in ipaddress.ip_network(subnet), "api: trusted proxy must match the isolated Caddy address")
+        allocation = ipaddress.ip_network(config["networks"]["ingress"]["ipam"]["config"][0]["ip_range"])
+        check(allocation.subnet_of(ipaddress.ip_network(subnet)) and address not in allocation, "api: dynamic allocation must exclude the reserved proxy address")
     except (ValueError, KeyError, TypeError):
         check(False, "api: invalid trusted proxy network")
     return failures
