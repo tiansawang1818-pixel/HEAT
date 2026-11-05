@@ -3,7 +3,7 @@
 ทุก push จะรัน GitHub Actions แยกเป็น 4 งาน:
 
 - `api`: unit/API tests ด้วย SQLite รวม validation, retry, interrupted-worker recovery, locks, optimizer และ freshness
-- `web`: client API/OIDC flow tests (จริงสำหรับ code/PKCE/nonce verification โดย mock provider และ Redis), dependency audit, TypeScript และ Next.js production build
+- `web`: client API/OIDC flow tests (ตรวจ code/PKCE/nonce โดย mock provider), session encryption/TTL/logout/fail-closed กับ Redis จริง, dependency audit, TypeScript และ Next.js production build
 - `stack`: PostgreSQL/PostGIS และ Redis จริง พร้อม migration, API process และ Celery worker process แยกกัน
 - `containers`: production Compose isolation, Caddy validation, release image builds และ HTTP smoke ผ่าน Caddy โดยไม่เริ่ม source monitors หรือเรียก provider จริง
 

@@ -18,6 +18,12 @@ export const authCookieOptions = { httpOnly: true, secure: process.env.NODE_ENV 
 let redisClient: ReturnType<typeof createClient> | undefined;
 let connecting: Promise<ReturnType<typeof createClient>> | undefined;
 
+export async function closeAdminSessionStore() {
+  if (connecting) await connecting.catch(() => undefined);
+  if (redisClient?.isOpen) await redisClient.close();
+  redisClient = undefined;
+}
+
 async function store() {
   if (!redisClient?.isReady) {
     if (!connecting) {
