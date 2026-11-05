@@ -58,6 +58,8 @@ def inspect(config):
     try:
         address = ipaddress.ip_address(api.get("FORWARDED_ALLOW_IPS", ""))
         caddy_address = services.get("caddy", {}).get("networks", {}).get("ingress", {}).get("ipv4_address")
+        check(set(services.get("caddy", {}).get("networks", {})) == {"ingress"}, "caddy: use only the ingress network to preserve trusted proxy routing")
+        check("ingress" in services.get("web", {}).get("networks", {}), "web: ingress network is missing")
         subnet = config["networks"]["ingress"]["ipam"]["config"][0]["subnet"]
         check(str(address) == caddy_address and address in ipaddress.ip_network(subnet), "api: trusted proxy must match the isolated Caddy address")
         allocation = ipaddress.ip_network(config["networks"]["ingress"]["ipam"]["config"][0]["ip_range"])

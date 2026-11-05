@@ -76,6 +76,7 @@ services:
       redis: {condition: service_healthy}
   web:
     ports: !reset []
+    networks: [default, ingress]
     build:
       args:
         NEXT_PUBLIC_API_URL: ""
@@ -119,7 +120,6 @@ services:
       - caddy-data:/data
       - caddy-config:/config
     networks:
-      default: {}
       ingress: {ipv4_address: "${HEATSHIFT_PROXY_IP:-172.30.10.2}"}
     depends_on:
       web: {condition: service_healthy}
