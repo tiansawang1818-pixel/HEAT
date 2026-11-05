@@ -175,6 +175,14 @@ export interface MapLayerMeta {
   source_name?: string;
 }
 
+export interface MapObservation {
+  id: string;
+  observed_at: string;
+  source_version: string;
+  layer_version: number;
+  quality_status: string;
+}
+
 export interface RasterTileDescriptor {
   available: true;
   layer: string;

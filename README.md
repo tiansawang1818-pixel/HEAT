@@ -37,6 +37,8 @@ Data Observatory มี evidence gate ภาษาไทยสำหรับผ
 
 Vector GeoJSON โหลดตาม viewport จริง: client debounce/ยกเลิก request เก่า, PostGIS กรองด้วย spatial index, response มี ETag/cache version และ SSE refresh เฉพาะ active layer ที่ได้รับผลกระทบ การค้นหาเขตใช้รายการชื่อ/centroid ขนาดเล็กก่อนโหลด boundary ที่เลือก จึงไม่ต้องดาวน์โหลดข้อมูลกรุงเทพฯ ทั้งชุดทุกครั้งที่เลื่อนแผนที่
 
+ชั้นอุณหภูมิ ประชากร NDVI พืชพรรณ และสิ่งปลูกสร้างเลือก observation version ย้อนหลังได้จากวันที่ใน sidebar ตัวเลขพื้นที่และ raster ใช้ `dataset_version_id` เดียวกัน ข้อมูลเก่าที่ ingest ภายหลังไม่แย่งตำแหน่งข้อมูลล่าสุด วันที่ย้อนหลังไม่ย้อนขอบเขตเขตหรือเปลี่ยน input ของ optimizer; UI ระบุขอบเขตนี้ชัดเจน
+
 ตรวจสอบสถานะด้วย `docker compose ps` หรือ `make smoke` และดู worker ด้วย `make logs` หน้า Data Observatory แสดงการตรวจความพร้อมเบื้องต้นจาก runtime, PostGIS, Redis, rate limit, OIDC, CORS และ Earth Engine configuration โดย API ไม่เปิดเผย secret, token, URL หรือ credential path รันซ้ำใน release pipeline ได้ด้วย `make readiness` (exit code 2 หมายถึงยังมี blocker) ผล `configuration_ready` ครอบคลุมเฉพาะการตั้งค่าและ dependency; ต้องทดสอบ provider identity, worker/Beat และ ingestion-to-map จริงก่อนเปิดใช้งาน
 
 เปิด metrics/alert evaluation สำหรับ local operations ด้วย `make observability` (Prometheus ที่พอร์ต 9090) และสร้าง Postgres backup ที่มี checksum ด้วย `make backup`; production ต้องส่ง alert ไปยังระบบ on-call และสำรอง object storage แยกจาก database dump

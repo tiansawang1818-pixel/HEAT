@@ -66,6 +66,8 @@ scheduled → checking → no_change
 
 ## Reproducibility lineage
 
+`/api/map/observations` แสดงเฉพาะ published snapshots ของชั้นข้อมูลต้นทาง การเลือก `dataset_version_id` จะตรึง map features, raster descriptor, area indicators และ history cutoff เป็นเวอร์ชันเดียวกัน โดยปฏิเสธ staging/wrong-source IDs ข้อมูลล่าสุดเลือกจาก source observation time ก่อน publication time เพื่อให้ late backfill คงเป็นข้อมูลย้อนหลัง สูตรคะแนนใช้ active source versions เดียวกันและไม่นำค่าจากคนละ snapshot มาปะปนเมื่อ coverage ขาดหาย
+
 Optimization/scenario/forecast records ต้องเก็บ:
 
 - input dataset version IDs

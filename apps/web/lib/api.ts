@@ -12,6 +12,7 @@ import type {
   GeoFeature,
   HistoryPoint,
   MapLayerMeta,
+  MapObservation,
   ObservatorySnapshot,
   OptimizationResult,
   PriorityRankingResult,
@@ -197,6 +198,7 @@ export async function loadLayerFeatures(
   signal?: AbortSignal,
   layerVersion?: number,
   refreshVersion = 0,
+  datasetVersionId?: string,
 ): Promise<FeatureCollection> {
   const normalizedBbox = [
     Math.floor(bbox[0] * 100_000) / 100_000,
@@ -206,15 +208,19 @@ export async function loadLayerFeatures(
   ].join(",");
   const version = layerVersion == null ? "" : `&layer_version=${encodeURIComponent(layerVersion)}`;
   const value = await request<FeatureCollection>(
-    `/api/map/features?layer=${encodeURIComponent(layer)}&limit=500&bbox=${normalizedBbox}${version}&refresh_version=${refreshVersion}`,
+    `/api/map/features?layer=${encodeURIComponent(layer)}&limit=500&bbox=${normalizedBbox}${version}&refresh_version=${refreshVersion}${datasetVersionId ? `&dataset_version_id=${encodeURIComponent(datasetVersionId)}` : ""}`,
     { signal, cache: "force-cache" },
   );
   return normalizeFeatureCollection(value, layer);
 }
 
-export async function loadRasterTileDescriptor(layer: string): Promise<RasterTileDescriptor | null> {
+export async function loadMapObservations(layer: string): Promise<{ items: MapObservation[]; supports_snapshots: boolean }> {
+  return request(`/api/map/observations?layer=${encodeURIComponent(layer)}&limit=90`);
+}
+
+export async function loadRasterTileDescriptor(layer: string, datasetVersionId?: string): Promise<RasterTileDescriptor | null> {
   const value = await request<RasterTileDescriptor | { available: false; reason?: string }>(
-    `/api/map/tiles/${encodeURIComponent(layer)}`,
+    `/api/map/tiles/${encodeURIComponent(layer)}${datasetVersionId ? `?dataset_version_id=${encodeURIComponent(datasetVersionId)}` : ""}`,
   );
   if (!value.available) return null;
   if (!Array.isArray(value.tiles) || !value.tiles.length || value.layer !== layer) return null;
@@ -256,8 +262,8 @@ export async function loadAreaMapFeature(areaId: string): Promise<GeoFeature> {
   return featureCollection.features[0];
 }
 
-export async function loadAreaDetail(areaId: string): Promise<AreaProperties> {
-  const raw = await request<Record<string, unknown>>(`/api/areas/${encodeURIComponent(areaId)}`);
+export async function loadAreaDetail(areaId: string, datasetVersionId?: string): Promise<AreaProperties> {
+  const raw = await request<Record<string, unknown>>(`/api/areas/${encodeURIComponent(areaId)}${datasetVersionId ? `?dataset_version_id=${encodeURIComponent(datasetVersionId)}` : ""}`);
   const indicators = (raw.indicators || {}) as Record<string, { value?: number; observed_at?: string; quality_status?: string }>;
   const boundaryQuality = (raw.boundary_provenance as { quality_status?: string } | undefined)?.quality_status;
   const synthetic = isSyntheticQuality(boundaryQuality) || Object.values(indicators).some((item) => isSyntheticQuality(item.quality_status));
@@ -285,8 +291,8 @@ export async function loadAreaDetail(areaId: string): Promise<AreaProperties> {
   };
 }
 
-export async function loadAreaHistory(areaId: string): Promise<HistoryPoint[]> {
-  const value = await request<unknown>(`/api/areas/${encodeURIComponent(areaId)}/history`);
+export async function loadAreaHistory(areaId: string, datasetVersionId?: string): Promise<HistoryPoint[]> {
+  const value = await request<unknown>(`/api/areas/${encodeURIComponent(areaId)}/history${datasetVersionId ? `?dataset_version_id=${encodeURIComponent(datasetVersionId)}` : ""}`);
   const rows = asItems<Record<string, unknown>>(value);
   const grouped = new Map<string, HistoryPoint>();
   for (const row of rows) {

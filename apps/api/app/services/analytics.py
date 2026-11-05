@@ -7,18 +7,21 @@ from sqlalchemy.orm import Session
 from app.models.entities import (
     AreaIndicator,
     CandidateIntervention,
-    DataSource,
-    DatasetVersion,
     GeographicArea,
     PriorityScore,
     TemperatureObservation,
 )
 from app.services.priority import calculate_priority
+from app.services.versions import INDICATOR_DATASETS, current_versions
 
 
-def _latest_indicator(db: Session, area_id: str, key: str) -> Optional[AreaIndicator]:
+def _latest_indicator(db: Session, area_id: str, key: str, versions: Dict[str, Any]) -> Optional[AreaIndicator]:
+    query = select(AreaIndicator)
+    active = versions.get(INDICATOR_DATASETS.get(key, ""))
+    if active:
+        query = query.where(AreaIndicator.dataset_version_id == active["version_id"])
     return db.scalar(
-        select(AreaIndicator)
+        query
         .where(
             AreaIndicator.area_id == area_id, AreaIndicator.indicator_key == key,
             AreaIndicator.quality_status.notin_(["synthetic_demo", "demo_only", "test_only"]),
@@ -46,28 +49,15 @@ def _temperature_trend(db: Session, area_id: str) -> Optional[float]:
 
 
 def _published_versions(db: Session) -> Dict[str, Any]:
-    versions: Dict[str, Any] = {}
-    for source in db.scalars(select(DataSource)).all():
-        version = db.scalar(
-            select(DatasetVersion)
-            .where(DatasetVersion.source_id == source.id, DatasetVersion.status == "published")
-            .order_by(desc(DatasetVersion.published_at))
-            .limit(1)
-        )
-        if version:
-            versions[source.dataset_id] = {
-                "version_id": version.id,
-                "source_version": version.source_version,
-                "layer_version": version.layer_version,
-            }
-    return versions
+    return current_versions(db)
 
 
 def recalculate_priority_scores(db: Session) -> int:
     """Recalculate explainable scores from the latest published regional inputs."""
     areas = list(db.scalars(select(GeographicArea)).all())
+    input_versions = _published_versions(db)
     latest_temperatures = {
-        area.id: _latest_indicator(db, area.id, "lst_c_mean")
+        area.id: _latest_indicator(db, area.id, "lst_c_mean", input_versions)
         for area in areas
     }
     temperature_values = [
@@ -76,15 +66,14 @@ def recalculate_priority_scores(db: Session) -> int:
         if row is not None and row.value is not None
     ]
     city_temperature_mean = sum(temperature_values) / len(temperature_values) if temperature_values else None
-    input_versions = _published_versions(db)
     updated = 0
 
     for area in areas:
         temperature = latest_temperatures[area.id]
-        population = _latest_indicator(db, area.id, "population_density")
-        tree_cover = _latest_indicator(db, area.id, "tree_cover_fraction")
-        ndvi = _latest_indicator(db, area.id, "ndvi")
-        built = _latest_indicator(db, area.id, "built_fraction")
+        population = _latest_indicator(db, area.id, "population_density", input_versions)
+        tree_cover = _latest_indicator(db, area.id, "tree_cover_fraction", input_versions)
+        ndvi = _latest_indicator(db, area.id, "ndvi", input_versions)
+        built = _latest_indicator(db, area.id, "built_fraction", input_versions)
         has_input = any(row is not None and row.value is not None for row in (temperature, population, tree_cover, ndvi, built))
         if not has_input:
             continue

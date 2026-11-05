@@ -63,6 +63,7 @@ from app.services.forecasting import evaluate_temperature_scenario
 from app.services.tiles import earth_engine_tiles
 from app.services.observability import prometheus_metrics
 from app.services.readiness import production_readiness
+from app.services.versions import INDICATOR_DATASETS, LAYER_DATASETS, current_versions, published_version
 
 
 router = APIRouter()
@@ -422,10 +423,17 @@ def areas(
     }
 
 
-def _latest_indicators(db: Session, area_id: str) -> Dict[str, Dict[str, Any]]:
-    rows = db.scalars(select(AreaIndicator).where(AreaIndicator.area_id == area_id).order_by(desc(AreaIndicator.observed_at))).all()
+def _latest_indicators(db: Session, area_id: str, version_id: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
+    query = select(AreaIndicator).where(AreaIndicator.area_id == area_id)
+    if version_id:
+        query = query.where(AreaIndicator.dataset_version_id == version_id)
+    rows = db.scalars(query.order_by(desc(AreaIndicator.observed_at))).all()
     result: Dict[str, Dict[str, Any]] = {}
+    versions = {} if version_id else current_versions(db)
     for row in rows:
+        active = versions.get(INDICATOR_DATASETS.get(row.indicator_key, ""))
+        if active and row.dataset_version_id != active["version_id"]:
+            continue
         if row.indicator_key not in result:
             result[row.indicator_key] = {
                 "value": row.value,
@@ -438,10 +446,14 @@ def _latest_indicators(db: Session, area_id: str) -> Dict[str, Dict[str, Any]]:
 
 
 @router.get("/areas/{area_id}")
-def area_detail(area_id: str, db: Session = Depends(get_db)) -> Dict[str, Any]:
+def area_detail(area_id: str, dataset_version_id: Optional[str] = Query(default=None, max_length=64), db: Session = Depends(get_db)) -> Dict[str, Any]:
     area = db.get(GeographicArea, area_id)
     if not area:
         raise HTTPException(status_code=404, detail="Area not found")
+    if dataset_version_id:
+        version = db.get(DatasetVersion, dataset_version_id)
+        if not version or version.status != "published":
+            raise HTTPException(status_code=404, detail="Published dataset version not found")
     score = db.scalar(select(PriorityScore).where(PriorityScore.area_id == area_id).order_by(desc(PriorityScore.calculated_at)).limit(1))
     candidates = db.scalars(select(CandidateIntervention).where(CandidateIntervention.area_id == area_id, CandidateIntervention.active.is_(True))).all()
     return {
@@ -451,9 +463,9 @@ def area_detail(area_id: str, db: Session = Depends(get_db)) -> Dict[str, Any]:
         "geometry": to_geojson(area.geometry),
         "centroid": to_geojson(area.centroid),
         "boundary_provenance": {"source": area.source_name, "version": area.source_version, "quality_status": area.quality_status},
-        "indicators": _latest_indicators(db, area_id),
+        "indicators": _latest_indicators(db, area_id, dataset_version_id),
         "priority": None
-        if not score
+        if not score or dataset_version_id
         else {
             "score": score.score,
             "components": score.components,
@@ -483,11 +495,17 @@ def area_history(
     area_id: str,
     indicator: Optional[str] = None,
     limit: int = Query(default=200, ge=1, le=2000),
+    dataset_version_id: Optional[str] = Query(default=None, max_length=64),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     if not db.get(GeographicArea, area_id):
         raise HTTPException(status_code=404, detail="Area not found")
     query = select(AreaIndicator).where(AreaIndicator.area_id == area_id)
+    if dataset_version_id:
+        version = db.get(DatasetVersion, dataset_version_id)
+        if not version or version.status != "published" or not version.observed_at:
+            raise HTTPException(status_code=404, detail="Published observation version not found")
+        query = query.where(AreaIndicator.observed_at <= version.observed_at)
     if indicator:
         query = query.where(AreaIndicator.indicator_key == indicator)
     rows = db.scalars(query.order_by(desc(AreaIndicator.observed_at)).limit(limit)).all()
@@ -586,13 +604,28 @@ def map_layers(db: Session = Depends(get_db)) -> Dict[str, Any]:
     return {"items": items}
 
 
+@router.get("/map/observations")
+def map_observations(layer: str, limit: int = Query(default=90, ge=1, le=200), db: Session = Depends(get_db)) -> Dict[str, Any]:
+    dataset_id = LAYER_DATASETS.get(layer)
+    if not dataset_id:
+        return {"items": [], "supports_snapshots": False}
+    rows = db.scalars(select(DatasetVersion).join(DataSource).where(
+        DataSource.dataset_id == dataset_id, DatasetVersion.status == "published", DatasetVersion.observed_at.is_not(None),
+    ).order_by(desc(DatasetVersion.observed_at), desc(DatasetVersion.published_at)).limit(limit)).all()
+    return {"supports_snapshots": True, "items": [{
+        "id": row.id, "observed_at": _iso(row.observed_at), "source_version": row.source_version,
+        "layer_version": row.layer_version, "quality_status": row.quality_status,
+    } for row in rows]}
+
+
 @router.get("/map/tiles/{layer}")
 def map_tile_descriptor(
     layer: str,
     response: Response,
+    dataset_version_id: Optional[str] = Query(default=None, max_length=64),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    descriptor = earth_engine_tiles.describe(db, layer)
+    descriptor = earth_engine_tiles.describe(db, layer, dataset_version_id)
     response.headers["Cache-Control"] = "private, max-age=300" if descriptor.get("available") else "no-store"
     response.headers["Vary"] = "Accept-Encoding"
     return descriptor
@@ -607,12 +640,16 @@ def map_features(
     limit: int = Query(default=500, ge=1, le=5000),
     layer_version: Optional[int] = Query(default=None, ge=0),
     refresh_version: Optional[int] = Query(default=None, ge=0),
+    dataset_version_id: Optional[str] = Query(default=None, max_length=64),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     known = {item[0]: item for item in LAYER_DEFINITIONS}
     if layer not in known:
         raise HTTPException(status_code=400, detail="Unknown layer")
     parsed_bbox = _parse_bbox(bbox)
+    snapshot = published_version(db, LAYER_DATASETS[layer], dataset_version_id) if layer in LAYER_DATASETS else None
+    if dataset_version_id and not snapshot:
+        raise HTTPException(status_code=404, detail="Published version is unavailable for this layer")
     features: List[Dict[str, Any]] = []
     if layer == "candidates":
         rows = _viewport_rows(
@@ -662,10 +699,11 @@ def map_features(
                 if isinstance(item, dict) and item.get("area_id") is not None
             }
         elif area_ids:
+            observation_query = select(AreaIndicator).where(AreaIndicator.area_id.in_(area_ids), AreaIndicator.indicator_key == indicator_key)
+            if snapshot:
+                observation_query = observation_query.where(AreaIndicator.dataset_version_id == snapshot.id)
             for observation in db.scalars(
-                select(AreaIndicator)
-                .where(AreaIndicator.area_id.in_(area_ids), AreaIndicator.indicator_key == indicator_key)
-                .order_by(AreaIndicator.area_id, desc(AreaIndicator.observed_at))
+                observation_query.order_by(AreaIndicator.area_id, desc(AreaIndicator.observed_at))
             ).all():
                 observation_by_area.setdefault(observation.area_id, observation)
         for area in areas_rows:
@@ -714,6 +752,7 @@ def map_features(
             "layer": layer,
             "requested_layer_version": layer_version,
             "requested_refresh_version": refresh_version,
+            "dataset_version_id": snapshot.id if snapshot else None,
             "bbox_filter": list(parsed_bbox) if parsed_bbox else None,
             "count": len(features),
             "spatial_filter": "postgis_st_intersects" if parsed_bbox and settings.database_url.startswith("postgresql") else "application_bounds_fallback",
@@ -1059,17 +1098,7 @@ def _objective_weights(objective: str, custom: Optional[Dict[str, float]]) -> Di
 
 
 def _current_versions(db: Session) -> Dict[str, Any]:
-    result = {}
-    for source in db.scalars(select(DataSource)).all():
-        latest = db.scalar(
-            select(DatasetVersion)
-            .where(DatasetVersion.source_id == source.id, DatasetVersion.status == "published")
-            .order_by(desc(DatasetVersion.published_at))
-            .limit(1)
-        )
-        if latest:
-            result[source.dataset_id] = {"version_id": latest.id, "source_version": latest.source_version, "layer_version": latest.layer_version}
-    return result
+    return current_versions(db)
 
 
 def _serialize_optimization_run(db: Session, run: OptimizationRun) -> Dict[str, Any]:

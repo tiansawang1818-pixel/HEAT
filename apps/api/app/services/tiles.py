@@ -4,13 +4,14 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
-from sqlalchemy import desc, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models.entities import DataSource, DatasetVersion, RasterAssetMetadata
+from app.models.entities import DatasetVersion, RasterAssetMetadata
 from app.services.connectors import DynamicWorldConnector, LandsatConnector, SentinelConnector
 from app.services.connectors.base import ConnectorError
+from app.services.versions import published_version
 
 
 @dataclass(frozen=True)
@@ -75,16 +76,8 @@ class EarthEngineTileService:
         self._lock = threading.Lock()
 
     @staticmethod
-    def _latest_version(db: Session, dataset_id: str) -> Optional[DatasetVersion]:
-        source = db.scalar(select(DataSource).where(DataSource.dataset_id == dataset_id))
-        if source is None:
-            return None
-        return db.scalar(
-            select(DatasetVersion)
-            .where(DatasetVersion.source_id == source.id, DatasetVersion.status == "published")
-            .order_by(desc(DatasetVersion.published_at))
-            .limit(1)
-        )
+    def _latest_version(db: Session, dataset_id: str, version_id: Optional[str] = None) -> Optional[DatasetVersion]:
+        return published_version(db, dataset_id, version_id)
 
     @staticmethod
     def _validated_tile_url(value: str) -> str:
@@ -117,11 +110,11 @@ class EarthEngineTileService:
             raise ConnectorError("Earth Engine tile descriptor generation failed: %s" % exc) from exc
         return self._validated_tile_url(str(url))
 
-    def describe(self, db: Session, layer: str) -> Dict[str, Any]:
+    def describe(self, db: Session, layer: str, version_id: Optional[str] = None) -> Dict[str, Any]:
         spec = TILE_SPECS.get(layer)
         if spec is None:
             return {"available": False, "layer": layer, "reason": "Layer does not use a raster tile source"}
-        version = self._latest_version(db, spec.dataset_id)
+        version = self._latest_version(db, spec.dataset_id, version_id)
         if version is None:
             return {"available": False, "layer": layer, "reason": "No validated published raster version"}
         metadata = db.scalar(

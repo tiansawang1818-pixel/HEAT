@@ -61,6 +61,7 @@ import {
   loadEvidencePendingCandidates,
   loadIngestionStatus,
   loadLayerFeatures,
+  loadMapObservations,
   loadRasterTileDescriptor,
   loadObservatoryStatus,
   loadProductionReadiness,
@@ -94,6 +95,7 @@ import {
   type GeoFeature,
   type HistoryPoint,
   type MapLayerMeta,
+  type MapObservation,
   type ObservatorySnapshot,
   type OptimizationResult,
   type PriorityRankingResult,
@@ -194,6 +196,10 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
   const [data, setData] = useState<DashboardState>(initialState);
   const [loading, setLoading] = useState(true);
   const [activeLayer, setActiveLayer] = useState(initialView === "outlook" ? "future-risk" : "priority");
+  const [snapshotChoice, setSnapshotChoice] = useState<{ layer: string; id: string; observation?: MapObservation } | null>(null);
+  const [observations, setObservations] = useState<{ layer: string; items: MapObservation[]; supports_snapshots: boolean } | null>(null);
+  const [observationsLoading, setObservationsLoading] = useState(false);
+  const [observationsError, setObservationsError] = useState<string | null>(null);
   const [rasterTile, setRasterTile] = useState<RasterTileDescriptor | null>(null);
   const [mainViewport, setMainViewport] = useState<MapViewport>({
     center: [100.5018, 13.7563],
@@ -350,13 +356,29 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
   }, [activeLayer, reload, reloadOptimizationStatus]);
 
   const activeLayerVersion = data.layers.find((layer) => layer.id === activeLayer)?.layer_version;
+  const layerObservations = observations?.layer === activeLayer ? observations : null;
+  const selectedSnapshotId = snapshotChoice?.layer === activeLayer ? snapshotChoice.id : "";
+  const selectedSnapshot = layerObservations?.items.find((item) => item.id === selectedSnapshotId) || (snapshotChoice?.layer === activeLayer ? snapshotChoice.observation : undefined);
+  const activeSnapshotId = selectedSnapshotId || layerObservations?.items[0]?.id;
   const viewportBoundsKey = mainViewport.bounds?.map((value) => value.toFixed(4)).join(",") || "default";
+
+  useEffect(() => {
+    let cancelled = false;
+    setObservationsLoading(true);
+    setObservationsError(null);
+    void loadMapObservations(activeLayer).then((result) => {
+      if (!cancelled) setObservations({ layer: activeLayer, ...result });
+    }).catch(() => {
+      if (!cancelled) setObservationsError("โหลดวันที่สังเกตการณ์ไม่สำเร็จ");
+    }).finally(() => { if (!cancelled) setObservationsLoading(false); });
+    return () => { cancelled = true; };
+  }, [activeLayer, data.layers]);
 
   useEffect(() => {
     if (data.isDemo) return;
     const controller = new AbortController();
     const timer = setTimeout(() => {
-      void loadLayerFeatures(activeLayer, mainViewport.bounds, controller.signal, activeLayerVersion, dataRevision)
+      void loadLayerFeatures(activeLayer, mainViewport.bounds, controller.signal, activeLayerVersion, dataRevision, activeSnapshotId)
         .then((features) => setData((current) => ({ ...current, features })))
         .catch((error) => {
           if (error instanceof DOMException && error.name === "AbortError") return;
@@ -367,13 +389,13 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
       clearTimeout(timer);
       controller.abort();
     };
-  }, [activeLayer, activeLayerVersion, data.isDemo, dataRevision, viewportBoundsKey]);
+  }, [activeLayer, activeLayerVersion, activeSnapshotId, data.isDemo, dataRevision, viewportBoundsKey]);
 
   useEffect(() => {
     if (data.isDemo) return;
-    setRasterTile((current) => current?.layer === activeLayer ? current : null);
+    setRasterTile(null);
     let cancelled = false;
-    loadRasterTileDescriptor(activeLayer)
+    loadRasterTileDescriptor(activeLayer, activeSnapshotId)
       .then((descriptor) => {
         if (!cancelled) setRasterTile(descriptor);
       })
@@ -381,7 +403,7 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
         if (!cancelled) setRasterTile(null);
       });
     return () => { cancelled = true; };
-  }, [activeLayer, activeLayerVersion, data.isDemo, dataRevision]);
+  }, [activeLayer, activeLayerVersion, activeSnapshotId, data.isDemo, dataRevision]);
 
   useEffect(() => {
     if (!updateNotice) return;
@@ -518,17 +540,17 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
     if (!selectedAreaId) return;
     let cancelled = false;
     setHistoryLoading(true);
-    loadAreaDetail(selectedAreaId)
+    loadAreaDetail(selectedAreaId, activeSnapshotId)
       .then((detail) => {
         if (!cancelled) setSelected((current) => current?.properties.id === selectedAreaId ? { ...current, properties: { ...current.properties, ...detail } } : current);
       })
       .catch(() => undefined);
-    loadAreaHistory(selectedAreaId)
+    loadAreaHistory(selectedAreaId, activeSnapshotId)
       .then((points) => { if (!cancelled) setHistory(points); })
       .catch(() => { if (!cancelled) setHistory([]); })
       .finally(() => { if (!cancelled) setHistoryLoading(false); });
     return () => { cancelled = true; };
-  }, [selectedAreaId, data.layers]);
+  }, [selectedAreaId, activeSnapshotId, data.layers]);
 
   const handleSearchResult = useCallback(async (area: AreaDirectoryItem) => {
     try {
@@ -806,8 +828,13 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
         </div>
         <div className="sidebar-section date-section">
           <div className="section-label"><span>วันที่สังเกตการณ์</span><Clock3 size={13} /></div>
-          <button className="date-select">{formatThaiDate(currentLayer?.observation_date)}<ChevronDown size={13} /></button>
-          <p>แสดงวันที่ต้นทาง ไม่ใช่วันที่นำเข้าระบบ</p>
+          {layerObservations?.supports_snapshots ? (
+            <select className="date-select" aria-label="เลือกวันที่สังเกตการณ์" value={selectedSnapshotId} disabled={observationsLoading || !layerObservations.items.length} onChange={(event) => setSnapshotChoice({ layer: activeLayer, id: event.target.value, observation: layerObservations.items.find((item) => item.id === event.target.value) })}>
+              <option value="">{layerObservations.items.length ? "ข้อมูลล่าสุดที่ผ่านการตรวจสอบ" : "ยังไม่มี observation ที่เผยแพร่"}</option>
+              {layerObservations.items.map((item) => <option key={item.id} value={item.id}>{formatThaiDate(item.observed_at, true)} · v{item.layer_version}</option>)}
+            </select>
+          ) : <div className="date-select">{formatThaiDate(currentLayer?.observation_date)}</div>}
+          <p>{observationsError || (observationsLoading ? "กำลังอ่านวันที่จาก backend" : selectedSnapshot ? "กำลังดูข้อมูลย้อนหลัง ขอบเขตพื้นที่และแผนลงทุนอ้างอิงปัจจุบัน" : "แสดงวันที่ต้นทาง ไม่ใช่วันที่นำเข้าระบบ")}</p>
         </div>
       </aside>
 
@@ -877,8 +904,8 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
             <span>{rasterTile ? rasterTile.legend.min : "ต่ำ"}</span>
             <span>{rasterTile ? rasterTile.legend.max : "สูง"}</span>
           </div>
-          <div className="legend-meta"><StatusDot status={currentLayer?.status || "unavailable"} /><span>v{currentLayer?.layer_version ?? "—"}</span></div>
-          {currentLayer?.status_reason && <p className="legend-source-reason">{currentLayer.status_reason}</p>}
+          <div className="legend-meta">{selectedSnapshot ? <Badge>ข้อมูลย้อนหลัง</Badge> : <StatusDot status={currentLayer?.status || "unavailable"} />}<span>v{selectedSnapshot?.layer_version ?? currentLayer?.layer_version ?? "—"}</span></div>
+          <p className="legend-source-reason">{selectedSnapshot ? `สังเกตการณ์ ${formatThaiDate(selectedSnapshot.observed_at, true)}` : currentLayer?.status_reason}</p>
         </div>
         <button className="mobile-analysis" onClick={() => setMobilePanel("analysis")}><Activity size={15} /> วิเคราะห์พื้นที่</button>
         <AnimatePresence>
