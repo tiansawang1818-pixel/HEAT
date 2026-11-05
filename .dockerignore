@@ -5,6 +5,13 @@
 **/.next
 **/__pycache__
 **/.pytest_cache
+**/.venv
+**/venv
+**/*.db
+**/*.db-*
+backups
+secrets
+.env.production
 data/raw
 data/staging
 data/processed

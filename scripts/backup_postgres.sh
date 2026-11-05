@@ -14,7 +14,12 @@ mkdir -p "$backup_dir"
 temporary_path=$(mktemp "$backup_dir/.heatshift-backup.XXXXXX")
 trap 'rm -f "$temporary_path"' EXIT HUP INT TERM
 
-docker compose exec -T postgres pg_dump \
+if [ "${HEATSHIFT_COMPOSE_ENV:-local}" = production ]; then
+  set -- --env-file .env.production -f docker-compose.yml -f docker-compose.production.yml
+else
+  set --
+fi
+docker compose "$@" exec -T postgres pg_dump \
   --username "$database_user" \
   --dbname "$database_name" \
   --format custom \

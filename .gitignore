@@ -1,6 +1,9 @@
 # Environment and credentials
 .env
 .env.local
+.env.production
+secrets/
+backups/
 *.pem
 *.key
 service-account*.json

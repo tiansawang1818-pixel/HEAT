@@ -1,0 +1,129 @@
+# Use with docker-compose.yml and Docker Compose >= 2.24.4.
+# Only Caddy publishes ports. No development data mounts or local object server.
+x-production-environment: &production-environment
+  APP_ENV: production
+  ENVIRONMENT: production
+  DEMO_MODE: "false"
+  ALLOW_FIXTURE_INGESTION: "false"
+  ADMIN_AUTH_MODE: oidc
+  ADMIN_API_KEY: ""
+  RATE_LIMIT_ENABLED: "true"
+  DATABASE_URL: ${DATABASE_URL:?Set the production PostgreSQL URL}
+  CORS_ORIGINS: '["https://${HEATSHIFT_DOMAIN:?Set the public domain}"]'
+  OIDC_ISSUER: ${OIDC_ISSUER:?Set the HTTPS SSO issuer}
+  OIDC_AUDIENCE: ${OIDC_AUDIENCE:?Set the API audience}
+  OIDC_JWKS_URL: ${OIDC_JWKS_URL:?Set the HTTPS JWKS URL}
+  GEE_PROJECT: ${GEE_PROJECT:?Set the authorized Earth Engine project}
+  GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/gee_credentials
+
+x-production-api: &production-api
+  env_file: !reset []
+  environment: *production-environment
+  volumes: !reset []
+  secrets: [gee_credentials]
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  init: true
+  logging:
+    driver: json-file
+    options: {max-size: "10m", max-file: "3"}
+  depends_on: !override
+    postgres: {condition: service_healthy}
+    redis: {condition: service_healthy}
+
+services:
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a random PostgreSQL password}
+    ports: !reset []
+  redis:
+    ports: !reset []
+  # These legacy local services are not started by the production profile.
+  # Current satellite assets use immutable Earth Engine references, not local S3.
+  minio:
+    profiles: [local-storage]
+    ports: !reset []
+  minio-init:
+    profiles: [local-storage]
+  migrate:
+    <<: *production-api
+  api:
+    <<: *production-api
+    ports: !reset []
+    command: [uvicorn, app.main:app, --host, 0.0.0.0, --port, "8000", --proxy-headers]
+    environment:
+      <<: *production-environment
+      FORWARDED_ALLOW_IPS: ${HEATSHIFT_PROXY_IP:-172.30.10.2}
+    networks: [default, ingress]
+    depends_on: !override
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+  worker:
+    <<: *production-api
+    depends_on: !override
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+  beat:
+    <<: *production-api
+    depends_on: !override
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+  web:
+    ports: !reset []
+    build:
+      args:
+        NEXT_PUBLIC_API_URL: ""
+        NEXT_PUBLIC_DEMO_MODE: "false"
+        NEXT_PUBLIC_MAP_STYLE_URL: ${NEXT_PUBLIC_MAP_STYLE_URL:?Set an approved basemap style URL}
+        API_INTERNAL_URL: http://api:8000
+    environment:
+      NEXT_PUBLIC_API_URL: ""
+      NEXT_PUBLIC_DEMO_MODE: "false"
+      ADMIN_AUTH_MODE: oidc
+      ADMIN_API_KEY: ""
+      DASHBOARD_ADMIN_TOKEN: ""
+      APP_ORIGIN: https://${HEATSHIFT_DOMAIN}
+      OIDC_ISSUER: ${OIDC_ISSUER}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:?Set the browser SSO client ID}
+      AUTH_SESSION_SECRET: ${AUTH_SESSION_SECRET:?Set a random session encryption secret}
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    init: true
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/api/auth/session').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 15
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+  prometheus:
+    ports: !reset []
+  caddy:
+    image: caddy:2.11.9-alpine
+    environment:
+      HEATSHIFT_DOMAIN: ${HEATSHIFT_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?Set the certificate renewal contact}
+    ports: ["80:80", "443:443", "443:443/udp"]
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      default: {}
+      ingress: {ipv4_address: "${HEATSHIFT_PROXY_IP:-172.30.10.2}"}
+    depends_on:
+      web: {condition: service_healthy}
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+
+networks:
+  ingress:
+    ipam:
+      config: [{subnet: "${HEATSHIFT_PROXY_SUBNET:-172.30.10.0/24}"}]
+volumes:
+  caddy-data:
+  caddy-config:
+secrets:
+  gee_credentials:
+    file: ${GEE_CREDENTIALS_FILE:?Set a host path to the Earth Engine credential JSON}

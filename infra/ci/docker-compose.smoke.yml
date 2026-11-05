@@ -1,0 +1,6 @@
+# CI-only HTTP listener; no provider workers or scheduler are started.
+services:
+  caddy:
+    environment:
+      HEATSHIFT_DOMAIN: http://localhost
+    ports: !override ["127.0.0.1:18080:80"]

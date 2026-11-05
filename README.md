@@ -45,6 +45,8 @@ Vector GeoJSON โหลดตาม viewport จริง: client debounce/ย�
 
 ## โหมดข้อมูล
 
+สำหรับเซิร์ฟเวอร์ใช้ [คู่มือ Docker/HTTPS](docs/server-deployment.md), `.env.production.example` และ `make production-check` ก่อน `make production-up` ชุด production เก็บฐานข้อมูล/คิว/API ภายในและบังคับ SSO พร้อมปิด fixture และ demo mode
+
 | โหมด | ค่า | การใช้งาน |
 |---|---|---|
 | Demo UI | `NEXT_PUBLIC_DEMO_MODE=true` | แสดง local fixture พร้อมป้าย “ข้อมูลสาธิต” ชัดเจน เมื่อ API จริงยังไม่มีข้อมูลที่ publish แล้ว |

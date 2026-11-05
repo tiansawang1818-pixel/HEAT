@@ -32,6 +32,7 @@ jobs:
           ADMIN_API_KEY: ci-only-key
           ALLOW_FIXTURE_INGESTION: "true"
           FIXTURE_ROOT: ${{ github.workspace }}/data/fixtures
+      - run: pip install --upgrade pip pip-audit && pip-audit
 
   web:
     timeout-minutes: 15
@@ -47,6 +48,7 @@ jobs:
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
       - run: npm ci
+      - run: npm audit
       - run: npm test
       - run: npx tsc --noEmit
       - run: npm run build
@@ -95,3 +97,71 @@ jobs:
       - run: pip install -r requirements.txt
       - run: alembic upgrade head
       - run: pytest integration -v
+      - name: Restore backup into a separate ephemeral database
+        run: python ../../scripts/verify_backup_restore_ci.py
+        env:
+          POSTGIS_CI_CONTAINER: ${{ job.services.postgres.id }}
+
+  containers:
+    timeout-minutes: 25
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare isolated configuration placeholders
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          values = {
+              'POSTGRES_PASSWORD': 'isolated-ci-password-not-for-production',
+              'DATABASE_URL': 'postgresql+psycopg://heatshift:isolated-ci-password-not-for-production@postgres:5432/heatshift',
+              'OIDC_CLIENT_ID': 'isolated-ci-client',
+              'AUTH_SESSION_SECRET': 'isolated-ci-encryption-secret-not-for-production',
+              'GEE_PROJECT': 'isolated-ci-config-only',
+              'GEE_CREDENTIALS_FILE': '/tmp/heatshift-gee-ci.json',
+              'NEXT_PUBLIC_MAP_STYLE_URL': 'https://tiles.example.org/style.json',
+          }
+          lines = []
+          for line in Path('.env.production.example').read_text().splitlines():
+              key = line.split('=', 1)[0]
+              lines.append(key + '=' + values[key] if key in values else line)
+          Path('/tmp/heatshift-production-ci.env').write_text('\n'.join(lines) + '\n')
+          Path('/tmp/heatshift-gee-ci.json').write_text('{}')
+          PY
+      - name: Verify production isolation and configuration
+        run: |
+          docker compose --env-file /tmp/heatshift-production-ci.env -f docker-compose.yml -f docker-compose.production.yml config --format json | python3 scripts/check_compose_config.py
+          docker run --rm -e HEATSHIFT_DOMAIN=heatshift.example.org -e ACME_EMAIL=operator@example.org -v "$PWD/infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.11.9-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+      - name: Build and start release containers without source monitors
+        run: docker compose --env-file /tmp/heatshift-production-ci.env -f docker-compose.yml -f docker-compose.production.yml -f infra/ci/docker-compose.smoke.yml up -d --build --wait --wait-timeout 180 api web caddy
+      - name: Verify pages, internal API rewrite, authentication gate and SSE
+        run: |
+          python3 - <<'PY'
+          import json
+          import urllib.request
+          import urllib.error
+          base = 'http://127.0.0.1:18080'
+          for path in ['/', '/insights', '/optimizer', '/scenarios', '/outlook', '/observatory', '/methodology', '/api/health/ready', '/api/map/layers', '/api/auth/session']:
+              with urllib.request.urlopen(base + path, timeout=15) as response:
+                  assert response.status == 200, path
+          with urllib.request.urlopen(base + '/api/auth/session', timeout=5) as response:
+              session = json.load(response)
+              assert session['mode'] == 'oidc' and session['configured'] and not session['authenticated']
+          request = urllib.request.Request(base + '/api/admin/ingestion', data=b'{"source":"open-meteo"}', headers={'Content-Type': 'application/json'})
+          try:
+              urllib.request.urlopen(request, timeout=5)
+              raise AssertionError('Unauthenticated admin operation was accepted')
+          except urllib.error.HTTPError as error:
+              assert error.code == 401
+          with urllib.request.urlopen(base + '/api/events/stream', timeout=10) as response:
+              assert response.headers['Content-Type'].startswith('text/event-stream')
+              assert response.readline().strip() == b'retry: 5000'
+              assert response.readline().strip() == b': connected'
+          print('All pages, SSO gate and live SSE respond through release containers.')
+          PY
+          docker compose --env-file /tmp/heatshift-production-ci.env -f docker-compose.yml -f docker-compose.production.yml -f infra/ci/docker-compose.smoke.yml exec -T web node -e "fetch('http://127.0.0.1:3000/api/health').then(async r=>{if(!r.ok || (await r.json()).status!=='ok')process.exit(1)}).catch(()=>process.exit(1))"
+      - name: Container diagnostics
+        if: failure()
+        run: docker compose --env-file /tmp/heatshift-production-ci.env -f docker-compose.yml -f docker-compose.production.yml -f infra/ci/docker-compose.smoke.yml logs --tail 80 api web migrate caddy
+      - name: Stop ephemeral containers
+        if: always()
+        run: docker compose --env-file /tmp/heatshift-production-ci.env -f docker-compose.yml -f docker-compose.production.yml -f infra/ci/docker-compose.smoke.yml down --volumes --remove-orphans

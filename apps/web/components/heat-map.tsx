@@ -110,14 +110,14 @@ export function HeatMap({
       minZoom: 8.5,
       maxZoom: 18,
       attributionControl: false,
-      style: {
+      style: process.env.NEXT_PUBLIC_MAP_STYLE_URL || {
         version: 8,
         sources: {
           osm: {
             type: "raster",
             tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
             tileSize: 256,
-            attribution: "© OpenStreetMap contributors",
+            attribution: '<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap contributors</a>',
           },
         },
         layers: [

@@ -1,7 +1,8 @@
 SHELL := /bin/sh
 COMPOSE := docker compose
+PROD_COMPOSE := docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.production.yml
 
-.PHONY: help setup up observability down build logs ps migrate seed test test-api test-web lint format smoke readiness simulate-update backup clean
+.PHONY: help setup up observability down build logs ps migrate seed test test-api test-web lint format smoke readiness simulate-update backup clean production-check production-up
 
 help:
 	@echo "HEAT//SHIFT commands"
@@ -13,6 +14,8 @@ help:
 	@echo "  make simulate-update  Run the authorized local fixture ingestion"
 	@echo "  make smoke            Check API, datasets and web endpoints"
 	@echo "  make readiness        Audit production configuration and live dependencies"
+	@echo "  make production-check Validate server configuration without starting services"
+	@echo "  make production-up    Validate, build and start the HTTPS server stack"
 
 setup:
 	@test -f .env || cp .env.example .env
@@ -48,11 +51,13 @@ test-api:
 	$(COMPOSE) run --rm -e TEST_DATABASE_URL=sqlite+pysqlite:///:memory: api pytest -q
 
 test-web:
-	$(COMPOSE) run --rm web npm test
+	docker build --target builder -t heatshift-web-tests -f infra/docker/web.Dockerfile .
+	docker run --rm heatshift-web-tests npm test
 
 lint:
 	$(COMPOSE) run --rm api python -m compileall -q app tests
-	$(COMPOSE) run --rm web npx tsc --noEmit
+	docker build --target builder -t heatshift-web-tests -f infra/docker/web.Dockerfile .
+	docker run --rm heatshift-web-tests npx tsc --noEmit
 
 format:
 	@echo "No automatic formatter is configured; use project-local tooling before enabling this target."
@@ -68,6 +73,12 @@ simulate-update:
 
 backup:
 	./scripts/backup_postgres.sh
+
+production-check:
+	$(PROD_COMPOSE) config --format json | python3 scripts/check_compose_config.py
+
+production-up: production-check
+	$(PROD_COMPOSE) up --build -d --wait
 
 clean:
 	$(COMPOSE) down --remove-orphans

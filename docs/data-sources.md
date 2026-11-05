@@ -105,4 +105,4 @@ Provider outage must not rewrite `last_source_observed_at`. System check time is
 
 ## Basemap
 
-Local default uses the CARTO dark-matter style URL. Confirm service terms and traffic limits for the target deployment, preserve visible attribution, and replace it with an organization-approved licensed tile provider for production traffic.
+`NEXT_PUBLIC_MAP_STYLE_URL` selects the MapLibre style at image build time; its sources supply attribution. Local Compose defaults to CARTO dark-matter. When no style is configured, the local map uses OpenStreetMap raster tiles with visible OSM attribution. Production Compose requires an explicitly selected HTTPS style URL from an approved tile provider. Confirm provider terms, attribution and traffic limits before opening public access. Do not use the community OSM tile service for bulk downloads or prefetching. Keep browser referrers enabled as required by the [OSM tile policy](https://operations.osmfoundation.org/policies/tiles/).

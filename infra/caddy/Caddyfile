@@ -1,0 +1,32 @@
+{
+    email {$ACME_EMAIL}
+    admin off
+}
+
+{$HEATSHIFT_DOMAIN} {
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy strict-origin-when-cross-origin
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        -Server
+    }
+    request_body {
+        max_size 1MB
+    }
+    # OIDC and cookie-authenticated admin operations belong to the Next server.
+    @webOperations path /api/auth/* /api/admin/*
+    handle @webOperations {
+        reverse_proxy web:3000
+    }
+    # API traffic goes directly to FastAPI, including unbuffered publication SSE.
+    handle /api/* {
+        reverse_proxy api:8000 {
+            flush_interval -1
+        }
+    }
+    handle {
+        reverse_proxy web:3000
+    }
+}

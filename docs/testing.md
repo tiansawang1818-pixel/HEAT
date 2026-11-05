@@ -1,10 +1,13 @@
 # การทดสอบและหลักฐาน CI
 
-ทุก push จะรัน GitHub Actions แยกเป็น 3 งาน:
+ทุก push จะรัน GitHub Actions แยกเป็น 4 งาน:
 
 - `api`: unit/API tests ด้วย SQLite รวม validation, retry, interrupted-worker recovery, locks, optimizer และ freshness
-- `web`: client API tests, TypeScript และ Next.js production build
+- `web`: client API/OIDC flow tests (จริงสำหรับ code/PKCE/nonce verification โดย mock provider และ Redis), dependency audit, TypeScript และ Next.js production build
 - `stack`: PostgreSQL/PostGIS และ Redis จริง พร้อม migration, API process และ Celery worker process แยกกัน
+- `containers`: production Compose isolation, Caddy validation, release image builds และ HTTP smoke ผ่าน Caddy โดยไม่เริ่ม source monitors หรือเรียก provider จริง
+
+งาน `api` ตรวจ dependency audit ด้วย งาน `stack` ซ้อม pg_dump/pg_restore ไปยัง `heatshift_restore_ci` ที่สร้างใหม่ เปรียบเทียบ row count/checksum ทุก application table และตรวจ geometry/published version อีกครั้ง สคริปต์ปฏิเสธการทับฐานข้อมูลเดิมและรันเฉพาะ isolated CI container
 
 งาน `stack` ตรวจ GiST index, geometry SRID, Redis lock ownership/expiry, authorized job dispatch, duplicate skipping, viewport `ST_Intersects`, ETag invalidation และ SSE stream เดิมที่รับทั้ง publication แรกและ publication ถัดไป API map เปลี่ยนค่าตามเวอร์ชันที่ publish โดย stream ไม่ถูกเปิดใหม่
 
