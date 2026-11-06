@@ -77,7 +77,9 @@ Mount Google service-account JSON as a Docker/Kubernetes secret; do not copy it 
 - raster sum/aggregation method respects source grid and avoids double counting
 - no interpolation is described as a current observation
 
-WorldPop connector ใช้ Global2 `/catalog` เพื่อตรวจ release/ปีที่มีอยู่ และ `/batch` เพื่อรวมประชากรของ Bangkok geographic areas ในคำขอเดียว ค่าเริ่มต้นเลือกปีล่าสุดที่ไม่เกินปีปัจจุบัน จึงไม่หยิบประมาณการอนาคตมาแสดงเป็นข้อมูลปัจจุบันโดยอัตโนมัติ สามารถตรึงปีด้วย `WORLDPOP_REFERENCE_YEAR` ได้ ทุกผลลัพธ์ใช้สถานะ `model_estimate`, เก็บ reference year/release/resolution/citation และไม่สร้าง uncertainty ที่ provider ไม่ได้ส่งมา
+WorldPop connector ใช้ Global2 `/catalog` เพื่อตรวจ release/ปีที่มีอยู่ และอ่านข้อจำกัดจาก `/health` ก่อนแบ่ง `/batch` ตามจำนวน vertices, parts, features และขนาด JSON ส่งคำขอตามลำดับและคง geometry ต้นฉบับทุกจุด ไม่มีการ simplify ขอบเขตเพื่อให้ผ่าน quota หากเขตเดียวเกินข้อจำกัดจะหยุดพร้อมเหตุผล ต้องได้รับแต่ละ area ID ครบหนึ่งครั้งและปีตรงกันทุก batch ก่อนผ่าน validation และเผยแพร่ทั้ง version หาก batch ใดล้มเหลว แผนที่คง version ก่อนหน้า ดู [WorldPop v3 documentation](https://api.worldpop.org/v3/documentation) และ [OpenAPI](https://api.worldpop.org/v3/openapi.json)
+
+ค่าเริ่มต้นเลือกปีล่าสุดที่ไม่เกินปีปัจจุบัน สามารถตรึงปีด้วย `WORLDPOP_REFERENCE_YEAR` ได้ ทุกผลลัพธ์ยังเป็น `model_estimate` รวมถึงปีปัจจุบัน ไม่ใช่การสำรวจคนสด เก็บ reference year/release/resolution/citation และไม่สร้าง uncertainty ที่ provider ไม่ได้ส่งมา ค่า rank/share ที่ provider คืนเป็นข้อมูลภายในแต่ละ batch จึงใช้ชื่อ metadata `provider_batch_rank` และ `provider_batch_share_of_total` เพื่อไม่ให้เข้าใจว่าเป็นอันดับรวมกรุงเทพฯ
 
 Anonymous API มี quota ต่ำกว่า API key ระบบบันทึก `X-RateLimit-*` ลง source check และ Celery เคารพ `Retry-After` เมื่อได้รับ HTTP 429 ห้ามใส่ key ลง repository หรือ frontend environment
 

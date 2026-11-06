@@ -11,7 +11,7 @@ from app.models.entities import (
     PriorityScore,
     SourceCheck,
 )
-from app.services.connectors.base import ProviderRateLimitError
+from app.services.connectors.base import ConnectorError, ProviderRateLimitError
 from app.services.connectors.catalogs import WorldPopConnector
 from app.services.pipeline import run_monitor
 
@@ -60,6 +60,12 @@ def _catalog(years=None):
     }
 
 
+def _health(**overrides):
+    # Public contract from /v3/health; population answers below are synthetic.
+    return {"status": "healthy", "limits": {"max_vertices": 50000, "max_parts": 1000,
+        "max_body_bytes": 10485760, "max_batch_features": 1000, **overrides}}
+
+
 def test_worldpop_batch_ingestion_publishes_population_and_quota(db, monkeypatch):
     _add_areas(db)
     monkeypatch.setattr(settings, "worldpop_reference_year", 2024)
@@ -67,6 +73,8 @@ def test_worldpop_batch_ingestion_publishes_population_and_quota(db, monkeypatch
     def fake_request(method, url, **kwargs):
         if url.endswith("/catalog"):
             return _response(200, url, _catalog([2024, 2025, 2030]))
+        if url.endswith("/health"):
+            return _response(200, url, _health())
         assert method == "POST"
         assert url.endswith("/batch")
         assert kwargs["json"]["year"] == 2024
@@ -134,6 +142,8 @@ def test_worldpop_rate_limit_is_retryable_and_preserves_quota_metadata(monkeypat
     def fake_request(method, url, **kwargs):
         if url.endswith("/catalog"):
             return _response(200, url, _catalog([2024]))
+        if url.endswith("/health"):
+            return _response(200, url, _health())
         return _response(
             429,
             url,
@@ -154,3 +164,89 @@ def test_worldpop_rate_limit_is_retryable_and_preserves_quota_metadata(monkeypat
     assert connector.quota_status()["retry_after_seconds"] == "3600"
     assert connector.quota_status()["status"] == "rate_limited"
     assert captured.value.retry_after_seconds == 3600
+
+
+def _batch_answer(body):
+    return {"data_year": body["year"], "features": [
+        {"id": feature["id"], "total_population": 2000, "population_density": 500,
+         "area_km2": 4, "rank": index + 1, "share_of_total": 1 / len(body["features"]["features"])}
+        for index, feature in enumerate(body["features"]["features"])], "processing_time_ms": 1}
+
+
+def test_worldpop_batches_original_boundaries_and_preserves_the_previous_version_on_partial_failure(db, monkeypatch):
+    _add_areas(db)
+    monkeypatch.setattr(settings, "worldpop_reference_year", 2024)
+    requests = []
+    should_fail = True
+
+    def fake_request(method, url, **kwargs):
+        if url.endswith("/catalog"):
+            return _response(200, url, _catalog([2024, 2025]))
+        if url.endswith("/health"):
+            return _response(200, url, _health(max_vertices=5))
+        body = kwargs["json"]
+        requests.append(body)
+        assert len(body["features"]["features"]) == 1
+        if should_fail and body["year"] == 2025 and body["features"]["features"][0]["id"] == "district-b":
+            raise httpx.ReadTimeout("Synthetic provider timeout in the second batch")
+        return _response(200, url, _batch_answer(body))
+
+    monkeypatch.setattr(httpx, "request", fake_request)
+    run_monitor(db, WorldPopConnector(), requested_by="test")
+    first = db.scalar(select(DatasetVersion).where(DatasetVersion.status == "published"))
+    assert first.quality_summary["request_batches"] == 2
+    assert first.quality_summary["geometry_simplified"] is False
+    for body in requests:
+        feature = body["features"]["features"][0]
+        assert feature["geometry"] == db.get(GeographicArea, feature["id"]).geometry
+    monkeypatch.setattr(settings, "worldpop_reference_year", 2025)
+    with pytest.raises(ConnectorError):
+        run_monitor(db, WorldPopConnector(), requested_by="test")
+    assert db.scalars(select(PopulationEstimate)).all()[0].reference_year == 2024
+    assert len(db.scalars(select(PopulationEstimate)).all()) == 2
+    failed = db.scalar(select(DatasetVersion).where(DatasetVersion.status == "failed"))
+    failed_id = failed.id
+    failed.metadata_json = {**failed.metadata_json, "processor_version": "older-failed-processor"}
+    db.commit()
+    should_fail = False
+    run_monitor(db, WorldPopConnector(), requested_by="test-retry")
+    assert db.get(DatasetVersion, failed_id).status == "published"
+    assert db.get(DatasetVersion, failed_id).metadata_json["processor_version"] == WorldPopConnector.processor_version
+    assert len(db.scalars(select(PopulationEstimate)).all()) == 4
+
+
+@pytest.mark.parametrize("returned_ids", [["district-a", "district-a"], ["district-a"], ["district-a", "unknown-area"]])
+def test_worldpop_rejects_duplicate_missing_or_substituted_areas(db, monkeypatch, returned_ids):
+    _add_areas(db)
+    monkeypatch.setattr(settings, "worldpop_reference_year", 2024)
+
+    def fake_request(method, url, **kwargs):
+        if url.endswith("/catalog"):
+            return _response(200, url, _catalog([2024]))
+        if url.endswith("/health"):
+            return _response(200, url, _health())
+        answer = _batch_answer(kwargs["json"])
+        answer["features"] = [{**answer["features"][0], "id": area_id} for area_id in returned_ids]
+        return _response(200, url, answer)
+
+    monkeypatch.setattr(httpx, "request", fake_request)
+    with pytest.raises(ConnectorError, match="each requested area exactly once"):
+        run_monitor(db, WorldPopConnector(), requested_by="test")
+    assert not db.scalars(select(PopulationEstimate)).all()
+    assert not db.scalars(select(DatasetVersion).where(DatasetVersion.status == "published")).all()
+
+
+def test_worldpop_never_simplifies_a_single_area_that_exceeds_provider_limits():
+    area = {"id": "too-complex", "geometry": {"type": "Polygon", "coordinates": [[[100.5,13.7],[100.6,13.7],[100.6,13.8],[100.5,13.8],[100.5,13.7]]]}}
+    with pytest.raises(ConnectorError, match="boundary was not simplified"):
+        WorldPopConnector._population_batches([area], 2024, _health(max_vertices=4)["limits"])
+
+
+@pytest.mark.parametrize("indicator,value", [("population_estimate", float("nan")), ("population_density", float("inf"))])
+def test_worldpop_rejects_nonfinite_provider_values(indicator, value):
+    from app.services.connectors.base import AreaProcessingRecord, SourceAsset
+    from datetime import datetime, timezone
+    connector = WorldPopConnector()
+    asset = SourceAsset.with_checksum("unit-test", "synthetic", datetime.now(timezone.utc), {"type": "Polygon"}, metadata={"reference_year": 2024})
+    record = AreaProcessingRecord(area_id="unit-test", indicators={"population_estimate": 10, "population_density": 5, indicator: value}, metadata={"reference_year": 2024, "area_km2": 2})
+    assert connector.validate_processed(asset, [record])["passed"] is False

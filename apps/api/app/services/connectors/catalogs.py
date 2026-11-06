@@ -1,6 +1,7 @@
 import hashlib
 import io
 import json
+import math
 import zipfile
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -253,7 +254,7 @@ class WorldPopConnector(SourceConnector):
     dataset_id = "worldpop/global"
     layer_key = "population"
     requires_area_processing = True
-    processor_version = "worldpop-api-v3-batch-v1"
+    processor_version = "worldpop-api-v3-batch-v2"
 
     def __init__(self) -> None:
         self._quota: Dict[str, Any] = {}
@@ -268,6 +269,9 @@ class WorldPopConnector(SourceConnector):
             "limit": "X-RateLimit-Limit",
             "remaining": "X-RateLimit-Remaining",
             "reset_at": "X-RateLimit-Reset",
+            "minute_limit": "X-RateLimit-Minute-Limit",
+            "minute_remaining": "X-RateLimit-Minute-Remaining",
+            "minute_reset_at": "X-RateLimit-Minute-Reset",
             "retry_after_seconds": "Retry-After",
         }
         captured = {key: response.headers.get(header) for key, header in mapping.items() if response.headers.get(header) is not None}
@@ -382,54 +386,46 @@ class WorldPopConnector(SourceConnector):
     def process(self, asset: SourceAsset, areas: List[Dict[str, Any]]) -> List[AreaProcessingRecord]:
         if not areas:
             raise ConnectorError("No geographic areas are available for WorldPop aggregation")
-        feature_collection = {
-            "type": "FeatureCollection",
-            "features": [
-                {
-                    "type": "Feature",
-                    "id": area["id"],
-                    "properties": {"name": area["id"]},
-                    "geometry": area["geometry"],
-                }
-                for area in areas
-                if area.get("geometry")
-            ],
-        }
-        if not feature_collection["features"]:
-            raise ConnectorError("Geographic areas do not contain usable geometries")
-        response = self._request_json(
-            "POST",
-            "/batch",
-            json={
-                "features": feature_collection,
-                "year": asset.metadata["reference_year"],
-                "include": "population",
-            },
-        )
-        response_year = response.get("data_year")
-        if response_year != asset.metadata["reference_year"]:
-            raise ConnectorError(
-                "WorldPop response year %s does not match requested reference year %s"
-                % (response_year, asset.metadata["reference_year"])
-            )
-        response_features = response.get("features", [])
+        limits = self._request_json("GET", "/health").get("limits", {})
+        if not isinstance(limits, dict):
+            raise ConnectorError("WorldPop health did not report request limits")
+        batches = self._population_batches(areas, asset.metadata["reference_year"], limits)
+        responses = []
+        # Provider documentation requires sequential requests. Keep every original
+        # vertex: batching changes transport, never the scientific study boundary.
+        for body in batches:
+            response = self._request_json("POST", "/batch", json=body)
+            if response.get("data_year") != asset.metadata["reference_year"]:
+                raise ConnectorError("WorldPop response reference year differs from the requested year")
+            features = response.get("features")
+            requested = {str(f["id"]) for f in body["features"]["features"]}
+            if not isinstance(features, list) or any(not isinstance(f, dict) for f in features):
+                raise ConnectorError("WorldPop batch features are missing or malformed")
+            returned = [str(f.get("id", "")) for f in features]
+            if len(returned) != len(requested) or set(returned) != requested:
+                raise ConnectorError("WorldPop batch did not return each requested area exactly once")
+            responses.append(response)
+        response_features = [feature for response in responses for feature in response["features"]]
         skipped_ids = [str(feature.get("id", "")) for feature in response_features if feature.get("skipped")]
         self._processing_meta = {
-            "requested_areas": len(feature_collection["features"]),
+            "requested_areas": len(areas),
             "returned_areas": len(response_features),
             "skipped_area_ids": skipped_ids,
+            "request_batches": len(batches),
+            "geometry_simplified": False,
+            "provider_request_limits": {key: limits[key] for key in ("max_vertices", "max_parts", "max_batch_features", "max_body_bytes")},
         }
         records: List[AreaProcessingRecord] = []
-        for feature in response_features:
-            if feature.get("skipped"):
-                continue
-            records.append(
-                AreaProcessingRecord(
+        for batch_index, response in enumerate(responses):
+            for feature in response["features"]:
+                if feature.get("skipped"):
+                    continue
+                records.append(AreaProcessingRecord(
                     area_id=str(feature.get("id", "")),
                     indicators={
                         "population_estimate": feature.get("total_population"),
                         "population_density": feature.get("population_density"),
-                        "population_reference_year": response_year,
+                        "population_reference_year": response["data_year"],
                     },
                     units={
                         "population_estimate": "people",
@@ -438,10 +434,11 @@ class WorldPopConnector(SourceConnector):
                     },
                     quality_status="model_estimate",
                     metadata={
-                        "reference_year": response_year,
+                        "reference_year": response["data_year"],
                         "area_km2": feature.get("area_km2"),
-                        "share_of_total": feature.get("share_of_total"),
-                        "rank": feature.get("rank"),
+                        "provider_batch_share_of_total": feature.get("share_of_total"),
+                        "provider_batch_rank": feature.get("rank"),
+                        "provider_batch_index": batch_index,
                         "data_source": "WorldPop Global2",
                         "release": asset.metadata.get("release"),
                         "resolution_m": asset.metadata.get("resolution_m"),
@@ -449,9 +446,52 @@ class WorldPopConnector(SourceConnector):
                         "processing_time_ms": response.get("processing_time_ms"),
                         "uncertainty_available": False,
                     },
-                )
-            )
+                ))
         return records
+
+    @staticmethod
+    def _population_batches(areas, year, limits):
+        def limit(name, cap):
+            value = limits.get(name)
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ConnectorError("WorldPop health did not report a valid %s" % name)
+            return min(value, cap)
+
+        max_vertices = limit("max_vertices", 20000)
+        max_parts = limit("max_parts", 1000)
+        max_features = limit("max_batch_features", 1000)
+        max_bytes = limit("max_body_bytes", 512 * 1024)
+        batches, features, seen = [], [], set()
+        vertices, parts = 0, 0
+
+        def body(items):
+            return {"features": {"type": "FeatureCollection", "features": items}, "year": year, "include": "population"}
+
+        for area in sorted(areas, key=lambda item: str(item["id"])):
+            area_id, geometry = str(area["id"]), area.get("geometry") or {}
+            if not area_id or area_id in seen or geometry.get("type") not in {"Polygon", "MultiPolygon"}:
+                raise ConnectorError("WorldPop requires unique area IDs and Polygon/MultiPolygon geometries")
+            seen.add(area_id)
+            polygons = [geometry.get("coordinates", [])] if geometry["type"] == "Polygon" else geometry.get("coordinates", [])
+            area_vertices = sum(len(ring) for polygon in polygons for ring in polygon)
+            area_parts = sum(len(polygon) for polygon in polygons)
+            feature = {"type": "Feature", "id": area_id, "properties": {"name": area_id}, "geometry": geometry}
+
+            def fits(items, vertex_count, part_count):
+                return (len(items) <= max_features and vertex_count <= max_vertices and part_count <= max_parts
+                        and len(json.dumps(body(items), ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode()) <= max_bytes)
+
+            if not area_vertices or not fits([feature], area_vertices, area_parts):
+                raise ConnectorError("WorldPop area %s exceeds a single request limit; boundary was not simplified" % area_id)
+            if features and not fits([*features, feature], vertices + area_vertices, parts + area_parts):
+                batches.append(body(features))
+                features, vertices, parts = [], 0, 0
+            features.append(feature)
+            vertices += area_vertices
+            parts += area_parts
+        if features:
+            batches.append(body(features))
+        return batches
 
     def validate_processed(self, asset: SourceAsset, records: List[AreaProcessingRecord]) -> Dict[str, Any]:
         report = super().validate_processed(asset, records)
@@ -469,13 +509,13 @@ class WorldPopConnector(SourceConnector):
             population = record.indicators.get("population_estimate")
             density = record.indicators.get("population_density")
             area_sq_km = record.metadata.get("area_km2")
-            if not isinstance(population, (int, float)) or population < 0:
+            if isinstance(population, bool) or not isinstance(population, (int, float)) or not math.isfinite(population) or population < 0:
                 errors.append("invalid WorldPop population for %s" % record.area_id)
             else:
                 total_population += float(population)
-            if not isinstance(density, (int, float)) or density < 0:
+            if isinstance(density, bool) or not isinstance(density, (int, float)) or not math.isfinite(density) or density < 0:
                 errors.append("invalid WorldPop population density for %s" % record.area_id)
-            if not isinstance(area_sq_km, (int, float)) or area_sq_km <= 0:
+            if isinstance(area_sq_km, bool) or not isinstance(area_sq_km, (int, float)) or not math.isfinite(area_sq_km) or area_sq_km <= 0:
                 errors.append("invalid WorldPop area for %s" % record.area_id)
             if record.metadata.get("reference_year") != asset.metadata.get("reference_year"):
                 errors.append("WorldPop reference year mismatch for %s" % record.area_id)

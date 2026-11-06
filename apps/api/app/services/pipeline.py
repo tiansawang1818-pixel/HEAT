@@ -413,6 +413,8 @@ def ingest_asset(db: Session, source: DataSource, connector: SourceConnector, as
         version.status = ProcessingStatus.staged.value
         version.quality_status = "pending"
         version.quality_summary = {}
+        version.checksum = asset.checksum
+        version.metadata_json = {**(version.metadata_json or {}), **asset.metadata}
     job.dataset_version_id = version.id
     job.stage = "validation"
     job.progress = 0.3

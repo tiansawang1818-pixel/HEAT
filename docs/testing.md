@@ -21,6 +21,8 @@ fixtures ในงานนี้ระบุ `synthetic_demo` และไม�
 
 CI ตรวจ Prometheus alert rules ด้วย `promtool`, เริ่ม Alertmanager จริง และส่ง alert สังเคราะห์ไปยัง receiver จำลองใน Docker network เพื่อยืนยัน notification delivery ส่วนเส้นทางปลายทางจริงขององค์กรและการกู้คืนจาก off-host backup ยังต้องซ้อมในสภาพแวดล้อมจริง
 
+WorldPop unit tests ใช้ค่าประชากรสังเคราะห์แยกจากข้อมูลจริง ตรวจ batching ตามข้อจำกัด geometry เดิม, การปฏิเสธ area ID ที่ซ้ำ/หาย/สลับ, ค่าที่ไม่เป็นจำนวนจำกัด และ timeout หลัง batch แรก โดยยืนยันว่า version ก่อนหน้ายังใช้ได้และ retry ไม่แก้ไขประวัติที่เผยแพร่แล้ว การทดสอบกับ provider จริงต้องทำแยกตาม quota ไม่ได้รันทุกครั้งใน CI
+
 รัน unit/API tests ในเครื่อง:
 
 ```bash
