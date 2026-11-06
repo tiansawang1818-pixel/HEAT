@@ -17,6 +17,7 @@ from uuid import uuid4
 import httpx
 import pytest
 import redis
+from alembic.script import ScriptDirectory
 from sqlalchemy import func, select, text
 
 
@@ -25,7 +26,8 @@ if os.environ.get("HEATSHIFT_RUN_STACK_TESTS") != "true":
 
 from app.core.config import settings
 from app.db.session import SessionLocal, engine
-from app.models.entities import AreaIndicator, DatasetVersion, GeographicArea, PipelineEvent
+from app.models.entities import AreaIndicator, DataSource, DatasetVersion, GeographicArea, PipelineEvent
+from app.services.checkpoints import SourceCheckpointStore, fingerprint
 from app.services.bootstrap import ensure_sources
 from app.services.geometry import to_db_geometry
 from app.services.locks import MONITOR_HARD_TIME_LIMIT_SECONDS, distributed_lock
@@ -45,9 +47,19 @@ def _polygon(lon, lat):
 def test_real_postgis_migrations_and_redis_lock_ownership():
     with SessionLocal() as db:
         assert db.execute(text("SELECT PostGIS_Version()")).scalar_one()
-        assert db.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "20261104_0003"
+        expected_head = ScriptDirectory(str(Path(__file__).resolve().parents[1] / "migrations")).get_current_head()
+        assert db.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == expected_head
         index = db.execute(text("SELECT indexdef FROM pg_indexes WHERE indexname='ix_geographic_areas_geometry_gist'")).scalar_one()
         assert "gist" in index.lower()
+        ensure_sources(db)
+        source = db.scalar(select(DataSource).where(DataSource.dataset_id == "open-meteo/weather-context"))
+        source_id = source.id
+        scope, chunk = fingerprint("synthetic-ci-scope"), fingerprint("synthetic-ci-chunk")
+        store = SourceCheckpointStore(db, source_id, "ci-checkpoint-test")
+        store.put(scope, chunk, {"synthetic_staging": True}, 60)
+        with SessionLocal() as another:
+            assert SourceCheckpointStore(another, source_id, "ci-checkpoint-test").get(scope, chunk) == {"synthetic_staging": True}
+        store.clear()
     client = redis.Redis.from_url(settings.redis_url, socket_timeout=2)
     try:
         assert client.ping()
