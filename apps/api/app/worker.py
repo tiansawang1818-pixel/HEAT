@@ -17,6 +17,7 @@ from app.services.locks import MONITOR_HARD_TIME_LIMIT_SECONDS, MONITOR_SOFT_TIM
 from app.services.locks import LockBackendUnavailable, distributed_lock
 from app.services.source_registry import CONNECTOR_TYPES
 from app.services.scheduling import dispatch_due_sources
+from app.services.forecast_workflow import update_scheduled_forecasts
 
 
 celery_app = Celery("heatshift", broker=settings.redis_url, backend=settings.redis_url)
@@ -33,6 +34,7 @@ celery_app.conf.update(
     task_routes={"app.worker.dispatch_ingestion": {"queue": "control"}},
     beat_schedule={
         "dispatch-due-source-checks": {"task": "app.worker.dispatch_ingestion", "schedule": settings.scheduler_tick_seconds},
+        "update-temperature-scenarios": {"task": "app.worker.update_forecast_models", "schedule": 3600},
     },
 )
 
@@ -52,6 +54,12 @@ def dispatch_ingestion():
     with SessionLocal() as db:
         ensure_sources(db)
         return dispatch_due_sources(db, lambda job_id, source: run_manual_ingestion.delay(job_id, source))
+
+
+@celery_app.task(name="app.worker.update_forecast_models", soft_time_limit=540, time_limit=600)
+def update_forecast_models():
+    with SessionLocal() as db:
+        return update_scheduled_forecasts(db)
 
 
 @celery_app.task(

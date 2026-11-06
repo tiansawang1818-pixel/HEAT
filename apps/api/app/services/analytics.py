@@ -13,11 +13,14 @@ from app.models.entities import (
 )
 from app.services.priority import calculate_priority
 from app.services.versions import INDICATOR_DATASETS, current_versions
+from app.services.scientific_history import scientific_temperature_query, scientific_temperature_versions
 
 
 def _latest_indicator(db: Session, area_id: str, key: str, versions: Dict[str, Any]) -> Optional[AreaIndicator]:
     query = select(AreaIndicator)
     active = versions.get(INDICATOR_DATASETS.get(key, ""))
+    if key in INDICATOR_DATASETS and not active:
+        return None
     if active:
         query = query.where(AreaIndicator.dataset_version_id == active["version_id"])
     return db.scalar(
@@ -31,9 +34,9 @@ def _latest_indicator(db: Session, area_id: str, key: str, versions: Dict[str, A
     )
 
 
-def _temperature_trend(db: Session, area_id: str) -> Optional[float]:
+def _temperature_trend(db: Session, area_id: str, history_versions=None) -> Optional[float]:
     rows = db.scalars(
-        select(TemperatureObservation)
+        scientific_temperature_query(db, versions=history_versions)
         .where(TemperatureObservation.area_id == area_id, TemperatureObservation.lst_c_mean.is_not(None))
         .order_by(TemperatureObservation.observed_at)
     ).all()
@@ -56,6 +59,7 @@ def recalculate_priority_scores(db: Session) -> int:
     """Recalculate explainable scores from the latest published regional inputs."""
     areas = list(db.scalars(select(GeographicArea)).all())
     input_versions = _published_versions(db)
+    history_versions = scientific_temperature_versions(db)
     latest_temperatures = {
         area.id: _latest_indicator(db, area.id, "lst_c_mean", input_versions)
         for area in areas
@@ -97,7 +101,7 @@ def recalculate_priority_scores(db: Session) -> int:
                 if built and built.value is not None
                 else None
             ),
-            "historical_change": _temperature_trend(db, area.id),
+            "historical_change": _temperature_trend(db, area.id, history_versions),
         }
         result = calculate_priority(components)
         score = PriorityScore(
@@ -106,7 +110,7 @@ def recalculate_priority_scores(db: Session) -> int:
             components=result.components,
             weights=result.effective_weights,
             missing_inputs=result.missing_inputs,
-            input_versions=input_versions,
+            input_versions={**input_versions, "_temperature_history": {"dataset_version_ids": [v.id for v in history_versions]}},
             formula_version=result.formula_version,
         )
         db.add(score)

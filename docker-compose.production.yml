@@ -125,6 +125,7 @@ services:
     ports: ["80:80", "443:443", "443:443/udp"]
     volumes:
       - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./infra/caddy/routes.caddy:/etc/caddy/routes.caddy:ro
       - caddy-data:/data
       - caddy-config:/config
     networks:

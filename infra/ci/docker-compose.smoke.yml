@@ -1,6 +1,8 @@
-# CI-only HTTP listener; no provider workers or scheduler are started.
+# CI-only HTTPS with a disposable private CA; never changes host trust stores.
 services:
   caddy:
     environment:
-      HEATSHIFT_DOMAIN: ":80"
-    ports: !override ["127.0.0.1:18080:80"]
+      HEATSHIFT_DOMAIN: localhost
+    volumes:
+      - ./infra/ci/Caddyfile.tls:/etc/caddy/Caddyfile:ro
+    ports: !override ["127.0.0.1:18443:443"]

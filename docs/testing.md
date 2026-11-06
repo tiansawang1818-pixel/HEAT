@@ -9,6 +9,8 @@
 
 SSE ต้องมี `Cache-Control: no-cache, no-transform` เพื่อไม่ให้ Next.js rewrite หรือ proxy บีบอัดแล้วค้างข้อความเล็ก งาน container ตรวจ initial frame ทั้งผ่าน Caddy และ Next โดยส่ง `Accept-Encoding: gzip, deflate` ไปด้วย และปฏิเสธการบีบอัด event stream
 
+งาน container ใช้ HTTPS จริงกับ private CA ภายใน CI เพื่อตรวจ certificate/hostname, secure-cookie attributes และ security headers โดยไม่ใช้ insecure TLS และไม่เปลี่ยน trust store ของ host พร้อม read-only latency smoke 60 requests, concurrency 4 รายงาน release audit ต้องยังติด blocker เพราะ CI ไม่มีข้อมูล provider จริง รายงานทั้งสองดาวน์โหลดได้จาก artifact `release-verification-reports`
+
 งาน `api` ตรวจ dependency audit ด้วย งาน `stack` ซ้อม pg_dump/pg_restore ไปยัง `heatshift_restore_ci` ที่สร้างใหม่ เปรียบเทียบ row count/checksum ทุก application table และตรวจ geometry/published version อีกครั้ง สคริปต์ปฏิเสธการทับฐานข้อมูลเดิมและรันเฉพาะ isolated CI container
 
 งาน `stack` ตรวจ GiST index, geometry SRID, Redis lock ownership/expiry, authorized job dispatch, duplicate skipping, viewport `ST_Intersects`, ETag invalidation และ SSE stream เดิมที่รับทั้ง publication แรกและ publication ถัดไป API map เปลี่ยนค่าตามเวอร์ชันที่ publish โดย stream ไม่ถูกเปิดใหม่

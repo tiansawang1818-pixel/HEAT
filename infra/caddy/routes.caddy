@@ -1,0 +1,23 @@
+header {
+	Strict-Transport-Security "max-age=31536000"
+	X-Content-Type-Options nosniff
+	X-Frame-Options DENY
+	Referrer-Policy strict-origin-when-cross-origin
+	Permissions-Policy "camera=(), microphone=(), geolocation=()"
+	-Server
+}
+request_body {
+	max_size 1MB
+}
+@webOperations path /api/auth/* /api/admin/*
+handle @webOperations {
+	reverse_proxy web:3000
+}
+handle /api/* {
+	reverse_proxy api:8000 {
+		flush_interval -1
+	}
+}
+handle {
+	reverse_proxy web:3000
+}

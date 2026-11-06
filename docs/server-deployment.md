@@ -43,6 +43,17 @@ HEATSHIFT_COMPOSE_ENV=production make backup
 
 ## ขอบเขตการตรวจ
 
-CI ตรวจ production Compose isolation, build images, เปิดหน้าเว็บทั้ง 7 หน้า, API rewrite ภายใน Next, SSO gate และ SSE ผ่าน Caddy โดยใช้ HTTP เฉพาะเครือข่ายทดสอบและไม่มี workers ที่เรียก provider ส่วน HTTPS certificate, DNS, SSO จริง, ข้อมูล Earth Engine จริง, backup storage, alert delivery และความจุภายใต้ traffic จริง ต้องตรวจในเซิร์ฟเวอร์ที่เลือกก่อนเปิดใช้
+CI ตรวจ production Compose isolation, build images, เปิดหน้าเว็บทั้ง 7 หน้า, API rewrite ภายใน Next, SSO gate, secure-cookie attributes และ SSE ผ่าน HTTPS ของ Caddy โดยตรวจ hostname/certificate ด้วย CA เฉพาะ CI ไม่มีการปิด TLS verification หรือติดตั้ง root CA ลงเครื่องผู้ใช้ การออก certificate จาก public CA, DNS, SSO จริง, ข้อมูล Earth Engine จริง, backup storage, alert delivery และความจุภายใต้ traffic จริง ยังต้องตรวจในเซิร์ฟเวอร์ที่เลือกก่อนเปิดใช้
+
+## ตรวจ release candidate ก่อนเปิด traffic
+
+```bash
+make release-audit RELEASE_URL=https://<domain>
+make load-smoke RELEASE_URL=https://<domain>
+```
+
+`release-audit` อ่าน health, runtime configuration, SSO configuration และ `/api/system/data-readiness` โดยไม่สั่ง ingestion หรือเขียนข้อมูล รายงาน JSON อยู่ใน `data/exports/` และ exit code 2 หมายถึงยังมี blocker การตรวจข้อมูลดู published version, validation reports, source checks, พื้นที่นำร่องที่มี indicator ครบ, ปีประชากร, raster provenance และหลักฐานต้นทุน/ความเหมาะสมที่บันทึกแล้ว แยกสิทธิ์ใช้ข้อมูลและงานตรวจหน้างานที่ยังต้องให้ผู้รับผิดชอบยืนยัน ผลนี้ไม่ใช่ใบรับรอง production ทั้งระบบ
+
+`load-smoke` ยิง GET แบบจำกัดจำนวนและ concurrency เก็บ failure rate, mean/p95 latency และจำนวน features สูงสุดที่ตอบกลับ ไม่มีการเรียก provider หรือ optimization การผ่านด้วยฐานข้อมูลว่างใน CI ใช้ตรวจ regression เท่านั้น ต้องทดสอบซ้ำกับข้อมูลและจำนวนผู้ใช้จริงก่อนกำหนดความจุเซิร์ฟเวอร์
 
 การตั้งค่าอ้างอิง [Compose production](https://docs.docker.com/compose/how-tos/production/), [Compose secrets](https://docs.docker.com/compose/how-tos/use-secrets/), [Compose override/reset](https://docs.docker.com/reference/compose-file/merge/) และ [Caddy automatic HTTPS](https://caddyserver.com/docs/automatic-https)

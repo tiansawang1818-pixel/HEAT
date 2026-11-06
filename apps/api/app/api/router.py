@@ -59,10 +59,12 @@ from app.services.optimizer import Candidate, optimize_portfolio
 from app.services.pipeline import run_monitor
 from app.services.priority import calculate_priority, sensitivity_range
 from app.services.geometry import to_geojson
-from app.services.forecasting import evaluate_temperature_scenario
 from app.services.tiles import earth_engine_tiles
 from app.services.observability import prometheus_metrics
 from app.services.readiness import production_readiness
+from app.services.forecast_workflow import ForecastInProgress, compute_forecast
+from app.services.data_readiness import published_data_readiness
+from app.services.locks import LockBackendUnavailable
 from app.services.versions import INDICATOR_DATASETS, LAYER_DATASETS, current_versions, published_version
 
 
@@ -1576,26 +1578,16 @@ def saved_scenario_report(scenario_id: str, db: Session = Depends(get_db)) -> HT
 
 @router.post("/forecast/run")
 def forecast_run(request: ForecastRequest, db: Session = Depends(get_db)) -> Dict[str, Any]:
-    query = select(TemperatureObservation).order_by(TemperatureObservation.observed_at)
-    if request.area_ids:
-        query = query.where(TemperatureObservation.area_id.in_(request.area_ids))
-    rows = db.scalars(query).all()
-    result = evaluate_temperature_scenario(rows, request.horizon_years)
-    method = "validated-seasonal-trend-scenario-v2" if result["status"] == "completed" else "guardrail-validation-v2"
-    run = ForecastRun(
-        horizon_years=request.horizon_years,
-        method=method,
-        model_version="scenario-v2",
-        training_versions=_current_versions(db),
-        assumptions=result["assumptions"],
-        metrics=result["metrics"],
-        results=result,
-    )
-    db.add(run)
-    db.commit()
+    try:
+        run, reused = compute_forecast(db, request.horizon_years, request.area_ids)
+    except ForecastInProgress:
+        raise HTTPException(status_code=409, detail="กำลังคำนวณฉากทัศน์จากข้อมูลชุดนี้ กรุณาลองอีกครั้ง")
+    except LockBackendUnavailable:
+        raise HTTPException(status_code=503, detail="ระบบคิวและล็อกการคำนวณยังไม่พร้อม")
     return {
         "run_id": run.id,
-        **result,
+        **run.results,
+        "cached": reused,
         "method": run.method,
         "model_version": run.model_version,
         "training_versions": run.training_versions,
@@ -2032,3 +2024,9 @@ def system_readiness(
     """Audit production configuration without returning secrets or endpoints."""
     response.headers["Cache-Control"] = "no-store"
     return production_readiness(db, probe_dependencies=probe_dependencies)
+
+
+@router.get("/system/data-readiness")
+def system_data_readiness(response: Response, db: Session = Depends(get_db)) -> Dict[str, Any]:
+    response.headers["Cache-Control"] = "no-store"
+    return published_data_readiness(db)

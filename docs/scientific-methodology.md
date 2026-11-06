@@ -1,5 +1,9 @@
 # วิธีคำนวณและข้อจำกัดทางวิทยาศาสตร์
 
+ผลฉากทัศน์ถูกเก็บแยกตาม horizon, ขอบเขตพื้นที่, model version, validation policy และ fingerprint ของประวัติ Landsat ที่ publish แล้วเท่านั้น ไม่ใช้ข้อมูล staging หรือ synthetic แม้มีแถวอยู่ในตาราง observations การเพิ่ม backfill ย้อนหลังทำให้ fingerprint เปลี่ยนแม้ active map snapshot ไม่เปลี่ยน คำขอซ้ำใช้ผลเดิมและเก็บ run เก่าไว้ตรวจสอบ
+
+งานเบื้องหลังตรวจ model update รายชั่วโมง แต่คำนวณชุดใหม่ไม่เกินวันละครั้งและข้ามเมื่อประวัติไม่เปลี่ยน horizon 1/3/5 ปีใช้ชุดเวอร์ชันเดียวกัน หากข้อมูลหรือ temporal/spatial validation ไม่ผ่าน จะเก็บผล `insufficient_data` พร้อม metrics และไม่สร้าง projection เพื่อเติมแผนที่ ช่วงความไม่แน่นอนยังเป็น empirical scenario range ตามสมมติฐานของแบบจำลอง ไม่ใช่การรับประกันความแม่นยำของคำพยากรณ์ห้าปี
+
 ## Heat Exposure Priority
 
 คะแนน 0–100 เป็นลำดับความสำคัญด้านการสัมผัสความร้อน ไม่ใช่หลักฐาน socioeconomic inequality โดยอัตโนมัติ ตัวอย่างสูตรที่ตรวจสอบย้อนกลับได้:

@@ -1,0 +1,8 @@
+# A private CA exists only inside the disposable CI stack.
+{
+	admin off
+}
+localhost {
+	tls internal
+	import /etc/caddy/routes.caddy
+}

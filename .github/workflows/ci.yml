@@ -7,6 +7,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   api:
     timeout-minutes: 15
@@ -141,44 +145,34 @@ jobs:
         run: |
           docker compose --env-file /tmp/heatshift-production-ci.env -f docker-compose.yml -f docker-compose.production.yml config --format json | python3 scripts/check_compose_config.py
           docker compose --env-file /tmp/heatshift-production-ci.env -f docker-compose.yml -f docker-compose.production.yml build caddy
-          docker run --rm -e HEATSHIFT_DOMAIN=heatshift.example.org -e ACME_EMAIL=operator@example.org -v "$PWD/infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" heatshift-caddy:2.11.9 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          docker run --rm -e HEATSHIFT_DOMAIN=heatshift.example.org -e ACME_EMAIL=operator@example.org -v "$PWD/infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$PWD/infra/caddy/routes.caddy:/etc/caddy/routes.caddy:ro" heatshift-caddy:2.11.9 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
       - name: Build and start release containers without source monitors
         run: docker compose --env-file /tmp/heatshift-production-ci.env -f docker-compose.yml -f docker-compose.production.yml -f infra/ci/docker-compose.smoke.yml up -d --build --wait --wait-timeout 180 api web caddy
-      - name: Verify pages, internal API rewrite, authentication gate and SSE
+      - name: Read the disposable CI public CA certificate
         run: |
-          python3 - <<'PY'
-          import json
-          import urllib.request
-          import urllib.error
-          base = 'http://127.0.0.1:18080'
-          for path in ['/', '/insights', '/optimizer', '/scenarios', '/outlook', '/observatory', '/methodology', '/api/health/ready', '/api/map/layers', '/api/auth/session']:
-              with urllib.request.urlopen(base + path, timeout=15) as response:
-                  assert response.status == 200, path
-                  content_type = response.headers.get('Content-Type', '')
-                  body = response.read()
-                  if path.startswith('/api/'):
-                      assert 'application/json' in content_type, (path, content_type)
-                      assert json.loads(body) is not None, path
-                  else:
-                      assert 'text/html' in content_type and b'HEAT//SHIFT' in body, path
-          with urllib.request.urlopen(base + '/api/auth/session', timeout=5) as response:
-              session = json.load(response)
-              assert session['mode'] == 'oidc' and session['configured'] and not session['authenticated']
-          request = urllib.request.Request(base + '/api/admin/ingestion', data=b'{"source":"open-meteo"}', headers={'Content-Type': 'application/json'})
-          try:
-              urllib.request.urlopen(request, timeout=5)
-              raise AssertionError('Unauthenticated admin operation was accepted')
-          except urllib.error.HTTPError as error:
-              assert error.code == 401
-          with urllib.request.urlopen(base + '/api/events/stream', timeout=10) as response:
-              assert response.headers['Content-Type'].startswith('text/event-stream')
-              assert 'no-transform' in response.headers.get('Cache-Control', '')
-              assert response.readline().strip() == b'retry: 5000'
-              assert response.readline().strip() == b': connected'
-          print('All pages, SSO gate and live SSE respond through release containers.')
-          PY
+          docker compose --env-file /tmp/heatshift-production-ci.env -f docker-compose.yml -f docker-compose.production.yml -f infra/ci/docker-compose.smoke.yml exec -T caddy sh -c 'for attempt in $(seq 1 20); do test -s /data/caddy/pki/authorities/local/root.crt && exit 0; sleep 1; done; exit 1'
+          docker compose --env-file /tmp/heatshift-production-ci.env -f docker-compose.yml -f docker-compose.production.yml -f infra/ci/docker-compose.smoke.yml exec -T caddy cat /data/caddy/pki/authorities/local/root.crt > /tmp/heatshift-ci-ca.pem
+      - name: Verify TLS, pages, admin gates, cookie security and SSE
+        run: |
+          python3 scripts/verify_container_routes.py --url https://localhost:18443 --ca-file /tmp/heatshift-ci-ca.pem
           docker compose --env-file /tmp/heatshift-production-ci.env -f docker-compose.yml -f docker-compose.production.yml -f infra/ci/docker-compose.smoke.yml exec -T web node -e "fetch('http://127.0.0.1:3000/api/health').then(async r=>{if(!r.ok || (await r.json()).status!=='ok')process.exit(1)}).catch(()=>process.exit(1))"
           docker compose --env-file /tmp/heatshift-production-ci.env -f docker-compose.yml -f docker-compose.production.yml -f infra/ci/docker-compose.smoke.yml exec -T web node --input-type=module < scripts/check_web_stream.mjs
+      - name: Verify incomplete real data keeps the release audit blocked
+        run: |
+          set +e
+          python3 scripts/verify_release.py --url https://localhost:18443 --ca-file /tmp/heatshift-ci-ca.pem --output /tmp/heatshift-release-audit.json
+          heatshift_audit_status=$?
+          set -e
+          test "$heatshift_audit_status" -eq 2
+      - name: Bounded read-only latency smoke
+        run: python3 scripts/load_smoke.py --url https://localhost:18443 --ca-file /tmp/heatshift-ci-ca.pem --requests 60 --concurrency 4 --output /tmp/heatshift-load-smoke.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-verification-reports
+          path: |
+            /tmp/heatshift-release-audit.json
+            /tmp/heatshift-load-smoke.json
+          retention-days: 14
       - name: Container diagnostics
         if: failure()
         run: docker compose --env-file /tmp/heatshift-production-ci.env -f docker-compose.yml -f docker-compose.production.yml -f infra/ci/docker-compose.smoke.yml logs --tail 80 api web migrate caddy

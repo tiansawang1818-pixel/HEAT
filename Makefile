@@ -2,7 +2,7 @@ SHELL := /bin/sh
 COMPOSE := docker compose
 PROD_COMPOSE := docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.production.yml
 
-.PHONY: help setup up observability down build logs ps migrate seed test test-api test-web lint format smoke readiness simulate-update backup clean production-check production-up
+.PHONY: help setup up observability down build logs ps migrate seed test test-api test-web lint format smoke readiness simulate-update backup clean production-check production-up release-audit load-smoke
 
 help:
 	@echo "HEAT//SHIFT commands"
@@ -79,6 +79,12 @@ production-check:
 
 production-up: production-check
 	$(PROD_COMPOSE) up --build -d --wait
+
+release-audit:
+	python3 scripts/verify_release.py --url $(RELEASE_URL) --output ./data/exports/release-audit.json
+
+load-smoke:
+	python3 scripts/load_smoke.py --url $(RELEASE_URL) --output ./data/exports/load-smoke.json
 
 clean:
 	$(COMPOSE) down --remove-orphans
