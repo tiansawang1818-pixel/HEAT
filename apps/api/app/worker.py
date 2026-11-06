@@ -1,4 +1,6 @@
 import random
+import time
+import redis
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -53,7 +55,11 @@ def connector_for(source: str, fixture_path: Optional[str] = None):
 def dispatch_ingestion():
     with SessionLocal() as db:
         ensure_sources(db)
-        return dispatch_due_sources(db, lambda job_id, source: run_manual_ingestion.delay(job_id, source))
+        result = dispatch_due_sources(db, lambda job_id, source: run_manual_ingestion.delay(job_id, source))
+        if result["status"] == "completed":
+            with redis.Redis.from_url(settings.redis_url, socket_connect_timeout=1, socket_timeout=1) as client:
+                client.set("heatshift:dispatcher:last_tick", str(time.time()), ex=300)
+        return result
 
 
 @celery_app.task(name="app.worker.update_forecast_models", soft_time_limit=540, time_limit=600)

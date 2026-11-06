@@ -119,6 +119,8 @@ jobs:
   containers:
     timeout-minutes: 25
     runs-on: ubuntu-latest
+    env:
+      ALERTMANAGER_CONFIG_FILE: ./infra/ci/alertmanager.yml
     steps:
       - uses: actions/checkout@v4
       - name: Prepare isolated configuration placeholders
@@ -166,6 +168,24 @@ jobs:
           test "$heatshift_audit_status" -eq 2
       - name: Bounded read-only latency smoke
         run: python3 scripts/load_smoke.py --url https://localhost:18443 --ca-file /tmp/heatshift-ci-ca.pem --requests 60 --concurrency 4 --output /tmp/heatshift-load-smoke.json
+      - name: Verify alert rules and internal notification delivery
+        run: |
+          docker run --rm --entrypoint /bin/promtool -v "$PWD/infra/monitoring:/etc/prometheus:ro" prom/prometheus:v3.15.1 test rules /etc/prometheus/alerts.test.yml
+          docker compose --env-file /tmp/heatshift-production-ci.env -f docker-compose.yml -f docker-compose.production.yml -f infra/ci/docker-compose.smoke.yml -f docker-compose.monitoring.yml -f infra/ci/docker-compose.alerting.yml up -d --wait --wait-timeout 90 alert-test-receiver alertmanager prometheus
+          docker compose --env-file /tmp/heatshift-production-ci.env -f docker-compose.yml -f docker-compose.production.yml -f infra/ci/docker-compose.smoke.yml -f docker-compose.monitoring.yml -f infra/ci/docker-compose.alerting.yml exec -T alertmanager amtool --alertmanager.url=http://127.0.0.1:9093 alert add alertname=HeatShiftNotificationSelfTest severity=warning
+          python3 - <<'PY'
+          import json, time, urllib.request
+          deadline = time.monotonic() + 20
+          while time.monotonic() < deadline:
+              with urllib.request.urlopen('http://127.0.0.1:18081/status', timeout=3) as response:
+                  names = json.load(response)['alert_names']
+              if 'HeatShiftNotificationSelfTest' in names:
+                  print('Alertmanager delivered the synthetic test alert to the isolated CI receiver.')
+                  break
+              time.sleep(.25)
+          else:
+              raise AssertionError('No test alert reached the local receiver')
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: release-verification-reports
@@ -178,4 +198,4 @@ jobs:
         run: docker compose --env-file /tmp/heatshift-production-ci.env -f docker-compose.yml -f docker-compose.production.yml -f infra/ci/docker-compose.smoke.yml logs --tail 80 api web migrate caddy
       - name: Stop ephemeral containers
         if: always()
-        run: docker compose --env-file /tmp/heatshift-production-ci.env -f docker-compose.yml -f docker-compose.production.yml -f infra/ci/docker-compose.smoke.yml down --volumes --remove-orphans
+        run: docker compose --env-file /tmp/heatshift-production-ci.env -f docker-compose.yml -f docker-compose.production.yml -f infra/ci/docker-compose.smoke.yml -f docker-compose.monitoring.yml -f infra/ci/docker-compose.alerting.yml down --volumes --remove-orphans

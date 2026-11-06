@@ -1,10 +1,14 @@
 import threading
+import math
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import DefaultDict, Dict, Tuple
 
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
+import redis
+
+from app.core.config import settings
 
 from app.models.entities import (
     DataSource,
@@ -67,6 +71,23 @@ def prometheus_metrics(db: Session) -> str:
         "# TYPE heatshift_http_requests_total counter",
     ]
     request_counts, duration_sums = request_telemetry.snapshot()
+    heartbeat = None
+    try:
+        with redis.Redis.from_url(settings.redis_url, socket_connect_timeout=.25, socket_timeout=.25) as client:
+            raw = client.get("heatshift:dispatcher:last_tick")
+            heartbeat = float(raw) if raw else None
+            if heartbeat is not None and not math.isfinite(heartbeat):
+                heartbeat = None
+    except (redis.RedisError, ValueError, TypeError):
+        pass  # A missing metric signals the outage; never serialize connection details.
+    lines.extend([
+        "# HELP heatshift_dispatcher_heartbeat_present Whether a recent control worker heartbeat exists.",
+        "# TYPE heatshift_dispatcher_heartbeat_present gauge",
+        "heatshift_dispatcher_heartbeat_present %d" % (heartbeat is not None),
+        "# HELP heatshift_dispatcher_heartbeat_age_seconds Age of the last dispatcher heartbeat.",
+        "# TYPE heatshift_dispatcher_heartbeat_age_seconds gauge",
+        "heatshift_dispatcher_heartbeat_age_seconds %.3f" % (max(0, now.timestamp() - heartbeat) if heartbeat is not None else 0),
+    ])
     for (method, route, status), count in sorted(request_counts.items()):
         labels = _labels(method=method, route=route, status=status)
         lines.append("heatshift_http_requests_total{%s} %d" % (labels, count))
@@ -157,11 +178,10 @@ def prometheus_metrics(db: Session) -> str:
             .order_by(desc(SourceCheck.checked_at))
             .limit(1)
         )
-        if latest_check:
-            lines.append(
-                "heatshift_data_source_last_check_age_seconds{%s} %.3f"
-                % (labels, max(0.0, (now - _aware(latest_check)).total_seconds()))
-            )
+        lines.append(
+            "heatshift_data_source_last_check_age_seconds{%s} %.3f"
+            % (labels, max(0.0, (now - _aware(latest_check or source.created_at)).total_seconds()))
+        )
         latest_observation = db.scalar(
             select(DatasetVersion.observed_at)
             .where(

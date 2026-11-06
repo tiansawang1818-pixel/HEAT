@@ -15,6 +15,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import pytest
+import redis
 from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.orm import Session
 
@@ -93,6 +94,8 @@ def test_beat_discovers_updates_skips_duplicates_and_preserves_validated_data(tm
                 return db.scalar(select(func.count()).select_from(DatasetVersion).where(DatasetVersion.status == "published"))
 
             wait_for(lambda db: published(db) == 1)
+            with redis.Redis.from_url(env["REDIS_URL"], socket_timeout=2) as broker:
+                assert float(broker.get("heatshift:dispatcher:last_tick")) > 0
             wait_for(lambda db: bool(db.scalar(select(SourceCheck.id).where(SourceCheck.discovered_count == 0, SourceCheck.status == "success"))))
             with Session(isolated) as db:
                 assert published(db) == 1

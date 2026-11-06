@@ -1,0 +1,14 @@
+# Synthetic integration receiver on the disposable CI Docker network only.
+global:
+  resolve_timeout: 1m
+route:
+  receiver: isolated-ci-receiver
+  group_by: [alertname]
+  group_wait: 0s
+  group_interval: 1s
+  repeat_interval: 1h
+receivers:
+  - name: isolated-ci-receiver
+    webhook_configs:
+      - url: http://alert-test-receiver:8080/alerts
+        send_resolved: true

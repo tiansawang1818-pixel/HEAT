@@ -1,0 +1,10 @@
+services:
+  alert-test-receiver:
+    image: python:3.12-alpine
+    command: [python, /app/alert_receiver.py]
+    volumes:
+      - ./infra/ci/alert_receiver.py:/app/alert_receiver.py:ro
+    ports: ["127.0.0.1:18081:8080"]
+  alertmanager:
+    depends_on:
+      alert-test-receiver: {condition: service_started}

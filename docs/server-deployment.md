@@ -6,6 +6,8 @@ Image `heatshift-caddy:2.11.9` ใช้ official Caddy Alpine runtime และ
 
 ## ตั้งค่าก่อนเริ่ม
 
+รัน `make prepare-server` เพื่อสร้าง `.env.production` แบบไม่เขียนทับไฟล์เดิม มีรหัส PostgreSQL และ session encryption สุ่มคนละค่า พร้อมสิทธิ์ไฟล์ 0600 โดยเว้นบัญชี provider และโดเมนว่างไว้ ไฟล์นี้ถูก ignore โดย Git/Docker build และไม่ถูกพิมพ์ใน log คำสั่งนี้ไม่สร้างบัญชี cloud และไม่เปิดบริการ
+
 1. คัดลอก `.env.production.example` เป็น `.env.production` แล้วจำกัดสิทธิ์ไฟล์ด้วย `chmod 600 .env.production`
 2. ตั้งโดเมน, อีเมลต่ออายุใบรับรอง, รหัส PostgreSQL แบบสุ่ม และ `DATABASE_URL` ที่ใช้รหัสเดียวกัน แนะนำ `openssl rand -hex 32` เพื่อเลี่ยงอักขระที่ต้อง encode ใน URL
 3. ลงทะเบียน SSO client พร้อม redirect URI `https://<domain>/api/auth/callback` กำหนด issuer, audience, JWKS และ role claim ให้ตรงกับ token ขององค์กร `AUTH_SESSION_SECRET` ต้องเป็นค่าสุ่มคนละค่ากับรหัสฐานข้อมูล

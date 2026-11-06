@@ -1,0 +1,18 @@
+rule_files:
+  - /etc/prometheus/alerts.yml
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'up{job="heatshift-api"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: HeatShiftApiDown
+        exp_alerts:
+          - exp_labels:
+              job: heatshift-api
+              severity: critical
+            exp_annotations:
+              summary: HEAT//SHIFT API metrics endpoint is unavailable
+              description: Prometheus has been unable to scrape the API for five minutes.

@@ -1,0 +1,30 @@
+# Optional overlay: include after the production overlay to enable delivery.
+# The receiver configuration is an operator-supplied secret, never a public env.
+services:
+  prometheus:
+    profiles: !reset []
+    volumes:
+      - ./infra/monitoring/prometheus.alerting.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      alertmanager: {condition: service_started}
+  alertmanager:
+    image: prom/alertmanager:v0.34.2
+    command:
+      - --config.file=/run/secrets/alertmanager_config
+      - --storage.path=/alertmanager
+      - --cluster.listen-address=
+    secrets: [alertmanager_config]
+    volumes: [alertmanager-data:/alertmanager]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck:
+      test: [CMD, /bin/amtool, --alertmanager.url=http://127.0.0.1:9093, alert, query]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+volumes:
+  alertmanager-data:
+secrets:
+  alertmanager_config:
+    file: ${ALERTMANAGER_CONFIG_FILE:?Set the private alert receiver configuration file}

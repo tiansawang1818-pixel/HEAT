@@ -1,6 +1,24 @@
 groups:
   - name: heatshift-pipeline
     rules:
+      - alert: HeatShiftDispatcherUnavailable
+        expr: heatshift_dispatcher_heartbeat_present == 0 or heatshift_dispatcher_heartbeat_age_seconds > 180
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: HEAT//SHIFT automatic source monitoring has stopped
+          description: The dedicated control worker has not recorded a recent scheduler heartbeat.
+
+      - alert: HeatShiftSourceUnavailable
+        expr: heatshift_data_source_available == 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: A HEAT//SHIFT provider has no validated published data
+          description: "{{ $labels.dataset_id }} has no validated publication after the startup grace period."
+
       - alert: HeatShiftApiDown
         expr: up{job="heatshift-api"} == 0
         for: 5m

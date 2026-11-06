@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import math
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -11,6 +12,13 @@ class OpenMeteoConnector(SourceConnector):
     source_name = "Open-Meteo"
     dataset_id = "open-meteo/weather-context"
     layer_key = "weather"
+
+    @staticmethod
+    def _finite(value):
+        try:
+            return not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(value)
+        except OverflowError:
+            return False
 
     def discover(self, latest_asset_id: Optional[str] = None, checkpoint: Optional[Dict[str, Any]] = None) -> List[SourceAsset]:
         params = {
@@ -72,8 +80,9 @@ class OpenMeteoConnector(SourceConnector):
         if missing:
             errors.append("missing Open-Meteo current fields: %s" % ", ".join(missing))
         for field in ["temperature_2m", "relative_humidity_2m", "apparent_temperature", "wind_speed_10m"]:
-            if field in current and not isinstance(current[field], (int, float)):
-                errors.append("Open-Meteo field %s must be numeric" % field)
+            value = current.get(field)
+            if value is not None and not self._finite(value):
+                errors.append("Open-Meteo field %s must be a finite number" % field)
         if not units.get("temperature_2m") or not units.get("wind_speed_10m"):
             errors.append("Open-Meteo response is missing required units")
         hourly_required = ["time", "temperature_2m", "apparent_temperature", "relative_humidity_2m", "precipitation_probability"]
@@ -82,6 +91,10 @@ class OpenMeteoConnector(SourceConnector):
             errors.append("missing Open-Meteo hourly fields: %s" % ", ".join(missing_hourly))
         elif len({len(hourly[field]) for field in hourly_required}) != 1:
             errors.append("Open-Meteo hourly fields have inconsistent lengths")
+        else:
+            for field in hourly_required[1:]:
+                if any(not self._finite(value) for value in hourly[field]):
+                    errors.append("Open-Meteo hourly field %s must contain finite numbers" % field)
         if not hourly_units.get("temperature_2m") or not hourly_units.get("precipitation_probability"):
             errors.append("Open-Meteo hourly response is missing required units")
         return {

@@ -19,6 +19,8 @@ fixtures ในงานนี้ระบุ `synthetic_demo` และไม�
 
 การทดสอบ scheduler ใช้ฐานข้อมูลใหม่ชื่อ `heatshift_scheduler_ci`, Redis DB 3 และ HTTP provider จำลองบน localhost แล้วเริ่ม Celery Beat/worker จริงโดยไม่เรียก manual-refresh API ตรวจการพบข้อมูลครั้งแรก การข้าม asset เดิม การเผยแพร่ revision ถัดไป และการคงข้อมูลเดิมเมื่อ provider ส่งข้อมูลไม่ผ่าน validation ค่าใน mock provider ใช้เฉพาะการทดสอบโครงสร้างระบบและไม่ใช่ข้อมูลอากาศจริง
 
+CI ตรวจ Prometheus alert rules ด้วย `promtool`, เริ่ม Alertmanager จริง และส่ง alert สังเคราะห์ไปยัง receiver จำลองใน Docker network เพื่อยืนยัน notification delivery ส่วนเส้นทางปลายทางจริงขององค์กรและการกู้คืนจาก off-host backup ยังต้องซ้อมในสภาพแวดล้อมจริง
+
 รัน unit/API tests ในเครื่อง:
 
 ```bash

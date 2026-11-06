@@ -21,6 +21,16 @@ docker compose logs --tail=200 api worker beat
 
 เปิด local Prometheus ด้วย `make observability` แล้วดูที่ <http://localhost:9090> config จะอ่าน `infra/monitoring/alerts.yml` ซึ่งเฝ้า API down, source check เกินเวลา, data stale, validation failure และ job ค้าง Prometheus image ตรึงที่ stable release; ก่อน production upgrade ให้ตรวจ release notes และ digest จากแหล่งทางการ
 
+`make observability` ประเมิน rules ในเครื่องเท่านั้น สำหรับการส่งแจ้งเตือนจริง ใช้ `docker-compose.monitoring.yml` ซึ่งต่อ Prometheus เข้า Alertmanager และเก็บสถานะ deduplication ใน persistent volume คัดลอก `infra/monitoring/alertmanager.example.yml` ไปไว้ใน `secrets/alertmanager.yml`, ใส่ receiver HTTPS ที่องค์กรอนุมัติ และให้ service UID/GID 65534 อ่านได้โดยไม่เปิดไฟล์ต่อผู้ใช้อื่น จากนั้นรัน:
+
+```bash
+ALERTMANAGER_CONFIG_FILE=./secrets/alertmanager.yml make monitoring-up
+```
+
+preflight ปฏิเสธ receiver ตัวอย่างและ HTTP ที่ออกจาก production โดยไม่พิมพ์ URL หรือรหัสรับ webhook จากนั้น `amtool` ตรวจโครงสร้าง config จึงเริ่มบริการ พอร์ต Alertmanager ไม่เปิดสาธารณะ ต้องยืนยันการรับ alert และ resolved notification ที่ปลายทางจริงก่อนเปิดระบบ CI ใช้ receiver จำลองภายใน Docker network และไม่ส่งข้อความถึงบุคคลหรือระบบภายนอก
+
+Control worker บันทึก heartbeat ใน Redis ที่มี TTL หากหายหรือเกิน 3 นาที Prometheus จะเตือนหลัง grace period แยกจากเวลาตรวจข้อมูลรายชั่วโมง/รายสัปดาห์ แหล่งข้อมูลที่ไม่เคยตรวจมี age นับจาก source configuration เพื่อไม่ให้หายจากการเฝ้าระวัง
+
 ## Manual refresh
 
 Manual refresh เป็น admin operation และ enqueue background job จริง:

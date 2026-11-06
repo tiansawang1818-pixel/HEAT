@@ -1,8 +1,9 @@
 SHELL := /bin/sh
 COMPOSE := docker compose
 PROD_COMPOSE := docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.production.yml
+MONITOR_COMPOSE := $(PROD_COMPOSE) -f docker-compose.monitoring.yml
 
-.PHONY: help setup up observability down build logs ps migrate seed test test-api test-web lint format smoke readiness simulate-update backup clean production-check production-up release-audit load-smoke
+.PHONY: help setup up observability down build logs ps migrate seed test test-api test-web lint format smoke readiness simulate-update backup clean production-check production-up release-audit load-smoke monitoring-up prepare-server
 
 help:
 	@echo "HEAT//SHIFT commands"
@@ -85,6 +86,14 @@ release-audit:
 
 load-smoke:
 	python3 scripts/load_smoke.py --url $(RELEASE_URL) --output ./data/exports/load-smoke.json
+
+monitoring-up:
+	python3 scripts/check_alerting_config.py
+	$(MONITOR_COMPOSE) run --rm --no-deps --entrypoint /bin/amtool alertmanager check-config /run/secrets/alertmanager_config
+	$(MONITOR_COMPOSE) up -d prometheus alertmanager
+
+prepare-server:
+	python3 scripts/init_production_env.py
 
 clean:
 	$(COMPOSE) down --remove-orphans

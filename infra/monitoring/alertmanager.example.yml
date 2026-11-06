@@ -1,0 +1,16 @@
+# Copy outside Git and replace the receiver with the approved HTTPS endpoint.
+# Keep authentication settings in that private file or mounted secrets.
+global:
+  resolve_timeout: 5m
+route:
+  receiver: operations-webhook
+  group_by: [alertname, dataset_id]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+receivers:
+  - name: operations-webhook
+    webhook_configs:
+      - url: https://CHANGE_ME.invalid/approved-operations-webhook
+        send_resolved: true
+        max_alerts: 20

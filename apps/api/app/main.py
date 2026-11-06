@@ -5,6 +5,7 @@ import time
 import uuid
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -61,6 +62,16 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
     docs_url="/api/docs",
 )
+
+
+@app.exception_handler(RequestValidationError)
+async def invalid_request(request: Request, exc: RequestValidationError):
+    # Do not echo raw payloads, which may contain credentials or non-finite
+    # floats that JSONResponse cannot serialize. Keep standard error locations.
+    return JSONResponse(status_code=422, content={"detail": [
+        {"loc": error["loc"], "type": error["type"], "msg": error["msg"]}
+        for error in exc.errors()
+    ]})
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
