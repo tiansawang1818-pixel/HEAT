@@ -91,6 +91,18 @@ Postgres dump ไม่รวม object storage ให้เปิด bucket ver
 
 backup helper อ่านชื่อฐานข้อมูล/ผู้ใช้จาก container โดยตรงและตั้งชื่อ dump แบบไม่ชนกันเมื่อมีการสั่งใกล้เวลาเดียวกัน CI รัน helper กับ release containers และตรวจ checksum เพิ่มเติมจากการซ้อม restore ไปยังฐานข้อมูลแยก
 
+### Encrypted remote backup
+
+`make prepare-backup` สร้างรหัสสุ่มใน `secrets/restic-password` แบบ 0600 และไม่เขียนทับไฟล์เดิม ไม่เปิด storage และไม่ส่งข้อมูลออกไป ให้ย้ายรหัสไปเก็บใน secret manager แยกจากเซิร์ฟเวอร์ด้วย ผู้ที่ไม่มีรหัสนี้จะกู้คืน repository ไม่ได้ ห้ามนำไฟล์เข้า Git หรือ image
+
+ติดตั้ง Restic จากแหล่งทางการหรือ package repository ของระบบ เตรียม S3-compatible bucket ใน account/เครื่องแยก เปิด retention/object-lock ตามนโยบาย แล้วตั้ง `RESTIC_REPOSITORY=s3:https://<approved-endpoint>/<bucket>` และ `RESTIC_PASSWORD_FILE` เป็นไฟล์ของ service user แบบ 0600 พร้อม credentials ที่อนุญาตให้อ่าน/เขียน/ตรวจรายการใน bucket สำรองเท่านั้น กำหนด credentials ฝั่ง host; ไม่ส่งให้ API/web containers จากนั้น initialize repository ด้วย `restic init` เพียงครั้งแรกโดยใช้ค่าเหล่านี้
+
+`HEATSHIFT_COMPOSE_ENV=production make backup-offsite` ตรวจ repository เดิม สร้าง dump ที่อ่านตรวจแล้ว เข้ารหัส/ส่งผ่าน Restic และดาวน์โหลด snapshot ID เดิมกลับมาถอดรหัสใน temporary directory เปรียบเทียบ SHA-256 แล้วตรวจ `pg_restore --list` โดยไม่เขียนฐานข้อมูลจริง จึงคืน `status=verified` หากขั้นตอนไหนล้มเหลวจะคืน exit code 2 พร้อมเหตุผลที่ไม่เปิดเผย endpoint/credentials ไม่มีคำสั่ง `forget`, `prune` หรือการลบ snapshot โดยอัตโนมัติ ดู [Restic repository setup](https://restic.readthedocs.io/en/stable/030_preparing_a_new_repo.html), [backup](https://restic.readthedocs.io/en/stable/040_backup.html) และ [restore](https://restic.readthedocs.io/en/stable/050_restore.html)
+
+มี `infra/systemd/heatshift-backup-offsite.service`/`.timer` และตัวอย่าง private env สำหรับ Linux รอบประมาณ 03:15 น. Asia/Bangkok พร้อม jitter 15 นาที ใช้ lock ร่วมที่ `/var/lib/heatshift-backup/offsite.lock` เพื่อไม่ให้ทำซ้อน งานคืนข้อมูลลง directory ส่วนตัวใหม่และล้าง temporary files เมื่อจบตามปกติ; ต้องมีพื้นที่ว่างพอสำหรับ dump กับไฟล์กู้คืนและมีนโยบาย cleanup หลังเครื่องดับ/ถูก kill ไม่มีการติดตั้ง timer หรือส่งข้อมูลออกจากเครื่องนี้โดยอัตโนมัติ ผู้ดูแลต้องต่อ failure alert ของ unit เข้าระบบปฏิบัติการจริง
+
+CI ใช้ repository เข้ารหัสใน temporary storage ที่แยกจากฐานข้อมูล และตรวจการดาวน์โหลด/ถอดรหัส/อ่าน archive จริง โดยอนุญาต local repository เฉพาะ `CI=true`, `ENVIRONMENT=test` และ `--allow-local-test` ผลมี scope ชัดเจนและไม่รับรองว่าเป็น off-host storage จริง ต้องตรวจสถานที่เก็บ สิทธิ์ account และซ้อม SQL restore ใน environment แยกจากปลายทางจริงก่อนเปิดระบบ
+
 ## Release checklist
 
 1. tests + migration rehearsal ผ่าน และ `make readiness` จบด้วย exit code 0 (ผ่านการตรวจ configuration/dependencies เบื้องต้น)

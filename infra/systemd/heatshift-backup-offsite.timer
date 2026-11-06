@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily encrypted HEAT SHIFT offsite backup
+
+[Timer]
+# 20:15 UTC = 03:15 Asia/Bangkok on the following day.
+OnCalendar=*-*-* 20:15:00 UTC
+RandomizedDelaySec=15m
+Persistent=true
+Unit=heatshift-backup-offsite.service
+
+[Install]
+WantedBy=timers.target

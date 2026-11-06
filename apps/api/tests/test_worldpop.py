@@ -10,6 +10,7 @@ from app.models.entities import (
     PopulationEstimate,
     PriorityScore,
     SourceCheck,
+    SourceProcessingCheckpoint,
 )
 from app.services.connectors.base import ConnectorError, ProviderRateLimitError
 from app.services.connectors.catalogs import WorldPopConnector
@@ -206,6 +207,7 @@ def test_worldpop_batches_original_boundaries_and_preserves_the_previous_version
     assert len(db.scalars(select(PopulationEstimate)).all()) == 2
     failed = db.scalar(select(DatasetVersion).where(DatasetVersion.status == "failed"))
     failed_id = failed.id
+    assert len(db.scalars(select(SourceProcessingCheckpoint)).all()) == 1
     failed.metadata_json = {**failed.metadata_json, "processor_version": "older-failed-processor"}
     db.commit()
     should_fail = False
@@ -213,6 +215,8 @@ def test_worldpop_batches_original_boundaries_and_preserves_the_previous_version
     assert db.get(DatasetVersion, failed_id).status == "published"
     assert db.get(DatasetVersion, failed_id).metadata_json["processor_version"] == WorldPopConnector.processor_version
     assert len(db.scalars(select(PopulationEstimate)).all()) == 4
+    assert sum(body["year"] == 2025 and body["features"]["features"][0]["id"] == "district-a" for body in requests) == 1
+    assert not db.scalars(select(SourceProcessingCheckpoint)).all()
 
 
 @pytest.mark.parametrize("returned_ids", [["district-a", "district-a"], ["district-a"], ["district-a", "unknown-area"]])

@@ -3,7 +3,7 @@ COMPOSE := docker compose
 PROD_COMPOSE := docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.production.yml
 MONITOR_COMPOSE := $(PROD_COMPOSE) -f docker-compose.monitoring.yml
 
-.PHONY: help setup up observability down build logs ps migrate seed test test-api test-web lint format smoke readiness simulate-update backup clean production-check production-up release-audit load-smoke monitoring-up prepare-server
+.PHONY: help setup up observability down build logs ps migrate seed test test-api test-web lint format smoke readiness simulate-update backup clean production-check production-up release-audit load-smoke monitoring-up prepare-server prepare-backup backup-offsite
 
 help:
 	@echo "HEAT//SHIFT commands"
@@ -21,6 +21,8 @@ help:
 	@echo "  make release-audit    Audit configured RELEASE_URL and published decision data"
 	@echo "  make load-smoke       Run bounded read-only checks against RELEASE_URL"
 	@echo "  make monitoring-up    Validate private alert receiver and start monitoring"
+	@echo "  make prepare-backup   Create a private repository password without overwriting"
+	@echo "  make backup-offsite   Encrypt, upload and verify download from configured storage"
 
 setup:
 	@test -f .env || cp .env.example .env
@@ -98,6 +100,12 @@ monitoring-up:
 
 prepare-server:
 	python3 scripts/init_production_env.py
+
+prepare-backup:
+	python3 scripts/backup_offsite.py --prepare-password-file secrets/restic-password
+
+backup-offsite:
+	python3 scripts/backup_offsite.py
 
 clean:
 	$(COMPOSE) down --remove-orphans

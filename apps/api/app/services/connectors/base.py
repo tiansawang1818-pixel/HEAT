@@ -83,6 +83,11 @@ class ProviderRateLimitError(ConnectorError):
 
 
 class SourceConnector(ABC):
+    checkpoint_store: Any = None
+
+    def bind_checkpoints(self, store):
+        self.checkpoint_store = store
+
     source_name: str
     dataset_id: str
     layer_key: str

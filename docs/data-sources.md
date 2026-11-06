@@ -81,11 +81,15 @@ WorldPop connector ใช้ Global2 `/catalog` เพื่อตรวจ rele
 
 ค่าเริ่มต้นเลือกปีล่าสุดที่ไม่เกินปีปัจจุบัน สามารถตรึงปีด้วย `WORLDPOP_REFERENCE_YEAR` ได้ ทุกผลลัพธ์ยังเป็น `model_estimate` รวมถึงปีปัจจุบัน ไม่ใช่การสำรวจคนสด เก็บ reference year/release/resolution/citation และไม่สร้าง uncertainty ที่ provider ไม่ได้ส่งมา ค่า rank/share ที่ provider คืนเป็นข้อมูลภายในแต่ละ batch จึงใช้ชื่อ metadata `provider_batch_rank` และ `provider_batch_share_of_total` เพื่อไม่ให้เข้าใจว่าเป็นอันดับรวมกรุงเทพฯ
 
+WorldPop batch ที่ผ่านการตรวจรูปแบบเก็บ checkpoint ส่วนตัวได้ 24 ชั่วโมง เมื่อ retry จะไม่คำนวณ batch เดิมซ้ำหาก asset, geometry, year, provider และ processor ตรงกัน Checkpoint มี SHA-256/วันหมดอายุ ไม่เป็น map layer และไม่เปิดเผยผ่าน API ข้อมูลที่เผยแพร่ เมื่อ monitor สำเร็จจึงล้าง staging นี้โดยคงประวัติ dataset/validation ทั้งหมด
+
 Anonymous API มี quota ต่ำกว่า API key ระบบบันทึก `X-RateLimit-*` ลง source check และ Celery เคารพ `Retry-After` เมื่อได้รับ HTTP 429 ห้ามใส่ key ลง repository หรือ frontend environment
 
 ### Vector candidates
 
 OpenStreetMap snapshot จะไม่เผยแพร่เมื่อ Overpass tile ใดตอบ error หรือมี `remark` ระบุผล query ที่ไม่สมบูรณ์ แม้ HTTP status จะเป็น 200 ก็ตาม งานที่ล้มเหลวยังคง snapshot ก่อนหน้าและเก็บเหตุผลใน source check; ไม่ใช้ผลบางส่วนเพื่อลบ candidate ที่เคยผ่านการเผยแพร่
+
+OSM tiles ที่สำเร็จเก็บในตาราง staging ส่วนตัว `source_processing_checkpoints` อายุ 30 นาที งาน retry ใช้ซ้ำได้เฉพาะ replication sequence, bbox, grid, provider และ processor เดิม หาก provider มี `timestamp_osm_base` ครบทุก tile ระบบบันทึกช่วงเวลาของ snapshot และใช้ต้นช่วงเป็นวันที่ต้นทาง; replication generation time ยังถูกเก็บแยกต่างหาก หากไม่มีเวลา snapshot จะระบุ `observation_time_kind=replication_checkpoint`
 
 - ตัวตรวจรายสัปดาห์อ่าน OSM daily replication state ก่อน แล้วแบ่ง Bangkok bbox เป็น grid ย่อยเพื่อ query Overpass สำหรับตลาด, สถานพยาบาล, community centres, parks, playgrounds และ squares จากนั้น deduplicate ด้วย OSM type/ID ชุด pilot จงใจไม่ bulk-query ป้ายรถโดยสาร/โรงเรียนทั้งหมดบน public endpoint
 - ระบบคำนวณ checksum จาก OSM IDs, tags, intervention screening type และตำแหน่งจริง ถ้า snapshot ไม่เปลี่ยนจะไม่สร้าง dataset version หรือประมวลผลซ้ำ

@@ -25,6 +25,7 @@ from app.models.entities import (
     VegetationObservation,
 )
 from app.services.analytics import recalculate_priority_scores
+from app.services.checkpoints import SourceCheckpointStore
 from app.services.connectors.base import (
     AreaProcessingRecord,
     BoundaryProcessingRecord,
@@ -586,6 +587,7 @@ def run_monitor(db: Session, connector: SourceConnector, requested_by: str = "sc
         db.commit()
         latest = _latest_version(db, source.id)
         try:
+            connector.bind_checkpoints(SourceCheckpointStore(db, source.id, getattr(connector, "processor_version", "v1")))
             assets = connector.discover(latest.source_asset_id if latest else None)
             check.discovered_count = len(assets)
             processed: List[str] = []
@@ -620,6 +622,7 @@ def run_monitor(db: Session, connector: SourceConnector, requested_by: str = "sc
             check.status = "success"
             check.completed_at = utcnow()
             db.commit()
+            connector.checkpoint_store.clear()
             return {
                 "status": "success",
                 "source": source.name,

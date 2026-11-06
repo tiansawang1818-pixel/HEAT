@@ -1,0 +1,21 @@
+[Unit]
+Description=HEAT SHIFT encrypted backup and verified download recovery
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=heatshift
+Group=heatshift
+WorkingDirectory=/opt/heatshift
+StateDirectory=heatshift-backup
+StateDirectoryMode=0700
+Environment=HEATSHIFT_COMPOSE_ENV=production
+Environment=HEATSHIFT_BACKUP_LOCK_FILE=/var/lib/heatshift-backup/offsite.lock
+EnvironmentFile=/etc/heatshift/offsite-backup.env
+ExecStart=/usr/bin/python3 /opt/heatshift/scripts/backup_offsite.py
+TimeoutStartSec=4h
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true

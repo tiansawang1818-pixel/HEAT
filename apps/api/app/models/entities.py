@@ -89,6 +89,21 @@ class SourceCheck(Base):
     error_message: Mapped[Optional[str]] = mapped_column(Text)
 
 
+class SourceProcessingCheckpoint(Base):
+    """Private, expiring staging responses. Never exposed as published data."""
+    __tablename__ = "source_processing_checkpoints"
+    __table_args__ = (UniqueConstraint("source_id", "processor_version", "scope_key", "chunk_key", name="uq_source_processing_chunk"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    source_id: Mapped[str] = mapped_column(ForeignKey("data_sources.id"), index=True)
+    processor_version: Mapped[str] = mapped_column(String(80))
+    scope_key: Mapped[str] = mapped_column(String(64))
+    chunk_key: Mapped[str] = mapped_column(String(64))
+    payload: Mapped[Dict[str, Any]] = mapped_column(JSON)
+    checksum: Mapped[str] = mapped_column(String(64))
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
 class IngestionJob(Base):
     __tablename__ = "ingestion_jobs"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)

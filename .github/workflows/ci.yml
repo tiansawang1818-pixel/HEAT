@@ -176,6 +176,27 @@ jobs:
         run: |
           ./scripts/backup_postgres.sh
           for heatshift_checksum in /tmp/heatshift-backups-ci/*.sha256; do sha256sum -c "$heatshift_checksum"; done
+      - name: Verify encrypted backup and download recovery in isolated storage
+        env:
+          HEATSHIFT_COMPOSE_ENV: production
+          HEATSHIFT_COMPOSE_ENV_FILE: /tmp/heatshift-production-ci.env
+          ENVIRONMENT: test
+          RESTIC_REPOSITORY: /tmp/heatshift-restic-ci
+          RESTIC_PASSWORD_FILE: /tmp/heatshift-restic-ci-password
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends restic
+          umask 077
+          python3 scripts/backup_offsite.py --prepare-password-file "$RESTIC_PASSWORD_FILE"
+          restic init --json > /dev/null
+          python3 scripts/backup_offsite.py --allow-local-test > /tmp/heatshift-offsite-backup.json
+          python3 - <<'PY'
+          import json
+          report = json.load(open('/tmp/heatshift-offsite-backup.json'))
+          assert report['status'] == 'verified' and report['download_checksum_matches'] and report['archive_readable']
+          assert report['scope'] == 'isolated_local_repository_test' and not report['physical_offsite_location_verified']
+          print('Encrypted snapshot restored; SHA-256 matches and PostgreSQL archive is readable. Local CI storage only.')
+          PY
       - name: Verify alert rules and internal notification delivery
         run: |
           docker run --rm --entrypoint /bin/promtool -v "$PWD/infra/monitoring:/etc/prometheus:ro" prom/prometheus:v3.15.1 test rules /etc/prometheus/alerts.test.yml
@@ -200,6 +221,7 @@ jobs:
           path: |
             /tmp/heatshift-release-audit.json
             /tmp/heatshift-load-smoke.json
+            /tmp/heatshift-offsite-backup.json
           retention-days: 14
       - name: Container diagnostics
         if: failure()

@@ -3,7 +3,8 @@ import pytest
 from sqlalchemy import select
 
 from app.api.router import _candidate_rows
-from app.models.entities import CandidateIntervention, DatasetVersion, GeographicArea
+from app.models.entities import CandidateIntervention, DatasetVersion, GeographicArea, SourceProcessingCheckpoint
+from app.core.config import settings
 from app.services.connectors.catalogs import OpenStreetMapConnector
 from app.services.connectors.base import ConnectorError
 from app.services.pipeline import run_monitor
@@ -207,3 +208,49 @@ def test_osm_partial_or_failed_queries_cannot_replace_a_validated_snapshot(db, m
     assert len(versions) == 1 and versions[0].status == "published"
     candidates = db.scalars(select(CandidateIntervention)).all()
     assert len(candidates) == 1 and candidates[0].active is True
+
+
+@pytest.mark.parametrize("change_replication", [False, True])
+def test_osm_resumes_completed_tiles_from_private_storage_only_for_the_same_snapshot(db, monkeypatch, change_replication):
+    _add_area(db)
+    monkeypatch.setattr(settings, "overpass_grid_divisions", 2)
+    _mock_osm(monkeypatch, 42, [])
+    queries = []
+
+    def provider(*args, **kwargs):
+        query = kwargs["data"]["data"]
+        queries.append(query)
+        if len(queries) == 3:
+            return _response(502, json_data={"error": "synthetic interrupted third tile"})
+        return _response(200, json_data={"generator": "Synthetic unit-test Overpass", "elements": [
+            {"type": "node", "id": 101, "lat": 13.7, "lon": 100.5, "tags": {"amenity": "clinic"}}]})
+
+    monkeypatch.setattr("app.services.connectors.catalogs.httpx.post", provider)
+    with pytest.raises(ConnectorError):
+        run_monitor(db, OpenStreetMapConnector(), requested_by="test")
+    assert len(db.scalars(select(SourceProcessingCheckpoint)).all()) == 2
+    assert not db.scalars(select(CandidateIntervention)).all()
+    if change_replication:
+        _mock_osm(monkeypatch, 43, [])
+        monkeypatch.setattr("app.services.connectors.catalogs.httpx.post", provider)
+    run_monitor(db, OpenStreetMapConnector(), requested_by="test-new-worker")
+    assert len(queries) == (7 if change_replication else 5)
+    version = db.scalar(select(DatasetVersion))
+    assert version.status == "published"
+    assert version.quality_summary["resumed_tiles"] == (0 if change_replication else 2)
+    assert not db.scalars(select(SourceProcessingCheckpoint)).all()
+
+
+def test_osm_preserves_the_provider_snapshot_date_separately_from_replication_generation(db, monkeypatch):
+    _add_area(db)
+    monkeypatch.setattr(settings, "overpass_grid_divisions", 1)
+    _mock_osm(monkeypatch, 42, [])
+    monkeypatch.setattr("app.services.connectors.catalogs.httpx.post", lambda *args, **kwargs: _response(200, json_data={
+        "osm3s": {"timestamp_osm_base": "2026-10-31T23:58:00Z"},
+        "elements": [{"type": "node", "id": 101, "lat": 13.7, "lon": 100.5, "tags": {"amenity": "clinic"}}],
+    }))
+    run_monitor(db, OpenStreetMapConnector(), requested_by="test")
+    version = db.scalar(select(DatasetVersion))
+    assert version.observed_at.isoformat().startswith("2026-10-31T23:58:00")
+    assert version.metadata_json["replication_generated_at"] == "2026-11-01T00:00:00Z"
+    assert version.metadata_json["observation_time_kind"] == "overpass_snapshot"

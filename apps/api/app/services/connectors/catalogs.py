@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 import httpx
 
 from app.core.config import settings
+from app.services.checkpoints import fingerprint
 from app.services.connectors.base import (
     AreaProcessingRecord,
     BoundaryProcessingRecord,
@@ -390,11 +391,17 @@ class WorldPopConnector(SourceConnector):
         if not isinstance(limits, dict):
             raise ConnectorError("WorldPop health did not report request limits")
         batches = self._population_batches(areas, asset.metadata["reference_year"], limits)
+        scope = fingerprint({"asset": asset.source_asset_id, "areas": sorted(areas, key=lambda a: str(a["id"])), "provider": settings.worldpop_api_base_url})
         responses = []
+        resumed = 0
         # Provider documentation requires sequential requests. Keep every original
         # vertex: batching changes transport, never the scientific study boundary.
         for body in batches:
-            response = self._request_json("POST", "/batch", json=body)
+            chunk = fingerprint(body)
+            response = self.checkpoint_store.get(scope, chunk) if self.checkpoint_store else None
+            cached = response is not None
+            if not cached:
+                response = self._request_json("POST", "/batch", json=body)
             if response.get("data_year") != asset.metadata["reference_year"]:
                 raise ConnectorError("WorldPop response reference year differs from the requested year")
             features = response.get("features")
@@ -404,6 +411,13 @@ class WorldPopConnector(SourceConnector):
             returned = [str(f.get("id", "")) for f in features]
             if len(returned) != len(requested) or set(returned) != requested:
                 raise ConnectorError("WorldPop batch did not return each requested area exactly once")
+            cacheable = all(not f.get("skipped") and all(
+                not isinstance(f.get(key), bool) and isinstance(f.get(key), (int, float))
+                and math.isfinite(f[key]) and (f[key] > 0 if key == "area_km2" else f[key] >= 0)
+                for key in ("total_population", "population_density", "area_km2")) for f in features)
+            if self.checkpoint_store and not cached and cacheable:
+                self.checkpoint_store.put(scope, chunk, response, ttl_seconds=86400)
+            resumed += int(cached)
             responses.append(response)
         response_features = [feature for response in responses for feature in response["features"]]
         skipped_ids = [str(feature.get("id", "")) for feature in response_features if feature.get("skipped")]
@@ -412,6 +426,7 @@ class WorldPopConnector(SourceConnector):
             "returned_areas": len(response_features),
             "skipped_area_ids": skipped_ids,
             "request_batches": len(batches),
+            "resumed_batches": resumed,
             "geometry_simplified": False,
             "provider_request_limits": {key: limits[key] for key in ("max_vertices", "max_parts", "max_batch_features", "max_body_bytes")},
         }
@@ -598,6 +613,8 @@ class OpenStreetMapConnector(SourceConnector):
         total_bytes = 0
         generators = set()
         request_count = 0
+        resumed_count = 0
+        snapshot_times = []
         for row in range(divisions):
             tile_south = south + latitude_step * row
             tile_north = north if row == divisions - 1 else tile_south + latitude_step
@@ -617,32 +634,53 @@ out center tags qt;""".format(
                     north=tile_north,
                     east=tile_east,
                 )
-                try:
-                    response = httpx.post(
-                        settings.overpass_api_url,
-                        data={"data": query},
-                        timeout=settings.overpass_timeout_seconds + 15,
-                        headers={"User-Agent": "HEAT-SHIFT/0.1 (Bangkok urban heat research)"},
-                    )
-                    self._raise_for_rate_limit(response, "Overpass API")
-                    response.raise_for_status()
-                except ProviderRateLimitError:
-                    raise
-                except httpx.HTTPError as exc:
-                    raise ConnectorError("Overpass candidate request failed: %s" % exc) from exc
-                total_bytes += len(response.content)
+                chunk = fingerprint({"query": query, "provider": settings.overpass_api_url})
+                scope = getattr(self, "_checkpoint_scope", None)
+                body = self.checkpoint_store.get(scope, chunk) if self.checkpoint_store and scope else None
+                cached = body is not None
+                if not cached:
+                    try:
+                        response = httpx.post(
+                            settings.overpass_api_url,
+                            data={"data": query},
+                            timeout=settings.overpass_timeout_seconds + 15,
+                            headers={"User-Agent": "HEAT-SHIFT/0.1 (Bangkok urban heat research)"},
+                        )
+                        self._raise_for_rate_limit(response, "Overpass API")
+                        response.raise_for_status()
+                    except ProviderRateLimitError:
+                        raise
+                    except httpx.HTTPError as exc:
+                        raise ConnectorError("Overpass candidate request failed: %s" % exc) from exc
+                    try:
+                        body = response.json()
+                    except ValueError as exc:
+                        raise ConnectorError("Overpass response is not valid JSON") from exc
+                    request_count += 1
+                else:
+                    resumed_count += 1
+                total_bytes += len(json.dumps(body, ensure_ascii=False).encode())
                 if total_bytes > settings.overpass_max_response_bytes:
                     raise ConnectorError("Overpass responses exceed the configured cumulative safety limit")
-                try:
-                    body = response.json()
-                except ValueError as exc:
-                    raise ConnectorError("Overpass response is not valid JSON") from exc
                 if not isinstance(body, dict) or body.get("remark"):
                     raise ConnectorError("Overpass reported incomplete query results; previous dataset is preserved")
                 elements = body.get("elements")
                 if not isinstance(elements, list):
                     raise ConnectorError("Overpass response does not contain an element list")
-                request_count += 1
+                snapshot_metadata = body.get("osm3s") or {}
+                if not isinstance(snapshot_metadata, dict):
+                    raise ConnectorError("Overpass snapshot metadata is invalid")
+                reference = snapshot_metadata.get("timestamp_osm_base")
+                if reference:
+                    try:
+                        parsed_time = datetime.fromisoformat(reference.replace("Z", "+00:00"))
+                        if parsed_time.tzinfo is None:
+                            raise ValueError("missing source timezone")
+                        snapshot_times.append(parsed_time.astimezone(timezone.utc))
+                    except (TypeError, ValueError):
+                        raise ConnectorError("Overpass source snapshot timestamp is invalid")
+                if self.checkpoint_store and scope and not cached:
+                    self.checkpoint_store.put(scope, chunk, body, ttl_seconds=1800)
                 if body.get("generator"):
                     generators.add(str(body["generator"]))
                 for element in elements:
@@ -654,6 +692,9 @@ out center tags qt;""".format(
         self._processing_meta = {
             "overpass_generators": sorted(generators),
             "overpass_request_count": request_count,
+            "resumed_tiles": resumed_count,
+            "snapshot_observed_from": min(snapshot_times).isoformat() if len(snapshot_times) == divisions ** 2 else None,
+            "snapshot_observed_to": max(snapshot_times).isoformat() if len(snapshot_times) == divisions ** 2 else None,
             "response_bytes": total_bytes,
             "raw_element_count": len(result),
             "processor_version": self.processor_version,
@@ -678,6 +719,7 @@ out center tags qt;""".format(
         timestamp = values.get("timestamp", "").replace("\\:", ":")
         if not sequence or not timestamp:
             raise ConnectorError("OSM replication state is incomplete")
+        self._checkpoint_scope = fingerprint({"sequence": sequence, "bbox": settings.bangkok_bbox, "grid": settings.overpass_grid_divisions})
         self._candidate_elements = self._fetch_candidate_elements()
         normalized = []
         for element in self._candidate_elements:
@@ -699,7 +741,8 @@ out center tags qt;""".format(
         asset_id = "osm-candidate-snapshot:%s" % snapshot_checksum
         if asset_id == latest_asset_id:
             return []
-        observed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        snapshot_time = self._processing_meta.get("snapshot_observed_from")
+        observed = datetime.fromisoformat(snapshot_time or timestamp.replace("Z", "+00:00"))
         return [
             SourceAsset.with_checksum(
                 asset_id,
@@ -708,6 +751,10 @@ out center tags qt;""".format(
                 BANGKOK_EXTENT,
                 metadata={
                     "replication_sequence": int(sequence),
+                    "replication_generated_at": timestamp,
+                    "observation_time_kind": "overpass_snapshot" if snapshot_time else "replication_checkpoint",
+                    "snapshot_observed_from": snapshot_time,
+                    "snapshot_observed_to": self._processing_meta.get("snapshot_observed_to"),
                     "snapshot_checksum": snapshot_checksum,
                     "candidate_element_count": len(normalized),
                     "data_class": "open_data_candidate_locations",
