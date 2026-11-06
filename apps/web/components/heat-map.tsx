@@ -6,6 +6,7 @@ import { GeoJsonLayer, ScatterplotLayer } from "@deck.gl/layers";
 import type { PickingInfo } from "@deck.gl/core";
 import * as maplibregl from "maplibre-gl";
 import type { Map as MapLibreMap } from "maplibre-gl";
+import { populationColorScale } from "@/lib/utils";
 import type {
   AreaProperties,
   FeatureCollection,
@@ -23,8 +24,9 @@ function ramp(value: number | null | undefined, layer: string): [number, number,
     return [29, 110 + 105 * t, 117 - 45 * t, 195];
   }
   if (layer === "population") {
-    const t = Math.min(1, value / 20_000);
-    return [58 + 100 * t, 115 - 45 * t, 180 + 65 * t, 205];
+    const { min, max, from, to } = populationColorScale;
+    const t = Math.min(1, Math.max(0, (value - min) / (max - min)));
+    return [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t, from[2] + (to[2] - from[2]) * t, 205];
   }
   if (layer === "built" || layer === "built_up") {
     const t = Math.min(1, value / 100);
@@ -42,7 +44,7 @@ function layerValue(feature: { properties: AreaProperties }, layer: string) {
     priority: p.priority_score,
     vegetation: p.tree_coverage_pct,
     ndvi: p.ndvi,
-    population: p.population,
+    population: p.population_density,
     built: p.built_up_pct,
     built_up: p.built_up_pct,
     "future-risk": p.scenario_change_c,
@@ -250,8 +252,8 @@ export function HeatMap({
         if ("properties" in object) {
           const value = layerValue(object, activeLayer);
           return {
-            html: `<div style="font-weight:700">${object.properties.name_th}</div><div>${value == null ? "ยังไม่มีค่าที่ผ่านการตรวจสอบ" : value.toLocaleString("th-TH")}</div>`,
-            style: { backgroundColor: "#0d1922", color: "#f8fafc", border: "1px solid rgba(255,255,255,.16)", fontSize: "12px" },
+            text: `${object.properties.name_th}\n${value == null ? "ยังไม่มีค่าที่ผ่านการตรวจสอบ" : `${value.toLocaleString("th-TH")}${activeLayer === "population" ? " คน/ตร.กม." : ""}`}`,
+            style: { backgroundColor: "#0d1922", color: "#f8fafc", border: "1px solid rgba(255,255,255,.16)", fontSize: "12px", whiteSpace: "pre-line" },
           };
         }
         return { text: object.name };

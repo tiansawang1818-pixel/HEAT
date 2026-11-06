@@ -84,9 +84,11 @@ import {
   cn,
   formatBaht,
   formatNumber,
+  formatPopulationReferenceYear,
   formatThaiDate,
   freshnessLabel,
   isSyntheticQuality,
+  populationColorScale,
   type AreaProperties,
   type AdminSessionStatus,
   type AreaDirectoryItem,
@@ -840,14 +842,14 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
           </div>
         </div>
         <div className="sidebar-section date-section">
-          <div className="section-label"><span>วันที่สังเกตการณ์</span><Clock3 size={13} /></div>
+          <div className="section-label"><span>{activeLayer === "population" ? "ปีอ้างอิงประชากร" : "วันที่สังเกตการณ์"}</span><Clock3 size={13} /></div>
           {layerObservations?.supports_snapshots ? (
-            <select className="date-select" aria-label="เลือกวันที่สังเกตการณ์" value={selectedSnapshotId} disabled={observationsLoading || !layerObservations.items.length} onChange={(event) => setSnapshotChoice({ layer: activeLayer, id: event.target.value, observation: layerObservations.items.find((item) => item.id === event.target.value) })}>
+            <select className="date-select" aria-label={activeLayer === "population" ? "เลือกปีอ้างอิงประชากร" : "เลือกวันที่สังเกตการณ์"} value={selectedSnapshotId} disabled={observationsLoading || !layerObservations.items.length} onChange={(event) => setSnapshotChoice({ layer: activeLayer, id: event.target.value, observation: layerObservations.items.find((item) => item.id === event.target.value) })}>
               <option value="">{layerObservations.items.length ? "ข้อมูลล่าสุดที่ผ่านการตรวจสอบ" : "ยังไม่มี observation ที่เผยแพร่"}</option>
-              {layerObservations.items.map((item) => <option key={item.id} value={item.id}>{formatThaiDate(item.observed_at, true)} · v{item.layer_version}</option>)}
+              {layerObservations.items.map((item) => <option key={item.id} value={item.id}>{activeLayer === "population" ? formatPopulationReferenceYear(item.observed_at) : formatThaiDate(item.observed_at, true)} · v{item.layer_version}</option>)}
             </select>
-          ) : <div className="date-select">{formatThaiDate(currentLayer?.observation_date)}</div>}
-          <p>{observationsError || (observationsLoading ? "กำลังอ่านวันที่จาก backend" : selectedSnapshot ? "กำลังดูข้อมูลย้อนหลัง ขอบเขตพื้นที่และแผนลงทุนอ้างอิงปัจจุบัน" : "แสดงวันที่ต้นทาง ไม่ใช่วันที่นำเข้าระบบ")}</p>
+          ) : <div className="date-select">{activeLayer === "population" ? formatPopulationReferenceYear(currentLayer?.observation_date) : formatThaiDate(currentLayer?.observation_date)}</div>}
+          <p>{observationsError || (observationsLoading ? "กำลังอ่านวันที่จาก backend" : selectedSnapshot ? "กำลังดูข้อมูลย้อนหลัง ขอบเขตพื้นที่และแผนลงทุนอ้างอิงปัจจุบัน" : activeLayer === "population" ? "ค่าประมาณตามปีอ้างอิง ไม่ใช่การตรวจวัดรายวัน" : "แสดงวันที่ต้นทาง ไม่ใช่วันที่นำเข้าระบบ")}</p>
         </div>
       </aside>
 
@@ -912,14 +914,14 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
           <div className="legend-heading"><span>{currentLayer?.name_th || activeLayer}</span><Badge>{currentLayer?.unit || "INDEX"}</Badge></div>
           <div
             className={cn("legend-ramp", !rasterTile && (activeLayer === "vegetation" || activeLayer === "ndvi") && "green")}
-            style={rasterTile ? { background: `linear-gradient(90deg, ${rasterTile.legend.palette.map((color) => `#${color}`).join(", ")})` } : undefined}
+            style={rasterTile ? { background: `linear-gradient(90deg, ${rasterTile.legend.palette.map((color) => `#${color}`).join(", ")})` } : activeLayer === "population" ? { background: `linear-gradient(90deg, rgb(${populationColorScale.from.join(",")}), rgb(${populationColorScale.to.join(",")}))` } : undefined}
           />
           <div className="legend-labels">
-            <span>{rasterTile ? rasterTile.legend.min : "ต่ำ"}</span>
-            <span>{rasterTile ? rasterTile.legend.max : "สูง"}</span>
+            <span>{rasterTile ? rasterTile.legend.min : activeLayer === "population" ? populationColorScale.min : "ต่ำ"}</span>
+            <span>{rasterTile ? rasterTile.legend.max : activeLayer === "population" ? `≥ ${formatNumber(populationColorScale.max)}` : "สูง"}</span>
           </div>
           <div className="legend-meta">{selectedSnapshot ? <Badge>ข้อมูลย้อนหลัง</Badge> : <StatusDot status={currentLayer?.status || "unavailable"} />}<span>v{selectedSnapshot?.layer_version ?? currentLayer?.layer_version ?? "—"}</span></div>
-          <p className="legend-source-reason">{selectedSnapshot ? `สังเกตการณ์ ${formatThaiDate(selectedSnapshot.observed_at, true)}` : currentLayer?.status_reason}</p>
+          <p className="legend-source-reason">{selectedSnapshot ? activeLayer === "population" ? formatPopulationReferenceYear(selectedSnapshot.observed_at) : `สังเกตการณ์ ${formatThaiDate(selectedSnapshot.observed_at, true)}` : currentLayer?.status_reason}</p>
         </div>
         <button className="mobile-analysis" onClick={() => setMobilePanel("analysis")}><Activity size={15} /> วิเคราะห์พื้นที่</button>
         <AnimatePresence>
@@ -1279,7 +1281,7 @@ function AreaPanel({ area, loading, onOptimize }: { area: AreaProperties | null;
         <div className="score-ring"><strong>{formatNumber(area.priority_score)}</strong><span>/100</span></div>
       </div>
       {isDemo && <div className="inline-warning">ข้อมูลสาธิตหรือสังเคราะห์สำหรับทดสอบ ไม่ใช่การสังเกตจริง</div>}
-      <div className="observation-strip"><Clock3 size={13} /><span>สังเกตการณ์จากแหล่งต้นทาง</span><strong>{formatThaiDate(area.observation_date)}</strong></div>
+      <div className="observation-strip"><Clock3 size={13} /><span>ข้อมูลสิ่งแวดล้อมล่าสุด</span><strong>{formatThaiDate(area.observation_date)}</strong></div>
       <div className="metrics-grid">
         <Metric label="อุณหภูมิพื้นผิว" value={formatNumber(area.surface_temperature_c, 1)} suffix={area.surface_temperature_c == null ? "" : "°C"} tone="hot" />
         <Metric label="ความต่างจากพื้นที่รอบข้าง" value={formatNumber(area.temperature_anomaly_c, 1)} suffix={area.temperature_anomaly_c == null ? "" : "°C"} />
@@ -1294,7 +1296,7 @@ function AreaPanel({ area, loading, onOptimize }: { area: AreaProperties | null;
           <div className="reason-row" key={`${reason}-${index}`}><span>{String(index + 1).padStart(2, "0")}</span><p>{reason}</p></div>
         ))}
       </div>
-      <div className="source-note">ประชากร: ปีอ้างอิง {area.population_reference_year || "ยังไม่ระบุ"} · คุณภาพ: {area.quality_status || "ยังไม่ระบุ"}</div>
+      <div className="source-note">ประชากร: ค่าประมาณจากแบบจำลอง · ปีอ้างอิง {area.population_reference_year || "ยังไม่ระบุ"}<br />คุณภาพขอบเขต: {area.quality_status || "ยังไม่ระบุ"}</div>
       <Button className="w-full" variant="thermal" onClick={onOptimize} disabled={isDemo}><CircleDollarSign size={15} /> นำพื้นที่นี้ไปวิเคราะห์การลงทุน</Button>
     </>
   );
@@ -1788,12 +1790,13 @@ function ObservatoryOverlay({ datasets, snapshot, readiness, readinessError, loa
           <Card key={item.dataset_id} className="dataset-card">
             <div className="dataset-title"><strong>{item.source_name}</strong><StatusDot status={item.status} /></div>
             <dl>
-              <div><dt>สังเกตการณ์ต้นทาง</dt><dd>{formatThaiDate(item.last_source_observed_at, true)}</dd></div>
+              <div><dt>{item.dataset_id === "worldpop/global" ? "ปีอ้างอิงประชากร" : "สังเกตการณ์ต้นทาง"}</dt><dd>{item.dataset_id === "worldpop/global" ? formatPopulationReferenceYear(item.last_source_observed_at) : formatThaiDate(item.last_source_observed_at, true)}</dd></div>
               <div><dt>ระบบตรวจล่าสุด</dt><dd>{formatThaiDate(item.last_checked_at, true)}</dd></div>
               <div><dt>เผยแพร่ล่าสุด</dt><dd>{formatThaiDate(item.last_published_at, true)}</dd></div>
               <div><dt>ตรวจครั้งถัดไป</dt><dd>{formatThaiDate(item.next_check_at, true)}</dd></div>
             </dl>
             <p>{item.status_reason || `คุณภาพ: ${item.quality_status || "ยังไม่ระบุ"}`}</p>
+            {item.dataset_id === "worldpop/global" && <p>ค่าประมาณประชากรจากแบบจำลอง ไม่ใช่การตรวจวัดรายวัน</p>}
             {item.source_id && <button className="version-history-button" onClick={() => void inspectVersions(item.source_id!)}><History size={12} /> ตรวจ version และ validation</button>}
           </Card>
         ))}
@@ -1818,7 +1821,7 @@ function ObservatoryOverlay({ datasets, snapshot, readiness, readinessError, loa
                     <Badge>{version.status}</Badge>
                   </div>
                   <dl>
-                    <div><dt>สังเกตการณ์ต้นทาง</dt><dd>{formatThaiDate(version.observed_at, true)}</dd></div>
+                    <div><dt>{versionHistory.source.dataset_id === "worldpop/global" ? "ปีอ้างอิงประชากร" : "สังเกตการณ์ต้นทาง"}</dt><dd>{versionHistory.source.dataset_id === "worldpop/global" ? formatPopulationReferenceYear(version.observed_at) : formatThaiDate(version.observed_at, true)}</dd></div>
                     <div><dt>เผยแพร่</dt><dd>{formatThaiDate(version.published_at, true)}</dd></div>
                     <div><dt>Layer version</dt><dd>v{version.layer_version}</dd></div>
                     <div><dt>คุณภาพ</dt><dd>{version.quality_status}</dd></div>

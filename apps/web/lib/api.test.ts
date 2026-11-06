@@ -8,6 +8,28 @@ afterEach(() => {
 });
 
 describe("Thai presentation helpers", () => {
+  it("keeps population counts, reference years, environmental observations and score calculation times distinct", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      id: "unit-area", indicators: { population_density: { value: 500, observed_at: "2026-01-01T00:00:00Z" } },
+      priority: { calculated_at: "2026-11-06T00:00:00Z" },
+    })));
+    const missing = await loadAreaDetail("unit-area");
+    expect(missing.population).toBeUndefined();
+    expect(missing.observation_date).toBeNull();
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      id: "unit-area", indicators: {
+        population_estimate: { value: 1000, observed_at: "2026-01-01T00:00:00Z", quality_status: "model_estimate" },
+        population_reference_year: { value: 2026, observed_at: "2026-01-01T00:00:00Z" },
+        ndvi: { value: .5, observed_at: "2025-12-30T00:00:00Z" },
+      }, priority: { calculated_at: "2026-11-06T00:00:00Z" },
+    })));
+    expect(await loadAreaDetail("unit-area")).toMatchObject({ population: 1000, population_reference_year: 2026, observation_date: "2025-12-30T00:00:00Z" });
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ type: "FeatureCollection", features: [{
+      type: "Feature", geometry: { type: "Point", coordinates: [100.5,13.7] }, properties: { id: "unit-area", population: 1000, value: 500 },
+    }] })));
+    expect((await loadLayerFeatures("population")).features[0].properties).toMatchObject({ population: 1000, population_density: 500 });
+  });
+
   it("does not mistake configuration readiness or contradictory results for validated decision data", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ scope: "configuration_and_dependencies", configuration_ready: true })));
     await expect(loadPublishedDataReadiness()).rejects.toThrow("รูปแบบผลตรวจข้อมูล");

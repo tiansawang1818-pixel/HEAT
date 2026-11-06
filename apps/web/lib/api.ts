@@ -72,7 +72,7 @@ const layerProperty: Record<string, keyof AreaProperties> = {
   priority: "priority_score",
   vegetation: "tree_coverage_pct",
   ndvi: "ndvi",
-  population: "population",
+  population: "population_density",
   built: "built_up_pct",
   "future-risk": "scenario_change_c",
 };
@@ -283,7 +283,9 @@ export async function loadAreaDetail(areaId: string, datasetVersionId?: string):
   const synthetic = isSyntheticQuality(boundaryQuality) || Object.values(indicators).some((item) => isSyntheticQuality(item.quality_status));
   const priority = raw.priority as { score?: number; components?: Record<string, number>; missing_inputs?: string[]; calculated_at?: string } | null;
   const value = (...keys: string[]) => keys.map((key) => indicators[key]?.value).find((item) => typeof item === "number");
-  const observed = Object.values(indicators).map((item) => item.observed_at).filter(Boolean) as string[];
+  const observed = Object.entries(indicators)
+    .filter(([key]) => ["lst_c_mean", "surface_temperature_c", "temperature", "ndvi", "tree_cover_fraction", "tree_coverage_pct", "built_fraction", "built_up_pct"].includes(key))
+    .map(([, item]) => item.observed_at).filter(Boolean) as string[];
   const explanations = priority?.components
     ? Object.entries(priority.components).filter(([, item]) => item != null).map(([key, item]) => `${key}: ${Number(item).toLocaleString("th-TH", { maximumFractionDigits: 2 })}`)
     : [];
@@ -294,13 +296,14 @@ export async function loadAreaDetail(areaId: string, datasetVersionId?: string):
     priority_score: priority?.score,
     surface_temperature_c: value("lst_c_mean", "surface_temperature_c", "temperature"),
     temperature_anomaly_c: value("temperature_anomaly", "lst_anomaly_c"),
-    population: value("population_estimate", "population", "population_density"),
+    population: value("population_estimate", "population"),
+    population_density: value("population_density"),
     population_reference_year: value("population_reference_year"),
     tree_coverage_pct: value("tree_cover_fraction", "tree_coverage_pct"),
     ndvi: value("ndvi"),
     built_up_pct: value("built_fraction", "built_up_pct"),
     quality_status: synthetic ? "synthetic_demo" : boundaryQuality,
-    observation_date: (observed.sort().at(-1) || priority?.calculated_at || null),
+    observation_date: observed.sort().at(-1) || null,
     priority_explanation: explanations.length ? explanations : priority?.missing_inputs?.map((item) => `ยังขาดข้อมูล: ${item}`),
   };
 }

@@ -28,6 +28,14 @@ export function formatThaiDate(value?: string | null, withTime = false) {
   }).format(date);
 }
 
+export function formatPopulationReferenceYear(value?: string | null) {
+  if (!value) return "ยังไม่มีข้อมูล";
+  const year = new Date(value).getUTCFullYear();
+  return Number.isFinite(year) ? `ปีอ้างอิง ${year}` : "ยังไม่ทราบปีอ้างอิง";
+}
+
+export const populationColorScale = { min: 0, max: 20_000, from: [58, 115, 180], to: [158, 70, 245] } as const;
+
 export function formatNumber(value?: number | null, digits = 0) {
   if (value == null || !Number.isFinite(value)) return "—";
   return new Intl.NumberFormat("th-TH", { maximumFractionDigits: digits }).format(value);
@@ -138,6 +146,7 @@ export interface AreaProperties {
   surface_temperature_c?: number | null;
   temperature_anomaly_c?: number | null;
   population?: number | null;
+  population_density?: number | null;
   population_reference_year?: number | null;
   tree_coverage_pct?: number | null;
   ndvi?: number | null;
