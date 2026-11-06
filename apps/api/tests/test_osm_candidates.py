@@ -1,9 +1,11 @@
 import httpx
+import pytest
 from sqlalchemy import select
 
 from app.api.router import _candidate_rows
 from app.models.entities import CandidateIntervention, DatasetVersion, GeographicArea
 from app.services.connectors.catalogs import OpenStreetMapConnector
+from app.services.connectors.base import ConnectorError
 from app.services.pipeline import run_monitor
 
 
@@ -188,3 +190,20 @@ def test_osm_rate_limit_preserves_retry_after(monkeypatch):
         assert False, "expected provider rate limit"
     except ProviderRateLimitError as exc:
         assert exc.retry_after_seconds == 180
+
+
+@pytest.mark.parametrize("status,body", [
+    (502, {"error": "synthetic upstream outage"}),
+    (200, {"elements": [], "remark": "runtime error: synthetic query timeout; results are incomplete"}),
+])
+def test_osm_partial_or_failed_queries_cannot_replace_a_validated_snapshot(db, monkeypatch, status, body):
+    _add_area(db)
+    _mock_osm(monkeypatch, 42, [{"type": "node", "id": 101, "lat": 13.7, "lon": 100.5, "tags": {"amenity": "clinic"}}])
+    run_monitor(db, OpenStreetMapConnector(), requested_by="test")
+    monkeypatch.setattr("app.services.connectors.catalogs.httpx.post", lambda *args, **kwargs: _response(status, json_data=body))
+    with pytest.raises(ConnectorError):
+        run_monitor(db, OpenStreetMapConnector(), requested_by="test")
+    versions = db.scalars(select(DatasetVersion)).all()
+    assert len(versions) == 1 and versions[0].status == "published"
+    candidates = db.scalars(select(CandidateIntervention)).all()
+    assert len(candidates) == 1 and candidates[0].active is True

@@ -637,6 +637,8 @@ out center tags qt;""".format(
                     body = response.json()
                 except ValueError as exc:
                     raise ConnectorError("Overpass response is not valid JSON") from exc
+                if not isinstance(body, dict) or body.get("remark"):
+                    raise ConnectorError("Overpass reported incomplete query results; previous dataset is preserved")
                 elements = body.get("elements")
                 if not isinstance(elements, list):
                     raise ConnectorError("Overpass response does not contain an element list")

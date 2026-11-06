@@ -85,6 +85,8 @@ Anonymous API มี quota ต่ำกว่า API key ระบบบัน�
 
 ### Vector candidates
 
+OpenStreetMap snapshot จะไม่เผยแพร่เมื่อ Overpass tile ใดตอบ error หรือมี `remark` ระบุผล query ที่ไม่สมบูรณ์ แม้ HTTP status จะเป็น 200 ก็ตาม งานที่ล้มเหลวยังคง snapshot ก่อนหน้าและเก็บเหตุผลใน source check; ไม่ใช้ผลบางส่วนเพื่อลบ candidate ที่เคยผ่านการเผยแพร่
+
 - ตัวตรวจรายสัปดาห์อ่าน OSM daily replication state ก่อน แล้วแบ่ง Bangkok bbox เป็น grid ย่อยเพื่อ query Overpass สำหรับตลาด, สถานพยาบาล, community centres, parks, playgrounds และ squares จากนั้น deduplicate ด้วย OSM type/ID ชุด pilot จงใจไม่ bulk-query ป้ายรถโดยสาร/โรงเรียนทั้งหมดบน public endpoint
 - ระบบคำนวณ checksum จาก OSM IDs, tags, intervention screening type และตำแหน่งจริง ถ้า snapshot ไม่เปลี่ยนจะไม่สร้าง dataset version หรือประมวลผลซ้ำ
 - node ใช้พิกัดจริง ส่วน way/relation ใช้ `out center` สำหรับตำแหน่งคัดกรอง จึงไม่อ้างว่าเป็นขอบเขตแปลงหรือพื้นที่ก่อสร้าง
