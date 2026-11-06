@@ -1,0 +1,17 @@
+[Unit]
+Description=HEAT SHIFT checksum-protected PostgreSQL backup
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+User=heatshift
+Group=heatshift
+WorkingDirectory=/opt/heatshift
+Environment=HEATSHIFT_COMPOSE_ENV=production
+EnvironmentFile=/etc/heatshift/backup.env
+ExecStart=/opt/heatshift/scripts/backup_postgres.sh
+TimeoutStartSec=3600
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true

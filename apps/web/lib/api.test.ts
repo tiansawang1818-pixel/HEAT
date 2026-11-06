@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { askAssistant, compareScenarios, loadAreaDetail, loadDashboardData, loadDatasetVersions, loadLayerFeatures, loadProductionReadiness, loadRasterTileDescriptor, runForecastScenario, saveScenario, searchAreaDirectory } from "./api";
+import { askAssistant, compareScenarios, loadAreaDetail, loadDashboardData, loadDatasetVersions, loadLayerFeatures, loadProductionReadiness, loadPublishedDataReadiness, loadRasterTileDescriptor, runForecastScenario, saveScenario, searchAreaDirectory } from "./api";
 import { formatBaht, formatNumber, freshnessLabel } from "./utils";
 
 afterEach(() => {
@@ -8,6 +8,17 @@ afterEach(() => {
 });
 
 describe("Thai presentation helpers", () => {
+  it("does not mistake configuration readiness or contradictory results for validated decision data", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ scope: "configuration_and_dependencies", configuration_ready: true })));
+    await expect(loadPublishedDataReadiness()).rejects.toThrow("รูปแบบผลตรวจข้อมูล");
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      scope: "published_data_and_recorded_decision_evidence", data_ready: true,
+      checks: [{ code: "source.landsat", status: "blocked" }], coverage: {},
+      summary: { ready: 0, warning: 0, blocked: 1 }, limitations_th: "unit test", external_verification_required_th: [],
+    })));
+    await expect(loadPublishedDataReadiness()).rejects.toThrow("รูปแบบผลตรวจข้อมูล");
+  });
+
   it("formats a million-baht budget compactly", () => {
     expect(formatBaht(5_000_000)).toContain("5");
     expect(formatBaht(5_000_000)).toContain("ล้าน");

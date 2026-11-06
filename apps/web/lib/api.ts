@@ -18,12 +18,25 @@ import type {
   OptimizationResult,
   PriorityRankingResult,
   ProductionReadiness,
+  PublishedDataReadiness,
   RasterTileDescriptor,
   SavedScenarioRecord,
   WeatherContext,
 } from "@/lib/utils";
 
 const configuredBase = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "";
+
+export async function loadPublishedDataReadiness(signal?: AbortSignal): Promise<PublishedDataReadiness> {
+  const value = await request<PublishedDataReadiness>("/api/system/data-readiness", { signal });
+  if (value.scope !== "published_data_and_recorded_decision_evidence" || typeof value.data_ready !== "boolean"
+      || !Array.isArray(value.checks) || !value.checks.length || !value.coverage || !value.summary
+      || !Array.isArray(value.external_verification_required_th) || typeof value.limitations_th !== "string"
+      || !["ready", "warning", "blocked"].every(status => Number.isInteger(value.summary[status as keyof typeof value.summary]))
+      || value.data_ready !== !value.checks.some(check => check.status === "blocked")) {
+    throw new Error("รูปแบบผลตรวจข้อมูลไม่ถูกต้อง");
+  }
+  return value;
+}
 const defaultViewportBbox: [number, number, number, number] = [100.36, 13.59, 100.66, 13.91];
 
 function endpoint(path: string) {

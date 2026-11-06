@@ -9,6 +9,7 @@ from app.models.entities import (
 )
 from app.services.source_registry import SOURCE_KEYS
 from app.services.versions import INDICATOR_DATASETS, LAYER_DATASETS, published_version
+from app.services.forecast_workflow import forecast_inputs
 
 
 def _aware(value):
@@ -101,13 +102,17 @@ def published_data_readiness(db):
             eligible += 1
     add("investment.evidence", eligible > 0, "โครงการพร้อมหลักฐาน", f"มี {eligible} โครงการในพื้นที่นำร่องที่มีหลักฐานต้นทุนและความเหมาะสมที่ผู้ดูแลบันทึกแล้ว")
     latest_model = db.scalar(select(ForecastRun).order_by(desc(ForecastRun.created_at)).limit(1))
+    current_model = bool(latest_model and latest_model.results.get("status") == "completed" and latest_model.metrics.get("validation_passed"))
+    if current_model:
+        expected_history = forecast_inputs(db)[0]["history"]
+        current_model = expected_history["observation_count"] > 0 and (latest_model.training_versions.get("history") or {}).get("fingerprint") == expected_history["fingerprint"]
     return {
         "scope": "published_data_and_recorded_decision_evidence", "data_ready": all(c["status"] != "blocked" for c in checks),
         "generated_at": now.isoformat(), "checks": checks,
         "summary": {status: sum(c["status"] == status for c in checks) for status in ("ready", "warning", "blocked")},
         "coverage": {"official_areas": official_count, "complete_pilot_areas": len(complete_areas), "evidence_backed_candidates": eligible},
         "published_versions": {dataset: {"version_id": v.id, "observed_at": _aware(v.observed_at).isoformat() if v.observed_at else None} for dataset, v in versions.items()},
-        "future_scenarios_available": bool(latest_model and latest_model.results.get("status") == "completed" and latest_model.metrics.get("validation_passed")),
+        "future_scenarios_available": current_model,
         "external_verification_required_th": [
             "ตรวจ SSO ด้วยบัญชีผู้ดูแลจริง รวมการปฏิเสธบัญชีที่ไม่มีสิทธิ์",
             "ตรวจ DNS, HTTPS, ภาพ raster และขอบเขตพื้นที่บนเซิร์ฟเวอร์จริง",

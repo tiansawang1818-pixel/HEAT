@@ -87,6 +87,10 @@ Production ต้องได้ Redis lock ก่อนเริ่ม source c
 
 Postgres dump ไม่รวม object storage ให้เปิด bucket versioning/replication และสำรอง raster/object keys ไปยัง account หรือ region แยก โดยกำหนด retention ให้สอดคล้องกับ database backup และทดสอบว่า `RasterAssetMetadata.storage_uri` ทุก URI ยังอ่านได้หลัง restore
 
+มี `infra/systemd/heatshift-backup.service` และ `.timer` สำหรับ Linux server ที่ติดตั้งโครงการใน `/opt/heatshift` รอบสำรองคือประมาณ 02:30 น. Asia/Bangkok พร้อม jitter 15 นาที และทำรอบที่พลาดเมื่อเครื่องกลับมาเปิด ให้ผู้ดูแลติดตั้ง unit, สร้าง service user ที่มีสิทธิ์ใช้ Docker ตามนโยบายองค์กร, เตรียม directory และ `/etc/heatshift/backup.env` จากตัวอย่าง แล้วจึง enable timer ไฟล์เหล่านี้ยังไม่ได้ติดตั้งหรือทำงานบนเครื่องผู้ใช้ การมี timer ไม่แทนการเข้ารหัส ส่งสำรองออกนอกเครื่อง กำหนด retention และซ้อมกู้คืนจากปลายทางจริง
+
+backup helper อ่านชื่อฐานข้อมูล/ผู้ใช้จาก container โดยตรงและตั้งชื่อ dump แบบไม่ชนกันเมื่อมีการสั่งใกล้เวลาเดียวกัน CI รัน helper กับ release containers และตรวจ checksum เพิ่มเติมจากการซ้อม restore ไปยังฐานข้อมูลแยก
+
 ## Release checklist
 
 1. tests + migration rehearsal ผ่าน และ `make readiness` จบด้วย exit code 0 (ผ่านการตรวจ configuration/dependencies เบื้องต้น)
@@ -97,3 +101,5 @@ Postgres dump ไม่รวม object storage ให้เปิด bucket ver
 6. smoke API, map tiles, SSE/polling และหนึ่ง read-only provider check
 
 `GET /api/system/readiness?probe_dependencies=true` ใช้ตรวจรายการเดียวกับหน้า Data Observatory และ CLI โดย probe PostGIS/Redis แบบ timeout สั้น พร้อมตรวจ configuration ของ OIDC, CORS, rate limit และ Earth Engine ผลลัพธ์ `configuration_ready` ระบุเฉพาะขอบเขต `configuration_and_dependencies` ไม่ใช่การรับรอง production ทั้งระบบ การข้าม Redis probe จะยังติด blocker ผลลัพธ์ไม่คืนค่า secret, token, endpoint URL หรือ credential path สถานะ Earth Engine identity เป็นเพียง configuration hint; ต้องยืนยันสิทธิ์จริงด้วย source check, worker/Beat, frontend demo mode และ ingestion-to-map ก่อน release ทุกครั้ง
+
+หน้า Data Observatory มีรายงานภาษาไทยจาก `GET /api/system/data-readiness` แยกอีกชุด โดยตรวจเวอร์ชันที่เผยแพร่ รายงาน validation พื้นที่ที่ข้อมูลครบ และหลักฐานโครงการ พร้อมแสดงรายการที่ต้องยืนยันภายนอก หน้าเว็บอ่านผลใหม่ทุก 60 วินาทีโดยไม่ reload ทั้งหน้า ผลแบบจำลองอนาคตจะถือว่าพร้อมตรวจสอบเฉพาะเมื่อประวัติและนโยบาย validation ตรงกับปัจจุบัน; ข้อมูลย้อนหลังที่เพิ่มเข้ามาทำให้ผลเดิมหมดความเป็นปัจจุบัน แต่ไม่แก้ไขผลที่บันทึกไว้

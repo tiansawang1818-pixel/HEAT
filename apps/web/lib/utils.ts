@@ -2,6 +2,18 @@ import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
 import type { Geometry } from "geojson";
 
+export interface PublishedDataReadiness {
+  scope: "published_data_and_recorded_decision_evidence";
+  data_ready: boolean;
+  generated_at: string;
+  checks: { code: string; status: "ready" | "warning" | "blocked"; label_th: string; detail_th: string }[];
+  summary: { ready: number; warning: number; blocked: number };
+  coverage: { official_areas: number; complete_pilot_areas: number; evidence_backed_candidates: number };
+  future_scenarios_available: boolean;
+  external_verification_required_th: string[];
+  limitations_th: string;
+}
+
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }

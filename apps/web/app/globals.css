@@ -331,6 +331,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .readiness-privacy { display: flex; align-items: center; gap: 5px; margin: 0; color: #8ba0a9; font-size: 10px; }
 .readiness-privacy svg { flex-shrink: 0; }
 .readiness-scope, .readiness-error { margin: 8px 0 0; color: #ad9191; font-size: 10px; line-height: 1.5; }
+.release-review-list { margin: 10px 0 0; padding-left: 18px; color: #acbec7; font-size: 11px; line-height: 1.7; }
 .pipeline-summary-grid > div { display: grid; gap: 3px; padding: 10px; }
 .pipeline-summary-grid > div.has-error { border-color: rgba(239,68,68,.3); background: rgba(127,29,29,.12); }
 .pipeline-summary-grid span { color: #607984; font-size: 7px; }

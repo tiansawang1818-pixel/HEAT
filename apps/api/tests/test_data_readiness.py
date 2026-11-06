@@ -3,10 +3,11 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 
 from app.models.entities import (
-    AreaIndicator, CandidateIntervention, CostAssumption, DataSource, DatasetVersion, GeographicArea,
-    PopulationEstimate, PriorityScore, RasterAssetMetadata, SourceCheck, ValidationReport,
+    AreaIndicator, CandidateIntervention, CostAssumption, DataSource, DatasetVersion, ForecastRun, GeographicArea,
+    PopulationEstimate, PriorityScore, RasterAssetMetadata, SourceCheck, TemperatureObservation, ValidationReport,
 )
 from app.services.data_readiness import published_data_readiness
+from app.services.forecast_workflow import forecast_inputs
 from app.services.versions import INDICATOR_DATASETS, LAYER_DATASETS
 
 
@@ -65,3 +66,21 @@ def test_synthetic_active_input_or_missing_feasibility_blocks_decision_readiness
     report = published_data_readiness(db)
     assert report["data_ready"] is False and report["coverage"]["complete_pilot_areas"] == 0
     assert report["coverage"]["evidence_backed_candidates"] == 0
+
+
+def test_new_history_marks_a_previously_validated_scenario_as_outdated(db):
+    versions, _ = _recorded_pilot(db)
+    version_id = versions[LAYER_DATASETS["temperature"]].id
+    db.add(TemperatureObservation(area_id="unit-pilot", dataset_version_id=version_id,
+        observed_at=datetime(2020, 1, 1, tzinfo=timezone.utc), lst_c_mean=32, coverage_fraction=.9))
+    db.commit()
+    inputs, _ = forecast_inputs(db)
+    run = ForecastRun(horizon_years=5, method="synthetic-unit-validation-only", model_version="scenario-v2",
+        training_versions=inputs, assumptions={}, metrics={"validation_passed": True}, results={"status": "completed"})
+    db.add(run); db.commit()
+    assert published_data_readiness(db)["future_scenarios_available"] is True
+    db.add(TemperatureObservation(area_id="unit-pilot", dataset_version_id=version_id,
+        observed_at=datetime(2021, 1, 1, tzinfo=timezone.utc), lst_c_mean=33, coverage_fraction=.9))
+    db.commit()
+    assert published_data_readiness(db)["future_scenarios_available"] is False
+    assert db.get(ForecastRun, run.id).training_versions == inputs

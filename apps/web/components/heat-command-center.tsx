@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { DataReadinessCard } from "@/components/data-readiness-card";
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -1761,6 +1762,7 @@ function ObservatoryOverlay({ datasets, snapshot, readiness, readinessError, loa
         ) : !readinessError && <div className="observatory-loading"><RefreshCw className="animate-spin" size={13} /> กำลังตรวจความพร้อมระบบ</div>}
         <p className="readiness-privacy"><ShieldCheck size={12} /> ผลตรวจแสดงเฉพาะสถานะการตั้งค่าและการเชื่อมต่อ</p>
       </section>
+      <DataReadinessCard />
       <div className="pipeline-summary-grid">
         <Card><span>กำลังรอ / ทำงาน</span><strong>{queue.queued} / {queue.running}</strong><small>durable job queue</small></Card>
         <Card><span>Asset ที่พบ / ประมวลผล</span><strong>{summary.discovered_assets_latest_checks} / {summary.processed_assets_latest_checks}</strong><small>จาก source check ล่าสุด</small></Card>

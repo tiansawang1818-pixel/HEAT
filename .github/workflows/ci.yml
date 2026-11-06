@@ -168,6 +168,14 @@ jobs:
           test "$heatshift_audit_status" -eq 2
       - name: Bounded read-only latency smoke
         run: python3 scripts/load_smoke.py --url https://localhost:18443 --ca-file /tmp/heatshift-ci-ca.pem --requests 60 --concurrency 4 --output /tmp/heatshift-load-smoke.json
+      - name: Execute the production backup helper against release containers
+        env:
+          HEATSHIFT_COMPOSE_ENV: production
+          HEATSHIFT_COMPOSE_ENV_FILE: /tmp/heatshift-production-ci.env
+          BACKUP_DIR: /tmp/heatshift-backups-ci
+        run: |
+          ./scripts/backup_postgres.sh
+          for heatshift_checksum in /tmp/heatshift-backups-ci/*.sha256; do sha256sum -c "$heatshift_checksum"; done
       - name: Verify alert rules and internal notification delivery
         run: |
           docker run --rm --entrypoint /bin/promtool -v "$PWD/infra/monitoring:/etc/prometheus:ro" prom/prometheus:v3.15.1 test rules /etc/prometheus/alerts.test.yml
