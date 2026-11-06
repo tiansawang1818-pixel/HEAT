@@ -17,6 +17,10 @@ help:
 	@echo "  make readiness        Audit production configuration and live dependencies"
 	@echo "  make production-check Validate server configuration without starting services"
 	@echo "  make production-up    Validate, build and start the HTTPS server stack"
+	@echo "  make prepare-server   Create private server configuration without overwriting"
+	@echo "  make release-audit    Audit configured RELEASE_URL and published decision data"
+	@echo "  make load-smoke       Run bounded read-only checks against RELEASE_URL"
+	@echo "  make monitoring-up    Validate private alert receiver and start monitoring"
 
 setup:
 	@test -f .env || cp .env.example .env
@@ -35,7 +39,7 @@ down:
 	$(COMPOSE) down
 
 logs:
-	$(COMPOSE) logs -f --tail=200 api worker beat web
+	$(COMPOSE) logs -f --tail=200 api worker dispatcher beat web
 
 ps:
 	$(COMPOSE) ps

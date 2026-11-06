@@ -25,7 +25,7 @@ make up
 - Health: <http://localhost:8000/api/health>
 - MinIO console: <http://localhost:9001>
 
-หลังระบบเริ่มทำงาน Celery Beat จะตรวจ catalog ขอบเขต 50 เขตของ BMA รายสัปดาห์ ขอบเขตทางการต้อง publish ก่อน satellite/WorldPop regional aggregation ใน deployment ใหม่ สามารถสั่งครั้งแรกจาก Data Observatory โดยเลือก “ขอบเขต 50 เขต กทม.”
+เมื่อ Docker stack พร้อม Celery Beat ส่งงานตรวจแหล่งข้อมูลที่ถึงรอบผ่าน dispatcher ทุก 60 วินาที การติดตั้งใหม่เริ่มตรวจขอบเขต 50 เขตของ BMA และ Open-Meteo อัตโนมัติโดยไม่ต้องกด refresh ครั้งแรก จากนั้นเคารพรอบตรวจของแต่ละ source ตามฐานข้อมูล ขอบเขตทางการต้อง publish ก่อน satellite/WorldPop regional aggregation ผู้ดูแลยังสั่งตรวจเพิ่มเติมจาก Data Observatory ได้โดยติดตาม job ID จริง
 
 ตัวตรวจ OpenStreetMap รายสัปดาห์ใช้ replication checkpoint ร่วมกับ snapshot checksum ของ feature ที่เกี่ยวข้องในกรุงเทพฯ ดึงเฉพาะสถานที่สาธารณะที่เข้าข่ายสำรวจผ่าน Overpass แล้วผูกจุดเข้ากับขอบเขตเขตทางการ ตำแหน่งเหล่านี้เริ่มในสถานะ `insufficient_evidence`: แสดงเป็นจุดคัดกรองบนแผนที่ได้ แต่ไม่มีต้นทุน/ผลประโยชน์ที่แต่งขึ้นและจะไม่เข้า optimizer จนกว่าจะผ่านการอนุมัติหลักฐาน
 
@@ -40,6 +40,8 @@ Vector GeoJSON โหลดตาม viewport จริง: client debounce/ย�
 ชั้นอุณหภูมิ ประชากร NDVI พืชพรรณ และสิ่งปลูกสร้างเลือก observation version ย้อนหลังได้จากวันที่ใน sidebar ตัวเลขพื้นที่และ raster ใช้ `dataset_version_id` เดียวกัน ข้อมูลเก่าที่ ingest ภายหลังไม่แย่งตำแหน่งข้อมูลล่าสุด วันที่ย้อนหลังไม่ย้อนขอบเขตเขตหรือเปลี่ยน input ของ optimizer; UI ระบุขอบเขตนี้ชัดเจน
 
 ตรวจสอบสถานะด้วย `docker compose ps` หรือ `make smoke` และดู worker ด้วย `make logs` หน้า Data Observatory แสดงการตรวจความพร้อมเบื้องต้นจาก runtime, PostGIS, Redis, rate limit, OIDC, CORS และ Earth Engine configuration โดย API ไม่เปิดเผย secret, token, URL หรือ credential path รันซ้ำใน release pipeline ได้ด้วย `make readiness` (exit code 2 หมายถึงยังมี blocker) ผล `configuration_ready` ครอบคลุมเฉพาะการตั้งค่าและ dependency; ต้องทดสอบ provider identity, worker/Beat และ ingestion-to-map จริงก่อนเปิดใช้งาน
+
+รายงาน “ข้อมูลและหลักฐานก่อนเปิดใช้” ในหน้าเดียวกันตรวจข้อมูลที่เผยแพร่จริงและหลักฐานโครงการ แสดงพื้นที่ที่ข้อมูลครบพร้อมสิ่งที่ขาดเป็นภาษาไทย และอ่านผลใหม่ทุก 60 วินาที การผ่านผลตรวจนี้ยังต้องให้ผู้รับผิดชอบยืนยันสิทธิ์ใช้ข้อมูล การสำรวจพื้นที่ และการทำงานบนเซิร์ฟเวอร์จริง
 
 เปิด metrics/alert evaluation สำหรับ local operations ด้วย `make observability` (Prometheus ที่พอร์ต 9090) และสร้าง Postgres backup ที่มี checksum ด้วย `make backup`; production ต้องส่ง alert ไปยังระบบ on-call และสำรอง object storage แยกจาก database dump
 
