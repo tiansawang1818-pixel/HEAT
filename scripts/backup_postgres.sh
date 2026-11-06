@@ -18,9 +18,14 @@ else
   set --
 fi
 docker compose "$@" exec -T postgres sh -c \
-  'exec pg_dump --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --format custom --no-owner --file -' > "$temporary_path"
+  'exec pg_dump --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --format custom --no-owner' > "$temporary_path"
 
-test -s "$temporary_path"
+if [ ! -s "$temporary_path" ]; then
+  printf '%s\n' 'Backup stream was empty; no backup was published.' >&2
+  exit 1
+fi
+# Read the archive before publishing it. This never restores or modifies data.
+docker compose "$@" exec -T postgres pg_restore --list < "$temporary_path" > /dev/null
 mv "$temporary_path" "$final_path"
 if command -v sha256sum >/dev/null 2>&1; then
   sha256sum "$final_path" > "$final_path.sha256"
