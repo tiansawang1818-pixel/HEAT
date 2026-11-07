@@ -40,6 +40,23 @@ python scripts/verify_hosting_backends.py \
 
 หลังจบลบเฉพาะไฟล์ credentials/marker ชั่วคราวที่สร้างไว้ตามนโยบาย secret handling; remote probe keys หมดอายุตาม TTL โดยไม่ลบ application keys ฐานข้อมูลทดสอบที่ยังคงอยู่ใช้ quota อยู่ แม้ไม่มีเว็บ production ห้ามเพิ่มหลาย project/บัญชีหรือเปิด paid capacity เพื่อหลบ free pool
 
+## PostGIS แบบ rollback-only ในฐานข้อมูลใหม่
+
+หลังพื้นที่คืนจริงและตรวจ free entitlement ของทั้งบัญชีแล้ว ใช้ flag ด้านล่างได้เฉพาะ URI ที่ระบุ hostname และชื่อ database `heat-pg16-check` ไม่มี query parameters ที่เปลี่ยนปลายทาง/ชื่อฐานข้อมูล สคริปต์บังคับ TLS แบบตรวจ hostname และตรวจชื่อฐานข้อมูลที่เชื่อมได้ซ้ำ ค่าเริ่มต้นที่ไม่มี flag ยังคงอ่านอย่างเดียว
+
+```sh
+python scripts/verify_hosting_backends.py \
+  --credentials-file /run/secrets/hosting-probe.json \
+  --postgis-transaction-test \
+  --output /tmp/hosting-postgis-check.json
+```
+
+ชุดตรวจปฏิเสธ database ที่มี public tables อยู่แล้ว ยกเว้น `spatial_ref_sys` ของ PostGIS หาก provider ไม่มี extension package จะแสดง blocked และไม่พยายามติดตั้ง software ลงเครื่อง provider การเปิด PostGIS ชั่วคราว ตาราง geometry 100 ช่อง และ GiST index อยู่ภายใน transaction ที่บังคับ rollback เสมอ ตรวจ CRS 4326 → 3857 → 4326, validity, GeoJSON และแผน spatial query แล้วตรวจว่า extension state/public tables กลับเท่าเดิมและ temp table หาย ไม่มีการเพิ่ม observation, migrations หรือ pipeline publication
+
+มี statement timeout 15 วินาทีและ lock timeout 2 วินาที ทดสอบทั้งเส้นทางสำเร็จ การรันซ้ำ และการล้มเหลวหลังเขียน temp rows ใน isolated CI บน PostGIS จริง การผ่านทดสอบนี้พิสูจน์ extension/SQL capabilities ในฐานข้อมูลที่ทดสอบเท่านั้น ไม่ใช่ load test, permanent PostGIS setup หรือ production/free-hosting approval
+
+การผ่านวัน recovery ไม่ได้แปลว่าพื้นที่ถูกคืนแล้ว ต้องตรวจรายการ Recently deleted และยอด active + retained storage จาก provider ก่อนสร้าง database ใหม่ ห้ามใช้วันที่เพียงอย่างเดียวเพื่อข้าม gate
+
 ## หลักฐานรอบ Hostless
 
 [รายงาน backend วันที่ 7 พฤศจิกายน 2026](verification/hostless-backends-2026-11-07.json) มีเฉพาะผลตรวจที่ตัดข้อมูลลับออก การกู้ PostgreSQL ไม่สำเร็จจึงยังไม่ผ่าน PostGIS หรือ whole-stack capacity ดู [รายละเอียดข้อจำกัด](no-card-hosting-research.md#ผลทดสอบ-backend-จริง)

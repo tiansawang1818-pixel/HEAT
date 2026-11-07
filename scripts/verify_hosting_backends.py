@@ -13,7 +13,8 @@ import os
 from pathlib import Path
 import ssl
 import stat
-from urllib.parse import unquote, urlsplit
+import sys
+from urllib.parse import parse_qs, unquote, urlsplit
 import uuid
 
 
@@ -24,6 +25,8 @@ def error_reason(error):
         (("certificate verify failed", "certificate verification failed", "does not match", "hostname mismatch"), "tls_verification_failed"),
         (("eof detected", "unexpected eof", "connection closed by server"), "connection_closed_before_query"),
         (("password authentication failed", "wrongpass", "authentication required"), "authentication_failed"),
+        (("statement timeout",), "query_timeout"),
+        (("lock timeout",), "lock_timeout"),
         (("timeout", "timed out"), "connection_timeout"),
         (("name or service not known", "could not translate host", "nodename nor servname", "name resolution"), "dns_failed"),
         (("connection refused",), "connection_refused"),
@@ -121,6 +124,34 @@ def redis_client(uri, database):
         ssl_ca_certs=certifi.where(), socket_connect_timeout=8, socket_timeout=8,
         retry=Retry(NoBackoff(), 0), decode_responses=True,
     )
+
+
+def probe_transactional_postgis(uri):
+    """Opt-in DDL, only in the specifically named fresh hosting test database."""
+    if not uri:
+        return {"status": "unavailable", "reason": "missing_postgres_url"}
+    try:
+        parsed = urlsplit(uri)
+        routing_keys = {"host", "hostaddr", "port", "dbname", "database", "service", "servicefile"}
+        if (parsed.scheme not in ("postgres", "postgresql") or not parsed.hostname
+                or unquote(parsed.path.lstrip("/")) != "heat-pg16-check"
+                or routing_keys.intersection(parse_qs(parsed.query, keep_blank_values=True))):
+            return {"status": "blocked", "reason": "explicit_hosting_test_database_required", "writes_attempted": False}
+        import certifi
+        import psycopg
+        from psycopg.rows import dict_row
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apps" / "api"))
+        from app.services.hosting_postgis import rollback_postgis_probe
+        with psycopg.connect(uri, autocommit=True, sslmode="verify-full", sslrootcert=certifi.where(),
+                             dbname="heat-pg16-check", connect_timeout=8, row_factory=dict_row,
+                             options="-c statement_timeout=15000 -c lock_timeout=2000") as connection:
+            if connection.info.dbname != "heat-pg16-check":
+                return {"status": "blocked", "reason": "connected_database_name_mismatch", "writes_attempted": False}
+            result = rollback_postgis_probe(connection)
+            result["tls_hostname_verified"] = True
+            return result
+    except Exception as error:
+        return {"status": "error", "reason": error_reason(error), "production_load_verified": False}
 
 
 def check_restart(client, marker):
@@ -223,6 +254,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--credentials-file", help="Private JSON file, mode 0600; never pass passwords as arguments")
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--postgis-transaction-test", action="store_true", help="Opt in to rollback-only PostGIS DDL in a fresh heat-pg16-check database")
     restart = parser.add_mutually_exclusive_group()
     restart.add_argument("--prepare-restart", type=Path, help="Create expiring isolated Redis probe keys and a new marker file")
     restart.add_argument("--verify-restart", type=Path, help="Verify queue retention after an operator restarts the test Redis")
@@ -239,7 +271,10 @@ def main():
         "redis": probe_redis(credentials.get("redis_url", ""), args.prepare_restart, args.verify_restart),
         "whole_application_capacity_verified": False, "zero_cost_verified": False,
     }
-    report["status"] = "passed" if all(report[name]["status"] == "passed" for name in ("postgres", "redis")) else "blocked"
+    if args.postgis_transaction_test:
+        report["postgis_transaction_test"] = probe_transactional_postgis(credentials.get("postgres_url", ""))
+    required = ["postgres", "redis"] + (["postgis_transaction_test"] if args.postgis_transaction_test else [])
+    report["status"] = "passed" if all(report[name]["status"] == "passed" for name in required) else "blocked"
     encoded = json.dumps(report, indent=2) + "\n"
     if args.output:
         args.output.write_text(encoded)

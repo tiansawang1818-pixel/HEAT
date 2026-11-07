@@ -20,6 +20,8 @@ spec.loader.exec_module(probe)
     ("SSL SYSCALL error: EOF detected", "connection_closed_before_query"),
     ("certificate verify failed: secret-uri", "tls_verification_failed"),
     ("connection timed out", "connection_timeout"),
+    ("canceling statement due to statement timeout", "query_timeout"),
+    ("canceling statement due to lock timeout", "lock_timeout"),
     ("NOPERM command unavailable", "permission_denied"),
     ("User gateway has no permissions to run config|get", "permission_denied"),
     ("unknown command CONFIG private-details", "command_unavailable"),
@@ -179,3 +181,48 @@ def test_restart_must_preserve_queue_order_and_marker():
 def test_restart_marker_cannot_target_application_queues():
     with pytest.raises(ValueError):
         probe.validate_marker({"probe_id": "00000000-0000-0000-0000-000000000000", "run_id": "old", "queue_key": "celery"})
+
+
+@pytest.mark.parametrize("uri", ["postgresql://db.example.org/heatshift", "postgresql://db.example.org/heat-pg16-check-other", "mysql://db.example.org/heat-pg16-check", "postgresql:///heat-pg16-check", "postgresql://db.example.org/heat-pg16-check?dbname=heatshift", "postgresql://db.example.org/heat-pg16-check?service=production"])
+def test_transactional_spatial_probe_refuses_other_database_names_before_connect(monkeypatch, uri):
+    import psycopg
+    monkeypatch.setattr(psycopg, "connect", lambda *args, **kwargs: pytest.fail("Wrong database must not be contacted"))
+    result = probe.probe_transactional_postgis(uri)
+    assert result["status"] == "blocked" and result["writes_attempted"] is False
+
+
+def test_transactional_spatial_probe_cannot_proceed_with_application_tables():
+    from app.services.hosting_postgis import rollback_postgis_probe
+    queries = []
+
+    class OccupiedDatabase:
+        autocommit = True
+        info = SimpleNamespace(transaction_status=0)
+
+        def execute(self, query):
+            queries.append(query)
+            return SimpleNamespace(fetchall=lambda: [{"tablename": "geographic_areas"}])
+
+    result = rollback_postgis_probe(OccupiedDatabase())
+    assert result["status"] == "blocked" and result["writes_attempted"] is False
+    assert all(query.startswith("SELECT") for query in queries)
+
+
+def test_requested_transactional_probe_failure_prevents_success(monkeypatch, capsys):
+    monkeypatch.setattr(probe.sys, "argv", ["verify_hosting_backends.py", "--postgis-transaction-test"])
+    monkeypatch.setattr(probe, "load_credentials", lambda *args: {"postgres_url": "approved-test-uri", "redis_url": "test-uri"})
+    monkeypatch.setattr(probe, "probe_postgres", lambda *args: {"status": "passed"})
+    monkeypatch.setattr(probe, "probe_redis", lambda *args: {"status": "passed"})
+    monkeypatch.setattr(probe, "probe_transactional_postgis", lambda *args: {"status": "blocked", "reason": "postgis_not_available"})
+    assert probe.main() == 2
+    assert json.loads(capsys.readouterr().out)["status"] == "blocked"
+
+
+def test_default_probe_never_runs_transactional_ddl(monkeypatch, capsys):
+    monkeypatch.setattr(probe.sys, "argv", ["verify_hosting_backends.py"])
+    monkeypatch.setattr(probe, "load_credentials", lambda *args: {})
+    monkeypatch.setattr(probe, "probe_postgres", lambda *args: {"status": "unavailable"})
+    monkeypatch.setattr(probe, "probe_redis", lambda *args: {"status": "unavailable"})
+    monkeypatch.setattr(probe, "probe_transactional_postgis", lambda *args: pytest.fail("DDL is opt-in only"))
+    assert probe.main() == 2
+    assert "postgis_transaction_test" not in json.loads(capsys.readouterr().out)
