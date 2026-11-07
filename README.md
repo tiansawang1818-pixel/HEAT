@@ -141,6 +141,7 @@ WorldPop Global2 ใช้งานแบบ anonymous ได้ภายใต�
 
 ## เอกสาร
 
+- [สถานะก่อน deploy: งานที่เสร็จ ผล CI และสิ่งที่ยังต้องมีจริง](docs/predeployment-status.md)
 - [สถาปัตยกรรมและ data lifecycle](docs/architecture.md)
 - [Data sources, freshness และ credentials](docs/data-sources.md)
 - [วิธีคำนวณและข้อจำกัดทางวิทยาศาสตร์](docs/scientific-methodology.md)

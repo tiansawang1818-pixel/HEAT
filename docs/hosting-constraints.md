@@ -18,6 +18,8 @@
 | Supabase Free | ให้ PostgreSQL แต่ไม่ใช่เครื่องรัน FastAPI/Celery; project อาจพักหลัง activity ต่ำ | ใช้แทนระบบทั้งหมดไม่ได้ |
 | GitHub Actions schedule | งานอาจล่าช้าหรือถูกทิ้งขณะโหลดสูง และ scheduled workflow ใน public repo อาจถูกปิดหลังไม่มี activity 60 วัน | ไม่รับรองความต่อเนื่องหรือเวลาเริ่มที่แน่นอน |
 | Oracle Always Free VM | อาจรัน background services ได้ แต่ต้องได้ capacity จริง; การสมัครส่วนใหญ่มักต้องใช้บัตรและ idle VM อาจถูกเรียกคืน | ยังไม่มีทรัพยากรที่ยืนยันได้ และเงื่อนไขบัตรไม่ตรงความต้องการ |
+| Koyeb Free | ให้ web instance เดียว ไม่ให้ worker/volume และพักเมื่อไม่มี traffic 1 ชั่วโมง | ไม่รองรับ stack และงานต่อเนื่องตามเงื่อนไข |
+| Northflank Developer Sandbox | เอกสาร billing ระบุว่าผู้ใช้ทุกแผนต้องเพิ่มวิธีชำระเงินก่อนสร้างทรัพยากร แม้มี free sandbox และไม่แนะนำ sandbox สำหรับ production | ยังไม่ตรงเงื่อนไขไม่ใช้บัตร/วิธีชำระเงิน ไม่เปิดบัญชีหรือ resources |
 
 แหล่งทางการที่ตรวจ:
 
@@ -28,8 +30,12 @@
 - [GitHub automatic schedule disabling](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/disable-and-enable-workflows)
 - [Oracle Free Tier registration](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier.htm)
 - [Oracle Always Free capacity and idle reclamation](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm)
+- [Koyeb Free instance limitations](https://www.koyeb.com/docs/reference/instances)
+- [Northflank billing and free sandbox requirements](https://northflank.com/docs/v1/application/billing/pricing-on-northflank)
 
 ยังไม่มีปลายทางที่ผ่านเงื่อนไขทั้งหมด ห้ามรายงานว่า deploy แล้วหรือรับรองว่ารันฟรีตลอด ทางเดินที่ต้องตรวจต่อคือทรัพยากรฟรีที่มีเจ้าของอนุญาตให้ใช้จริง เช่น server/cloud allocation ขององค์กร มหาวิทยาลัย หรือผู้สนับสนุน โดยต้องยืนยันสิทธิ์ ค่าใช้จ่าย architecture และการรันงานเบื้องหลังของทรัพยากรนั้นก่อน
+
+ตรวจ Koyeb/Northflank เพิ่มเติมวันที่ 7 พฤศจิกายน 2026 ยึดเอกสารข้อกำหนด instance/billing แทนคำโฆษณาว่า “free/always-on” ไม่มีการสมัคร เพิ่มวิธีชำระเงิน หรือเปิด trial
 
 ห้ามเปิด Pay As You Go, เริ่ม free trial ที่หมดอายุแล้วอาจคิดเงิน, ใส่บัตร, สร้าง load ปลอมเพื่อเลี่ยง idle policy หรือเปลี่ยนไปใช้เครื่องผู้ใช้แทน เงื่อนไขผู้ให้บริการอาจเปลี่ยนได้ ต้องตรวจอีกครั้งก่อนเปิดทรัพยากรจริง
 
