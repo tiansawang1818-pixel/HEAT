@@ -18,17 +18,18 @@
 - Native ARM PostGIS จาก official PostgreSQL/PGDG packages พร้อม Compose override และ CI บน ARM จริง ไม่อาศัย emulation และไม่อ้างว่ามี cloud VM แล้ว
 - แก้ Next.js proxy order ให้ dynamic admin routes ผ่านการตรวจสิทธิ์ก่อน generic backend rewrite และตรวจผ่าน HTTPS ทั้งการอนุมัติโครงการ/การควบคุมงานย้อนหลัง
 - คู่มือ deployment, วิธีการทางวิทยาศาสตร์, แหล่งต้นทุนสาธารณะสำหรับคนตรวจ และบทนำเสนอ 3 นาทีที่แสดงข้อมูลขาดตามจริง
+- Managed hosting checks: สคริปต์ตรวจ PostGIS/TLS/Redis แบบอ่านอย่างเดียวเป็นค่าเริ่มต้น และโหมดตรวจคิวทดสอบหลัง restart ที่ไม่แตะคิวจริง พร้อมแก้ Celery broker/backend SSL และ node-redis SNI ตรวจ client connectivity กับ Redis บน Hostless จริงผ่าน เก็บรายงานที่ไม่มี credentials และ [ข้อความปัญหาที่เตรียมไว้แต่ยังไม่ได้ส่ง](hostless-readiness-support-draft.md)
 
-โค้ดที่ตรวจ: `0b11bc1a6719c597eb2baf3b0654e96e18498506` (รวมการแก้ที่ `0181ca9`, `548bfdd`, `cb2e0c0`, `37da922`)
+โค้ดที่ตรวจล่าสุด: `a807f7d666e674ca4db7c57e6e61f8b226b40708` รวม historical/decision-integrity และ managed-hosting/TLS checks เอกสารหรือรายงานที่ commit ต่อจากนี้ไม่เปลี่ยน functional code ที่ CI ตรวจ
 
 ## ผลตรวจ
 
-[GitHub Actions run 42366589642](https://github.com/tiansawang1818-pixel/HEAT/actions/runs/42366589642) ผ่านครบทั้ง 5 งาน:
+[GitHub Actions run 42374635238](https://github.com/tiansawang1818-pixel/HEAT/actions/runs/42374635238) ผ่านครบทั้ง 5 งาน ตรวจทั้ง job conclusion และ test summaries จาก logs แล้ว:
 
 | งาน | หลักฐาน |
 |---|---|
-| API | 154 unit/API tests ผ่าน และ dependency audit ผ่าน |
-| Web | 35 tests ผ่าน, TypeScript ผ่าน, Next.js production build ผ่าน |
+| API | 184 unit/API tests ผ่าน และ dependency audit ผ่าน |
+| Web | 38 tests ผ่าน รวม Redis session integration, TypeScript ผ่าน, Next.js production build ผ่าน |
 | Stack amd64 | 4 integration tests ผ่าน: PostGIS/Redis/Celery/Beat/SSE และ historical cursor ข้าม session; ซ้อม backup/restore เทียบแถว/ checksum ครบ 22 application tables |
 | Native ARM | สร้าง PostGIS/API/Caddy แบบ arm64 และผ่าน integration 4 tests เดียวกันบน ARM จริง |
 | Release containers | หน้าเว็บ, admin gates, HTTPS/certificate verification, secure cookies, SSE ผ่าน Caddy/Next, config isolation, bounded latency, encrypted backup download recovery และการส่ง test alert ภายใน CI ผ่าน |
