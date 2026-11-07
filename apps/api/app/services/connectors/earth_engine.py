@@ -1,8 +1,17 @@
-from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence
 
 from app.core.config import settings
 from app.services.connectors.base import AreaProcessingRecord, ConnectorError, SourceAsset, SourceConnector
+
+
+@dataclass(frozen=True)
+class HistoricalPage:
+    assets: List[SourceAsset]
+    cursor: Dict[str, Any]
+    scanned_count: int
+    done: bool
 
 
 class EarthEngineConnector(SourceConnector):
@@ -18,6 +27,79 @@ class EarthEngineConnector(SourceConnector):
     processor_version = "gee-zonal-v1"
     requires_area_processing = True
     produces_raster = True
+
+    def discover_historical_page(
+        self, start_date: date, end_date: date, cursor: Dict[str, Any],
+        page_size: int = 10, window_days: int = 16,
+    ) -> HistoricalPage:
+        """One bounded catalogue query; end_date is exclusive.
+
+        Keyset pagination stays inside one original collection and time window.
+        Keep original image IDs for processing/tiles, including Landsat 8 and 9.
+        Advance over unusable band records too, so they cannot stall a cursor.
+        """
+        if not 1 <= page_size <= 25 or not 1 <= window_days <= 32 or start_date >= end_date:
+            raise ValueError("Invalid historical discovery bounds")
+        ids = self.collection_ids or [self.collection_id]
+        window_start = date.fromisoformat(cursor.get("window_start", start_date.isoformat()))
+        collection_index = int(cursor.get("collection_index", 0))
+        after_index = cursor.get("after_index")
+        if window_start >= end_date:
+            return HistoricalPage([], dict(cursor), 0, True)
+        if window_start < start_date or not 0 <= collection_index < len(ids):
+            raise ValueError("Historical cursor is outside its frozen range")
+        window_end = min(end_date, window_start + timedelta(days=window_days))
+        ee = self._earth_engine()
+        collection_id = ids[collection_index]
+        collection = ee.ImageCollection(collection_id).filterBounds(ee.Geometry.Rectangle(settings.bangkok_bbox))
+        collection = collection.filterDate(window_start.isoformat(), window_end.isoformat())
+        if self.cloud_property:
+            collection = collection.filter(ee.Filter.lte(self.cloud_property, self.max_cloud_percent))
+        if after_index:
+            collection = collection.filter(ee.Filter.gt("system:index", after_index))
+        try:
+            raw = collection.sort("system:index", True).limit(page_size + 1).getInfo()
+        except Exception as exc:
+            raise ConnectorError("Earth Engine historical catalogue query failed: %s" % exc) from exc
+        features = raw.get("features", [])
+        if not isinstance(features, list) or len(features) > page_size + 1:
+            raise ConnectorError("Earth Engine returned an invalid historical page")
+        assets: List[SourceAsset] = []
+        previous_index = after_index or ""
+        bbox = settings.bangkok_bbox
+        extent = {"type": "Polygon", "coordinates": [[[bbox[0], bbox[1]], [bbox[2], bbox[1]],
+                  [bbox[2], bbox[3]], [bbox[0], bbox[3]], [bbox[0], bbox[1]]]]}
+        for feature in features[:page_size]:
+            properties = feature.get("properties", {})
+            index = properties.get("system:index")
+            asset_id = feature.get("id", "")
+            if not isinstance(index, str) or index <= previous_index or not asset_id.startswith(collection_id + "/"):
+                raise ConnectorError("Historical catalogue page has non-monotonic indices or invalid image IDs")
+            previous_index = index
+            bands = {band.get("id") for band in feature.get("bands", [])}
+            if any(band not in bands for band in self.required_bands):
+                continue
+            try:
+                observed = datetime.fromtimestamp(properties["system:time_start"] / 1000, tz=timezone.utc)
+            except (KeyError, TypeError, ValueError, OverflowError) as exc:
+                raise ConnectorError("Historical image is missing a valid observation time") from exc
+            if not window_start <= observed.date() < window_end:
+                raise ConnectorError("Historical image falls outside the requested observation window")
+            assets.append(SourceAsset.with_checksum(asset_id, index, observed, extent, metadata={
+                "collection": collection_id, "cloud_percent": properties.get(self.cloud_property) if self.cloud_property else None,
+                "required_bands": self.required_bands, "processing_recipe": self.processing_recipe,
+                "processor_version": self.processor_version,
+            }))
+        more_in_collection = len(features) > page_size
+        if more_in_collection:
+            next_cursor = {"window_start": window_start.isoformat(), "collection_index": collection_index,
+                           "after_index": previous_index}
+        elif collection_index + 1 < len(ids):
+            next_cursor = {"window_start": window_start.isoformat(), "collection_index": collection_index + 1}
+        else:
+            next_cursor = {"window_start": window_end.isoformat(), "collection_index": 0}
+        return HistoricalPage(assets, next_cursor, min(len(features), page_size),
+                              date.fromisoformat(next_cursor["window_start"]) >= end_date)
 
     def raster_metadata(self, asset: SourceAsset) -> Optional[Dict[str, Any]]:
         return {

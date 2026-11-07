@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_admin
+from app.api.backfills import router as backfill_router
 from app.core.config import settings
 from app.db.session import get_db
 from app.models.entities import (
@@ -69,6 +70,7 @@ from app.services.versions import INDICATOR_DATASETS, LAYER_DATASETS, current_ve
 
 
 router = APIRouter()
+router.include_router(backfill_router)
 
 
 def _aware(value: Optional[datetime]) -> Optional[datetime]:

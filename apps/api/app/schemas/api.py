@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime, timezone
 from typing import Annotated, Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
@@ -69,6 +69,28 @@ class AssistantQuery(ApiModel):
 class IngestionRequest(ApiModel):
     source: Literal["bma-boundaries", "landsat", "sentinel", "dynamic-world", "open-meteo", "worldpop", "osm", "fixture"]
     fixture_path: Optional[str] = None
+
+
+class BackfillBudget(ApiModel):
+    max_assets: int = Field(default=12, ge=1, le=100)
+    max_catalogue_requests: int = Field(default=50, ge=1, le=500)
+    step_delay_seconds: int = Field(default=600, ge=60, le=86400)
+
+
+class BackfillRequest(BackfillBudget):
+    source: Literal["landsat", "sentinel", "dynamic-world"]
+    start_date: date
+    end_date: date
+    page_size: int = Field(default=10, ge=1, le=25)
+    window_days: int = Field(default=16, ge=1, le=32)
+
+    @model_validator(mode="after")
+    def frozen_range(self) -> "BackfillRequest":
+        if self.start_date >= self.end_date or (self.end_date - self.start_date).days > 3660:
+            raise ValueError("Historical range must be positive and at most ten years")
+        if self.end_date > datetime.now(timezone.utc).date():
+            raise ValueError("Historical end date is exclusive and cannot be in the future")
+        return self
 
 
 class PriorityCalculateRequest(ApiModel):

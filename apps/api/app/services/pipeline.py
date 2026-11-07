@@ -60,7 +60,7 @@ def _recover_interrupted_source(db: Session, source_id: str) -> None:
         version.quality_summary = {"recovery": "Previous source monitor ended before publication"}
     for job in db.scalars(select(IngestionJob).where(
         IngestionJob.source_id == source_id, IngestionJob.status == "running",
-        IngestionJob.job_type.notin_(["scheduled_refresh", "manual_refresh"]),
+        IngestionJob.job_type.notin_(["scheduled_refresh", "manual_refresh", "historical_backfill"]),
     )).all():
         job.status, job.stage = "failed", "interrupted"
         job.error_message = "Previous worker ended before completion; asset is eligible for safe retry"

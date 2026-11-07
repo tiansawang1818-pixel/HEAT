@@ -43,7 +43,7 @@ function endpoint(path: string) {
   return `${configuredBase}${path}`;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(endpoint(path), {
     ...init,
     headers: { "Content-Type": "application/json", ...init?.headers },
@@ -539,7 +539,7 @@ export async function loadEvidencePendingCandidates(pageSize = 100): Promise<Can
   );
 }
 
-async function adminPost<T>(path: string, operatorToken: string, body: Record<string, unknown>): Promise<T> {
+export async function adminPost<T>(path: string, operatorToken: string, body: Record<string, unknown>): Promise<T> {
   const response = await fetch(path, {
     method: "POST",
     headers: await adminHeaders(operatorToken),
@@ -547,7 +547,7 @@ async function adminPost<T>(path: string, operatorToken: string, body: Record<st
   });
   if (!response.ok) {
     const payload = await response.json().catch(() => ({ detail: `API ${response.status}` })) as { detail?: string };
-    throw new Error(payload.detail || `API ${response.status}`);
+    throw new Error(typeof payload.detail === "string" ? payload.detail : `ข้อมูลคำขอไม่ผ่านการตรวจสอบ (${response.status})`);
   }
   return response.json() as Promise<T>;
 }

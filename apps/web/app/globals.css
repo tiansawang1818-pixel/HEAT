@@ -454,6 +454,18 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .maplibregl-ctrl-attrib { color: #657b85 !important; background: rgba(7,16,22,.76) !important; font-size: 8px !important; }
 .maplibregl-ctrl-attrib a { color: #7e969f !important; }
 
+.historical-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
+.historical-form label { display: grid; gap: 6px; font-size: 11px; color: #a8bdc7; }
+.historical-form input, .historical-form select { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 7px; padding: 8px; background: #0b1a24; color: #e5f1f5; }
+.historical-form p { grid-column: 1 / -1; color: #9eb2bd; font-size: 11px; line-height: 1.8; }
+.historical-jobs article { border-top: 1px solid var(--line); padding: 14px 0; }
+.historical-jobs article > div:first-child { display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; font-size: 12px; }
+.historical-jobs article > div:first-child span { color: #58d4d0; }
+.historical-jobs p { font-size: 11px; line-height: 1.8; color: #a8bdc7; margin: 8px 0; }
+.historical-jobs small { display: block; font-size: 10px; color: #819ba9; overflow-wrap: anywhere; }
+.historical-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+@media (max-width: 600px) { .historical-form { grid-template-columns: 1fr; } }
+
 @media (max-width: 1180px) {
   .command-center { grid-template-columns: 205px minmax(390px, 1fr) 310px; }
   .brand-block { min-width: 285px; }

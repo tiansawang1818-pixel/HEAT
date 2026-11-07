@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { DataReadinessCard } from "@/components/data-readiness-card";
+import { HistoricalIngestionPanel } from "@/components/historical-ingestion-panel";
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -1782,6 +1783,7 @@ function ObservatoryOverlay({ datasets, snapshot, readiness, readinessError, loa
       </div>
       {sessionError && <div className="error-box">{sessionError}</div>}
       <EvidenceApprovalPanel operatorToken={credential} />
+      <HistoricalIngestionPanel credential={credential} />
       {error && <div className="error-box">{error}</div>}
       {job && <div className="job-box"><Activity size={14} /><span>Job {job.job_id}</span><strong>{job.status}</strong></div>}
       {loading && <div className="observatory-loading"><RefreshCw className="animate-spin" size={14} /> กำลังโหลดสถานะ pipeline</div>}

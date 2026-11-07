@@ -37,6 +37,8 @@ def _rate_limit_rule(method: str, path: str):
     }
     if path in exact:
         return exact[path]
+    if path == "/api/ingestion/backfills" or re.fullmatch(r"/api/ingestion/backfills/[A-Za-z0-9_-]{1,64}/(resume|cancel)", path):
+        return "admin", settings.rate_limit_admin_per_minute, settings.rate_limit_fail_closed_admin
     if re.fullmatch(r"/api/candidates/[A-Za-z0-9_-]{1,64}/approve", path):
         return "admin", settings.rate_limit_admin_per_minute, settings.rate_limit_fail_closed_admin
     return None

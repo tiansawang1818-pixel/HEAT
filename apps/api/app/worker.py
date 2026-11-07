@@ -20,6 +20,7 @@ from app.services.locks import LockBackendUnavailable, distributed_lock
 from app.services.source_registry import CONNECTOR_TYPES
 from app.services.scheduling import dispatch_due_sources
 from app.services.forecast_workflow import update_scheduled_forecasts
+from app.services.historical import dispatch_backfills, execute_backfill_step
 
 
 celery_app = Celery("heatshift", broker=settings.redis_url, backend=settings.redis_url)
@@ -56,10 +57,17 @@ def dispatch_ingestion():
     with SessionLocal() as db:
         ensure_sources(db)
         result = dispatch_due_sources(db, lambda job_id, source: run_manual_ingestion.delay(job_id, source))
+        result["historical"] = dispatch_backfills(db, lambda job_id, generation: run_historical_step.delay(job_id, generation))
         if result["status"] == "completed":
             with redis.Redis.from_url(settings.redis_url, socket_connect_timeout=1, socket_timeout=1) as client:
                 client.set("heatshift:dispatcher:last_tick", str(time.time()), ex=300)
         return result
+
+
+@celery_app.task(name="app.worker.run_historical_step")
+def run_historical_step(job_id: str, generation: int):
+    with SessionLocal() as db:
+        return execute_backfill_step(db, job_id, generation)
 
 
 @celery_app.task(name="app.worker.update_forecast_models", soft_time_limit=540, time_limit=600)

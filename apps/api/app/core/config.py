@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     bangkok_bbox: List[float] = Field(default_factory=lambda: [100.327, 13.494, 100.938, 13.955])
     gee_project: Optional[str] = None
+    historical_ingestion_enabled: bool = False
     gee_tile_descriptor_ttl_seconds: int = 3000
     open_meteo_latitude: float = 13.7563
     open_meteo_longitude: float = 100.5018
