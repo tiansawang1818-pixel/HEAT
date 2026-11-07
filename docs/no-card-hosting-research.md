@@ -84,4 +84,6 @@
 
 ## ข้อสรุปที่รายงานได้
 
+ตรวจวิธีไม่ต้องรอพื้นที่เพิ่มเติมแล้ว: [แผนแยกผู้ให้บริการ](split-free-hosting.md) เสนอ Aiven PostgreSQL Free สำหรับทดสอบ PostGIS โดยใช้ Hostless บัญชีเดิมกับ Redis/runtime ต่อ มีข้อจำกัด CA certificate, 20 connections, inactivity และ whole-stack admission ที่ต้องตรวจจริง ยังไม่ได้สมัคร/เปิด service ใหม่ ไม่ถือว่าสถานะ hosting ผ่านแล้ว
+
 Hostless ผ่านขั้นบัญชี, entitlement, resource admission ที่เคยทดสอบ และ Redis TLS/logical databases/graceful restart retention แล้ว มี CI baseline ทรัพยากรจริงเพิ่มเติม แต่ **ยังไม่ผ่าน PostgreSQL readiness/PostGIS, Redis crash durability และ whole-stack capacity** ขณะนี้ติดพื้นที่ PostgreSQL รอลบก่อนทดลอง instance ใหม่ภายใน pool ได้ การติดตั้ง repo integration ยังไม่ได้ทำ ไม่มี production deployment และไม่รับรองว่ารัน HEAT ทั้งชุดได้ฟรีจาก quote เฉพาะ resource หรือยอด billing ชั่วขณะ

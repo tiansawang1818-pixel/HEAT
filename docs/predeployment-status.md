@@ -10,6 +10,8 @@
 
 ตรวจข้อเสนอสมัครบัญชีใหม่เมื่อ 8 พฤศจิกายน 2026 แล้ว: [Hostless Terms of Service](https://hostless.cloud/terms) จัดการสร้างหลายบัญชีเพื่อรับทรัพยากรฟรีเพิ่มไว้ใน `Uses Outside Fair Use` จึงไม่ใช้บัญชีซ้ำเพื่อข้าม retained-storage quota ยังไม่ได้สร้างบัญชีเพิ่ม ย้ายผู้ให้บริการ หรือติดต่อ support แทนผู้ใช้ ดู [ผลตรวจและทางเลือก](no-card-hosting-research.md#การทดลองสร้างใหม่และข้อจำกัด-retention)
 
+ทางเลือกที่ไม่ต้องรอเพื่อเริ่มตรวจ PostGIS: [Aiven PostgreSQL Free + Hostless runtime/Redis เดิม](split-free-hosting.md) เอกสาร Aiven ระบุไม่ใช้บัตร/รองรับ PostGIS แต่ยังไม่มีบัญชีหรือผล SQL จริง ต้องเตรียม project CA, connection budget 20 ช่อง และตรวจ admission/load/crash recovery ของระบบที่แยก provider ก่อนเปิดจริง การรอ Hostless PostgreSQL 16 จึงไม่ใช่ทางเลือกเดียว แต่ยังไม่มีทางใดผ่าน hosting gate ครบแล้ว
+
 ## งานที่ทำและ push แล้ว
 
 - Historical ingestion หลายปี: keyset pages แยก Landsat 8/9, frozen date range, จำกัดจำนวนคำขอ/ความพยายามที่รวม retry, PostgreSQL cursor/pending, distributed locks, delivery generation, worker recovery และ cancel/resume เป็น job ใหม่ พร้อมหน้าควบคุมภาษาไทย Flag เรียก Earth Engine จริงยังปิดเป็นค่าเริ่มต้น
