@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     environment: str = "development"
     api_prefix: str = "/api"
     database_url: str = "sqlite+pysqlite:///./heatshift.db"
+    database_pool_size: int = Field(default=5, ge=1, le=100)
+    database_max_overflow: int = Field(default=10, ge=0, le=100)
+    database_pool_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
     redis_url: str = "redis://redis:6379/0"
     admin_api_key: str = "change-me-in-production"
     admin_auth_mode: str = "local_key"

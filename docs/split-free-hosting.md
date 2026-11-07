@@ -1,6 +1,6 @@
 # ทางเลือกแยก hosting เพื่อไม่รอ PostgreSQL ของ Hostless
 
-ตรวจเอกสารทางการวันที่ 8 พฤศจิกายน 2026 (Asia/Bangkok) นี่เป็นผลค้นคว้าและแผนตรวจต่อ ยังไม่ได้สมัครบัญชี สร้าง service เปลี่ยนปลายทางของ HEAT หรือยืนยันว่าทั้งระบบรันฟรีผ่านแล้ว
+ตรวจเอกสารทางการวันที่ 8 พฤศจิกายน 2026 (Asia/Bangkok) ต่อมาผู้ใช้ยืนยันการสมัครและสิทธิ์ GitHub ตามหน้าที่แสดง จึงสมัคร/ยืนยันอีเมล Aiven และสร้าง PostgreSQL service `heat-postgis-check` บนแผน **Free-1-1gb** แล้ว หน้า service เปลี่ยนเป็น Running ให้ PostgreSQL 18 (Free เลือกรุ่นเองไม่ได้), 1 CPU / RAM 1 GB / disk 1 GB, connection limit 20 ยังไม่ได้เปลี่ยนปลายทางของ HEAT หรือยืนยันว่าทั้งระบบรันฟรีผ่านแล้ว
 
 ## ตัวเลือกแรก: Aiven PostgreSQL + Hostless บัญชีเดิม
 
@@ -21,9 +21,9 @@
 
 1. เปิดบัญชี Aiven ปกติเพียงบัญชีเดียว เลือก **Free** เท่านั้น ไม่เลือก Developer/Hobbyist หรือ credit trial และไม่ผูกบัตร ตรวจการยอมรับข้อตกลงก่อนสมัครจริง
 2. ใช้ฐานข้อมูลทดสอบแยก ไม่มีข้อมูลสิ่งแวดล้อมหรือข้อมูลแอป production เก็บ credentials ผ่าน private secret files เท่านั้น
-3. PostgreSQL ของ Aiven ใช้ [project CA certificate](https://aiven.io/docs/platform/concepts/tls-ssl-certificates) สำหรับ `sslmode=verify-full` ต้องรองรับ CA นี้ใน probe/client อย่างชัดเจน สคริปต์ probe ปัจจุบันบังคับ certifi public roots จึง **ยังไม่พร้อมตรวจ Aiven โดยไม่แก้การรับ CA** ห้ามแก้ปัญหาด้วยการปิด certificate/hostname verification
+3. PostgreSQL ของ Aiven ใช้ [project CA certificate](https://aiven.io/docs/platform/concepts/tls-ssl-certificates) สำหรับ `sslmode=verify-full` เตรียม `--postgres-ca-file` ใน probe แล้ว โดย parse CA ก่อนเชื่อมและหยุดเมื่อไฟล์ผิด ห้ามแก้ปัญหาด้วยการปิด certificate/hostname verification ต้องใช้ CA ของ service จริงและทดสอบ TLS ก่อนอ้างว่าเชื่อมได้
 4. ตรวจ `pg_available_extensions`, รุ่น PostgreSQL/PostGIS ที่ได้จริง และสิทธิ์เปิด extension แล้วค่อยทดสอบ geometry/index แบบ transaction บน fresh database ที่ระบุแน่ชัด ไม่เปลี่ยน default read-only probe ให้เขียนได้โดยปริยาย
-5. กำหนด connection budget ให้ API, workers, Beat และงานตรวจรวมไม่เกิน 20 โดยเหลือช่องสำหรับ admin/backup ปัจจุบัน engine ของแอปยังไม่ได้จำกัด pool ต่อ process สำหรับปลายทางนี้ ห้าม deploy ด้วย default แล้วสมมติว่าพอ
+5. กำหนด connection budget ให้ API, workers, Beat และงานตรวจรวมไม่เกิน 20 โดยเหลือช่องสำหรับ admin/backup เตรียม pool size/overflow/timeout ต่อ process และคืน connection ของ SSE ระหว่างรอแล้ว ยังต้องรวม replicas และ Celery children จริงก่อน deploy ไม่ถือว่าค่า template เป็น global cap
 6. ตรวจ Hostless app/worker requests และจำนวน process ที่บัญชีอนุญาตจริงภายใน pool โดยไม่เปิด paid volume หากไม่ผ่านให้รายงาน blocker ไม่เพิ่มการคิดเงินเอง
 7. ทดสอบ ingestion → validated publication → SSE, โหลดจริง, worker crash/redelivery และ off-host recovery ก่อนเปลี่ยนสถานะว่าพร้อมใช้งาน ไม่มี heartbeat/traffic ปลอมเพื่อเลี่ยง inactivity rules
 
@@ -45,4 +45,4 @@
 
 แนะนำตรวจ **Aiven PostgreSQL Free + Hostless บัญชีเดิม** ก่อน เพราะแก้จุดที่ติด PostgreSQL โดยไม่เพิ่ม storage ของ Hostless ไม่ใช้บัตร และไม่เปลี่ยนคิวที่เคยตรวจได้แล้ว มี fallback เป็น Supabase; Neon ต้องแก้/วัด compute budget เพิ่ม จึงยังไม่ใช่ตัวเลือกแรก
 
-ยังไม่มี service ใหม่ ไม่มี production deployment และไม่มีการติดต่อ support แทนผู้ใช้ รายการนี้ไม่ยกเลิกด่าน Earth Engine/SSO/หลักฐานต้นทุนและพื้นที่จริงใน [predeployment status](predeployment-status.md)
+มี PostgreSQL Free ทดสอบบน Aiven แล้ว ไม่มี production deployment และไม่มีการติดต่อ support แทนผู้ใช้ บัญชีแสดง trial credits ที่ผู้ให้บริการให้มาอัตโนมัติ แต่ service เลือก Free จริง ไม่มีบริการ Developer/Professional หรือการผูกบัตร รายการนี้ไม่ยกเลิกด่าน Earth Engine/SSO/หลักฐานต้นทุนและพื้นที่จริงใน [predeployment status](predeployment-status.md)

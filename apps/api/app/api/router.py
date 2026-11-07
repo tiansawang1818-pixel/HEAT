@@ -2005,6 +2005,9 @@ async def events_stream(request: Request, after: Optional[str] = None, db: Sessi
                 select(PipelineEvent).order_by(desc(PipelineEvent.created_at), desc(PipelineEvent.id)).limit(1)
             )
             cursor = latest.id if latest else None
+        # SSE connections can remain open for hours. Return the database
+        # connection before yielding or waiting, especially on small pools.
+        db.rollback()
         yield "retry: 5000\n: connected\n\n"
         while not await request.is_disconnected():
             if cursor:
@@ -2019,6 +2022,7 @@ async def events_stream(request: Request, after: Optional[str] = None, db: Sessi
                 rows = list(db.scalars(
                     select(PipelineEvent).order_by(PipelineEvent.created_at, PipelineEvent.id).limit(50)
                 ).all())
+            frames = []
             if rows:
                 for event in rows:
                     cursor = event.id
@@ -2031,9 +2035,12 @@ async def events_stream(request: Request, after: Optional[str] = None, db: Sessi
                         **event.payload,
                     }
                     wire_event = "data-update" if event.event_type == "layer.published" else event.event_type
-                    yield "id: %s\nevent: %s\ndata: %s\n\n" % (event.id, wire_event, json.dumps(payload, ensure_ascii=False))
-            else:
-                yield ": heartbeat\n\n"
+                    frames.append("id: %s\nevent: %s\ndata: %s\n\n" % (event.id, wire_event, json.dumps(payload, ensure_ascii=False)))
+            # Materialize frames before rollback expires ORM objects. No
+            # transaction is held while clients receive frames or sleep.
+            db.rollback()
+            for frame in frames or [": heartbeat\n\n"]:
+                yield frame
             import asyncio
 
             await asyncio.sleep(5)

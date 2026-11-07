@@ -59,7 +59,25 @@ def load_credentials(path=None):
     return values
 
 
-def probe_postgres(uri):
+def postgres_ca_bundle(ca_file=None):
+    """Trust an explicitly supplied provider CA without weakening verification."""
+    import certifi
+
+    if ca_file is None:
+        return certifi.where()
+    source = Path(ca_file)
+    metadata = source.stat()
+    if not stat.S_ISREG(metadata.st_mode) or not 0 < metadata.st_size <= 2_000_000:
+        raise ValueError("A non-empty provider CA bundle is required")
+    # Parse before any connection. A broken bundle must never fall back to
+    # public roots, sslmode=require, or an unverified connection.
+    context = ssl.create_default_context(cafile=str(source))
+    if not context.get_ca_certs():
+        raise ValueError("Provider bundle must contain a CA certificate")
+    return str(source.resolve())
+
+
+def probe_postgres(uri, *, ca_file=None):
     if not uri:
         return {"status": "unavailable", "reason": "missing_postgres_url"}
     try:
@@ -68,13 +86,16 @@ def probe_postgres(uri):
         scheme = ""
     if scheme not in ("postgres", "postgresql"):
         return {"status": "error", "reason": "postgres_uri_required"}
-    import certifi
     import psycopg
     from psycopg.rows import dict_row
 
     try:
+        root_certificate = postgres_ca_bundle(ca_file)
+    except (ValueError, OSError):
+        return {"status": "error", "reason": "invalid_postgres_ca_file"}
+    try:
         with psycopg.connect(
-            uri, sslmode="verify-full", sslrootcert=certifi.where(), connect_timeout=8,
+            uri, sslmode="verify-full", sslrootcert=root_certificate, connect_timeout=8,
             options="-c default_transaction_read_only=on -c statement_timeout=5000",
             row_factory=dict_row,
         ) as connection:
@@ -128,26 +149,27 @@ def redis_client(uri, database):
     )
 
 
-def probe_transactional_postgis(uri, *, enable_extension=False):
+def probe_transactional_postgis(uri, *, enable_extension=False, ca_file=None):
     """Opt-in DDL, only in the specifically named fresh hosting test database."""
     if not uri:
         return {"status": "unavailable", "reason": "missing_postgres_url"}
     try:
         parsed = urlsplit(uri)
+        database_name = unquote(parsed.path.lstrip("/"))
         routing_keys = {"host", "hostaddr", "port", "dbname", "database", "service", "servicefile"}
         if (parsed.scheme not in ("postgres", "postgresql") or not parsed.hostname
-                or unquote(parsed.path.lstrip("/")) != "heat-pg16-check"
+                or database_name not in {"heat-pg16-check", "heat-postgis-check"}
                 or routing_keys.intersection(parse_qs(parsed.query, keep_blank_values=True))):
             return {"status": "blocked", "reason": "explicit_hosting_test_database_required", "writes_attempted": False}
-        import certifi
         import psycopg
         from psycopg.rows import dict_row
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apps" / "api"))
         from app.services.hosting_postgis import rollback_postgis_probe
-        with psycopg.connect(uri, autocommit=True, sslmode="verify-full", sslrootcert=certifi.where(),
-                             dbname="heat-pg16-check", connect_timeout=8, row_factory=dict_row,
+        root_certificate = postgres_ca_bundle(ca_file)
+        with psycopg.connect(uri, autocommit=True, sslmode="verify-full", sslrootcert=root_certificate,
+                             dbname=database_name, connect_timeout=8, row_factory=dict_row,
                              options="-c statement_timeout=15000 -c lock_timeout=2000") as connection:
-            if connection.info.dbname != "heat-pg16-check":
+            if connection.info.dbname != database_name:
                 return {"status": "blocked", "reason": "connected_database_name_mismatch", "writes_attempted": False}
             result = rollback_postgis_probe(connection, enable_extension=enable_extension)
             result["tls_hostname_verified"] = True
@@ -257,7 +279,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--credentials-file", help="Private JSON file, mode 0600; never pass passwords as arguments")
     parser.add_argument("--output", type=Path)
-    parser.add_argument("--postgis-transaction-test", action="store_true", help="Opt in to rollback-only temporary geometry/index DDL in heat-pg16-check")
+    parser.add_argument("--postgres-ca-file", type=Path, help="Explicit provider CA PEM bundle; verify-full remains mandatory")
+    parser.add_argument("--postgis-transaction-test", action="store_true", help="Opt in to temporary geometry/index DDL in fresh heat-pg16-check or heat-postgis-check only")
     parser.add_argument("--enable-test-postgis", action="store_true", help="Explicitly enable PostGIS persistently in the fresh test database before geometry checks")
     restart = parser.add_mutually_exclusive_group()
     restart.add_argument("--prepare-restart", type=Path, help="Create expiring isolated Redis probe keys and a new marker file")
@@ -265,6 +288,13 @@ def main():
     args = parser.parse_args()
     if args.enable_test_postgis and not args.postgis_transaction_test:
         parser.error("--enable-test-postgis requires --postgis-transaction-test")
+    postgres_options = {}
+    if args.postgres_ca_file is not None:
+        try:
+            postgres_options["ca_file"] = postgres_ca_bundle(args.postgres_ca_file)
+        except (ValueError, OSError):
+            print(json.dumps({"status": "error", "reason": "invalid_postgres_ca_file"}))
+            return 2
     try:
         credentials = load_credentials(args.credentials_file)
     except (ValueError, OSError, json.JSONDecodeError):
@@ -273,12 +303,12 @@ def main():
     report = {
         "checked_at": datetime.now(timezone.utc).isoformat(),
         "scope": "managed_backend_compatibility_only",
-        "postgres": probe_postgres(credentials.get("postgres_url", "")),
+        "postgres": probe_postgres(credentials.get("postgres_url", ""), **postgres_options),
         "redis": probe_redis(credentials.get("redis_url", ""), args.prepare_restart, args.verify_restart),
         "whole_application_capacity_verified": False, "zero_cost_verified": False,
     }
     if args.postgis_transaction_test:
-        report["postgis_transaction_test"] = probe_transactional_postgis(credentials.get("postgres_url", ""), enable_extension=args.enable_test_postgis)
+        report["postgis_transaction_test"] = probe_transactional_postgis(credentials.get("postgres_url", ""), enable_extension=args.enable_test_postgis, **postgres_options)
     required = ["postgres", "redis"] + (["postgis_transaction_test"] if args.postgis_transaction_test else [])
     report["status"] = "passed" if all(report[name]["status"] == "passed" for name in required) else "blocked"
     encoded = json.dumps(report, indent=2) + "\n"

@@ -8,6 +8,8 @@
 
 PostgreSQL บังคับ `sslmode=verify-full` พร้อม public CA roots จาก certifi และ transaction แบบ read-only ถ้า PostGIS ไม่พร้อมใช้ จะไม่สร้าง extension ให้เอง Redis บังคับ `rediss://`, SNI และตรวจ certificate/hostname ไม่รับ query overrides ที่อาจลดการตรวจ TLS รายงาน exception เป็น fixed reason labels จึงไม่เผย URI/รหัสผ่านจากข้อความ provider
 
+สำหรับ provider ที่ใช้ CA เฉพาะ project เช่น Aiven ให้ดาวน์โหลด PEM จากหน้า service ที่ยืนยันแล้ว และระบุ `--postgres-ca-file /run/secrets/aiven-project-ca.pem` สคริปต์ตรวจว่า bundle อ่านและ parse ได้ก่อนเชื่อม หากไฟล์หาย/ไม่ถูกต้องจะหยุด ไม่ fallback ไปปิด verification หรือแก้ `sslmode` ใบรับรองที่ระบุจะใช้กับทั้ง read-only และ opt-in PostGIS probe โดยไม่ใส่ path/เนื้อหาในรายงาน ต้องติดตาม CA rotation ของ provider ด้วย
+
 ```sh
 python scripts/verify_hosting_backends.py \
   --credentials-file /run/secrets/hosting-probe.json \
@@ -15,6 +17,12 @@ python scripts/verify_hosting_backends.py \
 ```
 
 Exit code `2` หมายถึง missing/error/blocked หรือหลักฐานยังไม่ครบ ห้ามเปลี่ยนเป็นผ่านเพราะ provider แสดง Healthy, PING ได้, มี PostgreSQL เปล่า หรือเปิด AOF อยู่
+
+## Connection budget สำหรับฐานข้อมูลภายนอก
+
+API รองรับ `DATABASE_POOL_SIZE`, `DATABASE_MAX_OVERFLOW` และ `DATABASE_POOL_TIMEOUT_SECONDS` ต่อ process สำหรับ PostgreSQL ค่าเริ่มต้นของ production template คือ 2 / 0 / 10 วินาที เมื่อเต็มจะรอไม่เกิน timeout ไม่เปิด connection แบบไม่จำกัด SQLite test configuration คง StaticPool ตามเดิม SSE คืน transaction/connection ก่อนส่ง frame และก่อนรอรอบถัดไป จึงไม่ยึด connection ตลอดอายุหน้าแผนที่
+
+Aiven Free มีเพดาน 20 connections **รวมทั้ง service** ต้องรวมจำนวน process, replicas และ Celery children กับ migrations/admin/backup ด้วย ตัวอย่าง runtime 5 processes × pool 2 / overflow 0 ใช้ได้สูงสุด 10 ของแอป เหลือไว้สำหรับงานดูแล นี่เป็นเพียงการจัดงบ ไม่ใช่ผลตรวจ max_connections/สิทธิ์ของบัญชีจริง สำหรับ managed PostgreSQL ใส่ `sslmode=verify-full` และ `sslrootcert` ที่ชี้ไปยัง project CA ที่ mount ใน runtime ลง `DATABASE_URL` ของ secret configuration ไม่เปลี่ยน URL production จริงจากการเตรียม template
 
 ## คิวทดสอบหลัง restart
 
@@ -42,7 +50,7 @@ python scripts/verify_hosting_backends.py \
 
 ## PostGIS แบบ rollback-only ในฐานข้อมูลใหม่
 
-หลังพื้นที่คืนจริงและตรวจ free entitlement ของทั้งบัญชีแล้ว ใช้ flag ด้านล่างได้เฉพาะ URI ที่ระบุ hostname และชื่อ database `heat-pg16-check` ไม่มี query parameters ที่เปลี่ยนปลายทาง/ชื่อฐานข้อมูล สคริปต์บังคับ TLS แบบตรวจ hostname และตรวจชื่อฐานข้อมูลที่เชื่อมได้ซ้ำ ค่าเริ่มต้นที่ไม่มี flag ยังคงอ่านอย่างเดียว
+หลังตรวจ free entitlement และได้รับอนุญาตสร้างฐานข้อมูลทดสอบแล้ว ใช้ flag ด้านล่างได้เฉพาะ URI ที่ระบุ hostname และชื่อ database `heat-pg16-check` (Hostless) หรือ `heat-postgis-check` (provider อื่นที่เตรียมไว้) ไม่มี query parameters ที่เปลี่ยนปลายทาง/ชื่อฐานข้อมูล สคริปต์ตรวจชื่อฐานข้อมูลที่เชื่อมได้ซ้ำ ค่าเริ่มต้นที่ไม่มี flag ยังคงอ่านอย่างเดียว สำหรับ Hostless ต้องให้พื้นที่เดิมคืนจริงก่อน สคริปต์ไม่เปิด DDL ใน `defaultdb` หรือฐานข้อมูลแอป production
 
 ```sh
 python scripts/verify_hosting_backends.py \

@@ -119,6 +119,68 @@ def test_postgres_pass_requires_spatial_query(monkeypatch):
     assert any("ST_Transform" in query for query in connection.queries)
 
 
+def test_explicit_provider_ca_overrides_uri_without_weakening_tls(monkeypatch, tmp_path):
+    import certifi
+    import psycopg
+    ca_file = tmp_path / "project-ca.pem"
+    ca_file.write_bytes(Path(certifi.where()).read_bytes())
+    captured = {}
+    connection = FakePostgres([{"name": "postgis", "default_version": "3.4", "installed_version": "3.4"}])
+
+    def connect(uri, **options):
+        captured.update(options)
+        return connection
+
+    monkeypatch.setattr(psycopg, "connect", connect)
+    report = probe.probe_postgres("postgresql://db.example.org/db?sslmode=disable&sslrootcert=/untrusted.pem", ca_file=ca_file)
+    assert report["status"] == "passed"
+    assert captured["sslmode"] == "verify-full"
+    assert captured["sslrootcert"] == str(ca_file.resolve())
+    assert "default_transaction_read_only=on" in captured["options"]
+
+
+@pytest.mark.parametrize("content", [b"", b"private-invalid-pem", b"x" * 2_000_001])
+def test_invalid_provider_ca_never_contacts_database(monkeypatch, tmp_path, content):
+    import psycopg
+    ca_file = tmp_path / "project-ca.pem"
+    ca_file.write_bytes(content)
+    monkeypatch.setattr(psycopg, "connect", lambda *args, **kwargs: pytest.fail("Invalid CA must fail before connecting"))
+    assert probe.probe_postgres("postgresql://db.example.org/db", ca_file=ca_file) == {
+        "status": "error", "reason": "invalid_postgres_ca_file",
+    }
+
+
+def test_cli_invalid_provider_ca_does_not_read_credentials_or_probe_redis(monkeypatch, tmp_path, capsys):
+    private_path = tmp_path / "private-ca-name.pem"
+    monkeypatch.setattr(probe.sys, "argv", ["verify_hosting_backends.py", "--postgres-ca-file", str(private_path)])
+    monkeypatch.setattr(probe, "load_credentials", lambda *args: pytest.fail("CA validation precedes credential access"))
+    monkeypatch.setattr(probe, "probe_redis", lambda *args: pytest.fail("Invalid CA must not trigger unrelated writes"))
+    assert probe.main() == 2
+    output = capsys.readouterr().out
+    assert "private-ca-name" not in output
+    assert json.loads(output) == {"status": "error", "reason": "invalid_postgres_ca_file"}
+
+
+def test_cli_passes_provider_ca_to_both_postgres_probes(monkeypatch, tmp_path, capsys):
+    import certifi
+    ca_file = tmp_path / "project-ca.pem"
+    ca_file.write_bytes(Path(certifi.where()).read_bytes())
+    monkeypatch.setattr(probe.sys, "argv", ["verify_hosting_backends.py", "--postgres-ca-file", str(ca_file), "--postgis-transaction-test"])
+    monkeypatch.setattr(probe, "load_credentials", lambda *args: {"postgres_url": "approved-test-uri"})
+    seen = []
+
+    def inspect(*args, **options):
+        seen.append(options["ca_file"])
+        return {"status": "passed"}
+
+    monkeypatch.setattr(probe, "probe_postgres", inspect)
+    monkeypatch.setattr(probe, "probe_transactional_postgis", inspect)
+    monkeypatch.setattr(probe, "probe_redis", lambda *args: {"status": "passed"})
+    assert probe.main() == 0
+    assert seen == [str(ca_file.resolve()), str(ca_file.resolve())]
+    assert str(ca_file) not in capsys.readouterr().out
+
+
 class FakeRedis:
     def __init__(self, run_id="original", config_allowed=True):
         self.run_id = run_id
@@ -183,7 +245,7 @@ def test_restart_marker_cannot_target_application_queues():
         probe.validate_marker({"probe_id": "00000000-0000-0000-0000-000000000000", "run_id": "old", "queue_key": "celery"})
 
 
-@pytest.mark.parametrize("uri", ["postgresql://db.example.org/heatshift", "postgresql://db.example.org/heat-pg16-check-other", "mysql://db.example.org/heat-pg16-check", "postgresql:///heat-pg16-check", "postgresql://db.example.org/heat-pg16-check?dbname=heatshift", "postgresql://db.example.org/heat-pg16-check?service=production"])
+@pytest.mark.parametrize("uri", ["postgresql://db.example.org/heatshift", "postgresql://db.example.org/heat-pg16-check-other", "postgresql://db.example.org/defaultdb", "postgresql://db.example.org/heat-postgis-check?dbname=defaultdb", "mysql://db.example.org/heat-pg16-check", "postgresql:///heat-pg16-check", "postgresql://db.example.org/heat-pg16-check?dbname=heatshift", "postgresql://db.example.org/heat-pg16-check?service=production"])
 def test_transactional_spatial_probe_refuses_other_database_names_before_connect(monkeypatch, uri):
     import psycopg
     monkeypatch.setattr(psycopg, "connect", lambda *args, **kwargs: pytest.fail("Wrong database must not be contacted"))

@@ -9,6 +9,9 @@ x-production-environment: &production-environment
   ADMIN_API_KEY: ""
   RATE_LIMIT_ENABLED: "true"
   DATABASE_URL: ${DATABASE_URL:?Set the production PostgreSQL URL}
+  DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-2}
+  DATABASE_MAX_OVERFLOW: ${DATABASE_MAX_OVERFLOW:-0}
+  DATABASE_POOL_TIMEOUT_SECONDS: ${DATABASE_POOL_TIMEOUT_SECONDS:-10}
   CORS_ORIGINS: '["https://${HEATSHIFT_DOMAIN:?Set the public domain}"]'
   OIDC_ISSUER: ${OIDC_ISSUER:?Set the HTTPS SSO issuer}
   OIDC_AUDIENCE: ${OIDC_AUDIENCE:?Set the API audience}

@@ -310,11 +310,13 @@ def test_sse_delivers_the_first_publication_to_an_already_connected_client(db):
         assert "no-transform" in response.headers["Cache-Control"]
         body = response.body_iterator
         assert "connected" in await body.__anext__()
+        assert not db.in_transaction()
         db.add(PipelineEvent(id="first-live-publication", event_type="layer.published", layer_key="temperature", payload={"affected_layers": ["temperature"]}))
         db.commit()
         wire = await asyncio.wait_for(body.__anext__(), timeout=1)
         assert "event: data-update" in wire
         assert "id: first-live-publication" in wire
+        assert not db.in_transaction()
         await body.aclose()
 
     asyncio.run(scenario())
