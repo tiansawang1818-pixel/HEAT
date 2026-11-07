@@ -249,6 +249,31 @@ jobs:
           else:
               raise AssertionError('No test alert reached the local receiver')
           PY
+      - name: Profile full runtime without external source checks
+        run: |
+          docker compose --env-file /tmp/heatshift-production-ci.env -f docker-compose.yml -f docker-compose.production.yml -f infra/ci/docker-compose.smoke.yml exec -T api python - <<'PY'
+          import os
+          from sqlalchemy import select
+          from app.db.session import SessionLocal
+          from app.models.entities import DataSource
+          from app.services.bootstrap import ensure_sources
+          # This is the disposable release-test DB. Freeze provider checks
+          # before starting Beat; never use production/provider credentials.
+          with SessionLocal() as database:
+              ensure_sources(database)
+              for source in database.scalars(select(DataSource)).all():
+                  source.enabled = False
+              database.commit()
+          PY
+          docker compose --env-file /tmp/heatshift-production-ci.env -f docker-compose.yml -f docker-compose.production.yml -f infra/ci/docker-compose.smoke.yml up -d --wait --wait-timeout 90 worker dispatcher beat
+          python3 scripts/profile_compose_capacity.py --env-file /tmp/heatshift-production-ci.env --ca-file /tmp/heatshift-ci-ca.pem --output /tmp/heatshift-capacity-profile.json
+          docker compose --env-file /tmp/heatshift-production-ci.env -f docker-compose.yml -f docker-compose.production.yml -f infra/ci/docker-compose.smoke.yml exec -T api python - <<'PY'
+          from sqlalchemy import func, select
+          from app.db.session import SessionLocal
+          from app.models.entities import SourceCheck
+          with SessionLocal() as database:
+              assert database.scalar(select(func.count()).select_from(SourceCheck)) == 0, 'Unexpected external source check during baseline profile'
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: release-verification-reports
@@ -256,6 +281,7 @@ jobs:
             /tmp/heatshift-release-audit.json
             /tmp/heatshift-load-smoke.json
             /tmp/heatshift-offsite-backup.json
+            /tmp/heatshift-capacity-profile.json
           retention-days: 14
       - name: Container diagnostics
         if: failure()
