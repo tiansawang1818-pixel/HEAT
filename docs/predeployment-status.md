@@ -1,10 +1,12 @@
 # สถานะก่อนเปิด HEAT//SHIFT
 
-วันที่ตรวจ: 7 พฤศจิกายน 2026 (Asia/Bangkok)
+เวลาของการตรวจแต่ละชุดบันทึกในรายงาน (UTC); กำหนด recovery ของ Hostless ด้านล่างใช้ Asia/Bangkok
 
 **ยังไม่ได้ deploy และยังไม่มีเครื่องปลายทางที่ผ่านเงื่อนไขทั้งหมดของผู้ใช้** ไม่มีการเปิดบริการเสียเงิน เพิ่มบัตร สมัคร trial หรือใช้เครื่องผู้ใช้เป็น app server/worker/scheduler งานรอบนี้แก้ source และส่งการทดสอบไป GitHub ภายในเพดานบัญชีที่มีอยู่
 
-ความคืบหน้าการหา hosting: บัญชี Hostless ได้สิทธิ์รวม 0.5 vCPU / 1024 MiB RAM / 512 MiB storage และ provision PostgreSQL/Redis ทดสอบแล้ว Redis ผ่าน TLS, logical DB 0/1/2 และคิวทดสอบหลัง restart จริง พร้อมทดสอบ Celery broker/backend และ node-redis เชื่อม endpoint จริงได้หลังแก้ TLS settings แต่ PostgreSQL ไม่ผ่าน health check แม้ลองเพิ่ม CPU/RAM ภายใน pool จึงยังตรวจ PostGIS ไม่ได้ ยังไม่มี whole-stack capacity test, production app/worker, บัตร/เครดิต หรือ repo integration ดู [ผลทดสอบจริง](no-card-hosting-research.md#ผลทดสอบ-backend-จริง) และ [สคริปต์ตรวจซ้ำ](managed-hosting-checks.md)
+ความคืบหน้า hosting: Hostless ได้สิทธิ์รวม 0.5 vCPU / 1024 MiB RAM / 512 MiB storage Redis ผ่าน TLS, logical DB 0/1/2 และคิวหลัง graceful restart รวมถึง client ของ Celery/node-redis แต่ PostgreSQL ไม่ผ่าน health check ผู้ใช้อนุญาตให้ลบเพื่อทดลองสร้างใหม่แล้ว ตัวเดิมอยู่ใน recovery window และคืนพื้นที่ถาวรไม่ได้จนถึง **15 พฤศจิกายน 2026 เวลา 00:29:23 น. กรุงเทพฯ** ยังไม่สร้าง PostgreSQL 16 เพราะ quote $0 ของ resource ใหม่ไม่ยืนยันการนับ retained storage ทั้งบัญชี ปัจจุบันมี Redis ทำงานและ PostgreSQL หยุดรอลบ ไม่มี HEAT app/worker production บัตร เครดิต หรือ repo integration ผู้ใช้เลือกยังไม่ส่งข้อความหา support ดู [สถานะและหลักฐาน](no-card-hosting-research.md#การทดลองสร้างใหม่และข้อจำกัด-retention)
+
+ตรวจทรัพยากรที่ทำได้เองเพิ่มแล้ว: [CI baseline ของทั้ง 7 services](capacity-validation.md#ผลที่วัดแล้ว) วัด RAM รวมพร้อมกันสูงสุด 664.84 MiB / anonymous 499.13 MiB ในโหลดอ่านข้อมูลขนาดเล็ก ไม่มี OOM kill หรือ external source check ผลคือ `production_fit_not_established` ยังไม่ใช่ peak ingestion/optimizer หรือ provider resource admission
 
 ## งานที่ทำและ push แล้ว
 
@@ -19,20 +21,21 @@
 - แก้ Next.js proxy order ให้ dynamic admin routes ผ่านการตรวจสิทธิ์ก่อน generic backend rewrite และตรวจผ่าน HTTPS ทั้งการอนุมัติโครงการ/การควบคุมงานย้อนหลัง
 - คู่มือ deployment, วิธีการทางวิทยาศาสตร์, แหล่งต้นทุนสาธารณะสำหรับคนตรวจ และบทนำเสนอ 3 นาทีที่แสดงข้อมูลขาดตามจริง
 - Managed hosting checks: สคริปต์ตรวจ PostGIS/TLS/Redis แบบอ่านอย่างเดียวเป็นค่าเริ่มต้น และโหมดตรวจคิวทดสอบหลัง restart ที่ไม่แตะคิวจริง พร้อมแก้ Celery broker/backend SSL และ node-redis SNI ตรวจ client connectivity กับ Redis บน Hostless จริงผ่าน เก็บรายงานที่ไม่มี credentials และ [ข้อความปัญหาที่เตรียมไว้แต่ยังไม่ได้ส่ง](hostless-readiness-support-draft.md)
+- Capacity collector ใน isolated CI วัด cgroup ของทั้ง 7 services พร้อม GET แบบตรวจ TLS แยก anonymous memory/file cache และไม่รวม peak จากคนละเวลา ปิดแหล่งข้อมูลก่อนเริ่ม scheduler โดยคง readiness gate ของแอปไว้ตามเดิม หากข้อมูลวัดไม่ครบหรือ baseline ต่ำกว่า pool จะไม่เปลี่ยนเป็นอนุมัติ production
 
-โค้ดที่ตรวจล่าสุด: `a807f7d666e674ca4db7c57e6e61f8b226b40708` รวม historical/decision-integrity และ managed-hosting/TLS checks เอกสารหรือรายงานที่ commit ต่อจากนี้ไม่เปลี่ยน functional code ที่ CI ตรวจ
+โค้ดที่ตรวจล่าสุด: `bf092f4cdcadff5f9528293c6e1c023e5969c7dd` รวม historical/decision-integrity, managed-hosting/TLS และ capacity checks เอกสารหรือรายงานที่ commit ต่อจากนี้ไม่เปลี่ยน functional code ที่ CI ตรวจ
 
 ## ผลตรวจ
 
-[GitHub Actions run 42374635238](https://github.com/tiansawang1818-pixel/HEAT/actions/runs/42374635238) ผ่านครบทั้ง 5 งาน ตรวจทั้ง job conclusion และ test summaries จาก logs แล้ว:
+[GitHub Actions run 42396259747](https://github.com/tiansawang1818-pixel/HEAT/actions/runs/42396259747) ผ่านครบทั้ง 5 งาน ตรวจ job conclusions, API test summary และ capacity report จาก logs แล้ว:
 
 | งาน | หลักฐาน |
 |---|---|
-| API | 184 unit/API tests ผ่าน และ dependency audit ผ่าน |
+| API | 189 unit/API tests ผ่าน และ dependency audit ผ่าน |
 | Web | 38 tests ผ่าน รวม Redis session integration, TypeScript ผ่าน, Next.js production build ผ่าน |
 | Stack amd64 | 4 integration tests ผ่าน: PostGIS/Redis/Celery/Beat/SSE และ historical cursor ข้าม session; ซ้อม backup/restore เทียบแถว/ checksum ครบ 22 application tables |
 | Native ARM | สร้าง PostGIS/API/Caddy แบบ arm64 และผ่าน integration 4 tests เดียวกันบน ARM จริง |
-| Release containers | หน้าเว็บ, admin gates, HTTPS/certificate verification, secure cookies, SSE ผ่าน Caddy/Next, config isolation, bounded latency, encrypted backup download recovery และการส่ง test alert ภายใน CI ผ่าน |
+| Release containers | หน้าเว็บ, admin gates, HTTPS/certificate verification, secure cookies, SSE ผ่าน Caddy/Next, config isolation, bounded latency, encrypted backup download recovery และ test alert ผ่าน เพิ่ม full-runtime baseline ครบ 10 รอบ พร้อมตรวจ external source checks เป็นศูนย์ |
 
 Release audit ใน CI **ตั้งใจยังติด data-readiness blocker** เพราะไม่มีข้อมูลและ credentials ของ provider จริง การผ่านชุดตรวจระบบไม่ใช่หลักฐานว่าข้อมูล/ราคาโครงการ/forecast พร้อมตัดสินใจแล้ว ชุดทดสอบใช้ synthetic fixtures ในฐานข้อมูลแยกและไม่เรียกบัญชีดาวเทียมจริง
 

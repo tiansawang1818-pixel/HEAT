@@ -39,6 +39,8 @@
 
 ตรวจผู้ให้บริการเพิ่มเติมใน [no-card hosting research](no-card-hosting-research.md): บัญชี Hostless ได้ entitlement 0.5 vCPU / 1024 MiB RAM / 512 MiB storage รวมทั้งบัญชี เปิด PostgreSQL/Redis ทดสอบภายในโควตาแล้ว Redis ผ่าน TLS, logical DB 0/1/2 และคิวทดสอบยังอยู่หลัง restart จริง แต่ PostgreSQL ไม่ผ่าน health check แม้ลองเพิ่ม CPU/RAM ภายใน pool จึงยังตรวจ PostGIS และ whole-stack capacity ไม่ได้ Redis ยังมีข้อจำกัด CONFIG ACL/การตรวจ crash durability ไม่มีบัตร เครดิต หรือ repo integration และยังไม่มี HEAT app/worker production ส่วน ClawCloud พบประกาศยุติบริการ จึงไม่ใช้ข้อเสนอเก่ามาแนะนำให้สมัคร
 
+อัปเดตจากการลงมือเพิ่ม: ผู้ใช้อนุญาตให้ลบ PostgreSQL ทดสอบเพื่อสร้างใหม่แล้ว แต่ Hostless เก็บ storage ใน recovery window และยังไม่เปิดลบถาวรจนถึง 15 พฤศจิกายน 2026 เวลา 00:29:23 น. กรุงเทพฯ จึงยังไม่สร้าง PostgreSQL 16 ซึ่งอาจทำให้ active + retained storage รวมเกิน pool แม้ quote ของ resource ใหม่แสดง $0 ผู้ใช้ยังไม่อนุญาตให้ส่งข้อความหา support ส่วน [CI capacity baseline](capacity-validation.md) วัดทั้ง 7 services ได้จริงประมาณ 665 MiB ในโหลดอ่านข้อมูลขนาดเล็ก แต่ไม่ใช่หลักฐาน whole-stack peak/ค่าใช้จ่ายบน Hostless
+
 ห้ามเปิด Pay As You Go, เริ่ม free trial ที่หมดอายุแล้วอาจคิดเงิน, ใส่บัตร, สร้าง load ปลอมเพื่อเลี่ยง idle policy หรือเปลี่ยนไปใช้เครื่องผู้ใช้แทน เงื่อนไขผู้ให้บริการอาจเปลี่ยนได้ ต้องตรวจอีกครั้งก่อนเปิดทรัพยากรจริง
 
 ## งานที่ทำต่อได้โดยไม่ต้องรอผู้ใช้

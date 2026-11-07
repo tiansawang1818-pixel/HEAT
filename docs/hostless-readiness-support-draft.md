@@ -6,6 +6,14 @@ explicitly authorized to contact support, should submit it through the signed-in
 account. Do not enable a paid plan, add credit, increase storage, or replace TLS
 verification while investigating.
 
+The account owner chose not to send this message. Keep it as a draft. Since the
+original investigation, the owner authorized deleting the test PostgreSQL, but
+Hostless retains its storage in a recovery window until 15 November 2026,
+00:29:23 Asia/Bangkok. Immediate permanent deletion is unavailable. A PostgreSQL
+16 replacement has not been deployed because account-wide retained storage and
+the replacement's per-resource zero quote cannot yet be reconciled. Update the
+incident state before any future owner-authorized submission.
+
 ## Subject
 
 New PostgreSQL 17 cannot pass health check within free resource pool

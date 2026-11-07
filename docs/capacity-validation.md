@@ -25,4 +25,13 @@ CI เริ่ม PostgreSQL, Redis, API, Next.js, ingestion worker, control di
 
 รายงานอยู่ใน artifact `release-verification-reports` ชื่อ `heatshift-capacity-profile.json` พร้อม SHA ที่วัด รายงานนี้ไม่รวม Caddy/platform edge หรือ monitoring services ที่เป็นทางเลือก Current production ใช้ Earth Engine asset references จึงไม่เริ่ม local MinIO ใน profile นี้
 
+## ผลที่วัดแล้ว
+
+[CI run 42396259747](https://github.com/tiansawang1818-pixel/HEAT/actions/runs/42396259747) ผ่านทั้ง 5 jobs และเก็บ [baseline report](verification/compose-capacity-baseline.json) จากโค้ด `bf092f4cdcadff5f9528293c6e1c023e5969c7dd` ได้ครบ 10 รอบบน x86_64:
+
+- Memory รวมสูงสุดที่วัดพร้อมกันประมาณ **664.84 MiB**; anonymous memory รวมสูงสุดประมาณ **499.13 MiB**
+- CPU เฉลี่ยของแต่ละ service รวมประมาณ **0.134 core** ในช่วงโหลดอ่านข้อมูลขนาดเล็กนี้ ไม่ใช่การพิสูจน์ภายใต้ CPU quota 0.5 vCPU ของ Hostless
+- ไม่พบ OOM kill ในการวัดนี้ และไม่มี source check ภายนอกเกิดขึ้น
+- ผลสรุปคือ `production_fit_not_established` ไม่ใช่ free-hosting approval ยังไม่มี peak ingestion/optimizer/training หรือการตรวจ provider resource requests
+
 ยังต้องวัดบน provider จริงด้วย dataset ขนาดที่รองรับ ภายใต้ CPU/RAM/storage requests ที่อนุญาต และตรวจ queue backpressure, abrupt crash recovery, ingestion/optimizer peaks, แผนสำรองข้อมูล และค่าใช้จ่าย การผ่าน CI baseline ไม่ยกเลิกข้อจำกัด PostgreSQL readiness/PostGIS ของ Hostless

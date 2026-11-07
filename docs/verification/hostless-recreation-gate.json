@@ -1,0 +1,19 @@
+{
+  "recorded_at": "2026-11-07T17:36:41.801723+00:00",
+  "scope": "hostless_test_postgres_recreation_gate",
+  "deleted_test_database": "heat-compatibility-check",
+  "user_authorized_deletion": true,
+  "state": "recovery_window",
+  "recovery_ends_at": "2026-11-15T00:29:23+07:00",
+  "immediate_permanent_deletion_available": false,
+  "retained_storage_mib": 256,
+  "active_redis_storage_mib": 256,
+  "proposed_postgres_16_storage_mib": 256,
+  "confirmed_account_pool_storage_mib": 512,
+  "proposed_per_resource_quote_usd": 0,
+  "proposed_instance_created": false,
+  "reason": "per_resource_zero_quote_does_not_reconcile_retained_account_storage",
+  "support_message_sent": false,
+  "credentials_in_report": false,
+  "complete_hosting_fit_verified": false
+}

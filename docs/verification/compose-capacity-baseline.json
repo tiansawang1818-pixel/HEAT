@@ -1,0 +1,69 @@
+{
+  "checked_at": "2026-11-07T17:30:05.188900+00:00",
+  "scope": "isolated_github_ci_idle_and_read_only_http_profile",
+  "architecture": "x86_64",
+  "functional_code_sha": "bf092f4cdcadff5f9528293c6e1c023e5969c7dd",
+  "application_readiness_verified": false,
+  "samples": 10,
+  "services": {
+    "postgres": {
+      "peak_sampled_memory_bytes": 166760448,
+      "peak_sampled_anonymous_bytes": 16928768,
+      "mean_cpu_cores": 0.025255,
+      "oom_kill_count": 0
+    },
+    "redis": {
+      "peak_sampled_memory_bytes": 4886528,
+      "peak_sampled_anonymous_bytes": 3280896,
+      "mean_cpu_cores": 0.021204,
+      "oom_kill_count": 0
+    },
+    "api": {
+      "peak_sampled_memory_bytes": 98078720,
+      "peak_sampled_anonymous_bytes": 93487104,
+      "mean_cpu_cores": 0.019442,
+      "oom_kill_count": 0
+    },
+    "web": {
+      "peak_sampled_memory_bytes": 55701504,
+      "peak_sampled_anonymous_bytes": 50835456,
+      "mean_cpu_cores": 0.026435,
+      "oom_kill_count": 0
+    },
+    "worker": {
+      "peak_sampled_memory_bytes": 165572608,
+      "peak_sampled_anonymous_bytes": 160083968,
+      "mean_cpu_cores": 0.014666,
+      "oom_kill_count": 0
+    },
+    "dispatcher": {
+      "peak_sampled_memory_bytes": 113954816,
+      "peak_sampled_anonymous_bytes": 108867584,
+      "mean_cpu_cores": 0.0143,
+      "oom_kill_count": 0
+    },
+    "beat": {
+      "peak_sampled_memory_bytes": 94420992,
+      "peak_sampled_anonymous_bytes": 89989120,
+      "mean_cpu_cores": 0.012842,
+      "oom_kill_count": 0
+    }
+  },
+  "assessment": {
+    "status": "production_fit_not_established",
+    "ram_allowance_bytes": 1073741824,
+    "peak_sampled_total_bytes": 697135104,
+    "peak_sampled_anonymous_bytes": 523378688,
+    "ingestion_and_optimization_peak_verified": false,
+    "provider_resource_admission_verified": false,
+    "complete_hosting_fit_verified": false
+  },
+  "limitations": [
+    "Measured on GitHub CI, not on Hostless. Provider allocation defaults and quotas are not proven.",
+    "Real environmental ingestion, large rasters, OR-Tools peak load and forecast training were not exercised.",
+    "No external data checks were enabled. Caddy/platform edge memory is excluded from totals.",
+    "Docker exec sampling overhead is included; reclaimable file cache is reported separately from anonymous memory.",
+    "Neither successful baseline sampling nor below-pool memory establishes zero cost or production fit."
+  ],
+  "ci_run_url": "https://github.com/tiansawang1818-pixel/HEAT/actions/runs/42396259747"
+}
