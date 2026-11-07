@@ -2,8 +2,10 @@
 """Probe managed backends without starting local servers or exposing credentials.
 
 Read-only by default. Explicit restart modes write only random, expiring Redis
-probe keys, never Celery queues or application records. This does not provision,
-resize, restart, install extensions, migrate data, or certify hosting costs.
+probe keys, never Celery queues or application records. The optional geometry
+probe rolls back its temp tables; a separate enable-test-postgis flag explicitly
+persists extension metadata in a fresh test database. This never provisions,
+resizes, restarts, migrates application data, or certifies hosting costs.
 """
 import argparse
 from datetime import datetime, timezone
@@ -126,7 +128,7 @@ def redis_client(uri, database):
     )
 
 
-def probe_transactional_postgis(uri):
+def probe_transactional_postgis(uri, *, enable_extension=False):
     """Opt-in DDL, only in the specifically named fresh hosting test database."""
     if not uri:
         return {"status": "unavailable", "reason": "missing_postgres_url"}
@@ -147,11 +149,12 @@ def probe_transactional_postgis(uri):
                              options="-c statement_timeout=15000 -c lock_timeout=2000") as connection:
             if connection.info.dbname != "heat-pg16-check":
                 return {"status": "blocked", "reason": "connected_database_name_mismatch", "writes_attempted": False}
-            result = rollback_postgis_probe(connection)
+            result = rollback_postgis_probe(connection, enable_extension=enable_extension)
             result["tls_hostname_verified"] = True
             return result
     except Exception as error:
-        return {"status": "error", "reason": error_reason(error), "production_load_verified": False}
+        return {"status": "error", "reason": error_reason(error), "production_load_verified": False,
+                "persistent_setup_requested": bool(enable_extension), "extension_may_remain_enabled": bool(enable_extension)}
 
 
 def check_restart(client, marker):
@@ -254,11 +257,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--credentials-file", help="Private JSON file, mode 0600; never pass passwords as arguments")
     parser.add_argument("--output", type=Path)
-    parser.add_argument("--postgis-transaction-test", action="store_true", help="Opt in to rollback-only PostGIS DDL in a fresh heat-pg16-check database")
+    parser.add_argument("--postgis-transaction-test", action="store_true", help="Opt in to rollback-only temporary geometry/index DDL in heat-pg16-check")
+    parser.add_argument("--enable-test-postgis", action="store_true", help="Explicitly enable PostGIS persistently in the fresh test database before geometry checks")
     restart = parser.add_mutually_exclusive_group()
     restart.add_argument("--prepare-restart", type=Path, help="Create expiring isolated Redis probe keys and a new marker file")
     restart.add_argument("--verify-restart", type=Path, help="Verify queue retention after an operator restarts the test Redis")
     args = parser.parse_args()
+    if args.enable_test_postgis and not args.postgis_transaction_test:
+        parser.error("--enable-test-postgis requires --postgis-transaction-test")
     try:
         credentials = load_credentials(args.credentials_file)
     except (ValueError, OSError, json.JSONDecodeError):
@@ -272,7 +278,7 @@ def main():
         "whole_application_capacity_verified": False, "zero_cost_verified": False,
     }
     if args.postgis_transaction_test:
-        report["postgis_transaction_test"] = probe_transactional_postgis(credentials.get("postgres_url", ""))
+        report["postgis_transaction_test"] = probe_transactional_postgis(credentials.get("postgres_url", ""), enable_extension=args.enable_test_postgis)
     required = ["postgres", "redis"] + (["postgis_transaction_test"] if args.postgis_transaction_test else [])
     report["status"] = "passed" if all(report[name]["status"] == "passed" for name in required) else "blocked"
     encoded = json.dumps(report, indent=2) + "\n"

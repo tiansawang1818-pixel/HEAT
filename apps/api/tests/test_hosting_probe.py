@@ -213,7 +213,7 @@ def test_requested_transactional_probe_failure_prevents_success(monkeypatch, cap
     monkeypatch.setattr(probe, "load_credentials", lambda *args: {"postgres_url": "approved-test-uri", "redis_url": "test-uri"})
     monkeypatch.setattr(probe, "probe_postgres", lambda *args: {"status": "passed"})
     monkeypatch.setattr(probe, "probe_redis", lambda *args: {"status": "passed"})
-    monkeypatch.setattr(probe, "probe_transactional_postgis", lambda *args: {"status": "blocked", "reason": "postgis_not_available"})
+    monkeypatch.setattr(probe, "probe_transactional_postgis", lambda *args, **kwargs: {"status": "blocked", "reason": "postgis_not_available"})
     assert probe.main() == 2
     assert json.loads(capsys.readouterr().out)["status"] == "blocked"
 
@@ -226,3 +226,11 @@ def test_default_probe_never_runs_transactional_ddl(monkeypatch, capsys):
     monkeypatch.setattr(probe, "probe_transactional_postgis", lambda *args: pytest.fail("DDL is opt-in only"))
     assert probe.main() == 2
     assert "postgis_transaction_test" not in json.loads(capsys.readouterr().out)
+
+
+def test_persistent_extension_setup_requires_explicit_transaction_test_mode(monkeypatch):
+    monkeypatch.setattr(probe.sys, "argv", ["verify_hosting_backends.py", "--enable-test-postgis"])
+    monkeypatch.setattr(probe, "load_credentials", lambda *args: pytest.fail("Invalid mode must not read credentials"))
+    with pytest.raises(SystemExit) as error:
+        probe.main()
+    assert error.value.code == 2

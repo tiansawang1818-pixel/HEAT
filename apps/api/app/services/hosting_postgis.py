@@ -1,8 +1,10 @@
 """Bounded, rollback-only PostGIS capability test for a fresh test database.
 
 No environmental observations, application tables, migrations, or publications
-are created. The caller must supply an idle autocommit connection; every write
-is enclosed in a force-rollback transaction, including transient PostGIS setup.
+are created. Geometry/index writes use a force-rollback transaction. Enabling
+the extension is a distinct, explicit persistent setup operation: rolling back
+extension installation and reinstalling it can leave backend-local PostGIS
+operator state referring to the previous object IDs.
 """
 import json
 
@@ -26,7 +28,7 @@ def _index_used(value):
     return isinstance(value, list) and any(_index_used(item) for item in value)
 
 
-def rollback_postgis_probe(connection):
+def rollback_postgis_probe(connection, *, enable_extension=False):
     """Return capability evidence; refuse occupied DBs instead of altering them."""
     if not connection.autocommit:
         raise ValueError("PostGIS probe requires an idle autocommit connection")
@@ -35,18 +37,28 @@ def rollback_postgis_probe(connection):
     before_tables = _public_tables(connection)
     if set(before_tables) - {"spatial_ref_sys"}:
         return {"status": "blocked", "reason": "test_database_has_existing_tables", "writes_attempted": False}
-    before_version = _extension_version(connection)
+    original_version = _extension_version(connection)
     available = connection.execute("SELECT default_version FROM pg_available_extensions WHERE name='postgis'").fetchone()
     if not available:
         return {"status": "blocked", "reason": "postgis_not_available", "writes_attempted": False}
+    if not original_version and not enable_extension:
+        return {"status": "blocked", "reason": "postgis_available_not_enabled", "writes_attempted": False}
     if connection.execute("SELECT to_regclass('pg_temp.heatshift_hosting_probe_geometry') AS relation").fetchone()["relation"]:
         return {"status": "blocked", "reason": "probe_temp_table_already_exists", "writes_attempted": False}
+    if not original_version:
+        # The caller explicitly opted in to setup on this fresh test DB. Commit
+        # extension metadata once; do not recreate extension OIDs in a session.
+        with connection.transaction():
+            connection.execute("SET LOCAL statement_timeout='15s'")
+            connection.execute("SET LOCAL lock_timeout='2s'")
+            connection.execute("CREATE EXTENSION postgis WITH SCHEMA public")
+    before_version = _extension_version(connection)
+    before_tables = _public_tables(connection)
     checks = {}
     with connection.transaction(force_rollback=True):
         connection.execute("SET LOCAL statement_timeout='15s'")
         connection.execute("SET LOCAL lock_timeout='2s'")
         connection.execute("SET LOCAL idle_in_transaction_session_timeout='30s'")
-        connection.execute("CREATE EXTENSION IF NOT EXISTS postgis WITH SCHEMA public")
         checks["postgis_version"] = _extension_version(connection)
         connection.execute("CREATE TEMP TABLE heatshift_hosting_probe_geometry (id integer PRIMARY KEY, geometry geometry(MultiPolygon,4326)) ON COMMIT DROP")
         connection.execute(
@@ -64,6 +76,7 @@ def rollback_postgis_probe(connection):
         query = "SELECT id FROM heatshift_hosting_probe_geometry WHERE ST_Intersects(geometry,ST_SetSRID(ST_Point(100.5005,13.7005),4326))"
         checks["spatial_query_ids"] = [row["id"] for row in connection.execute(query).fetchall()]
         connection.execute("SET LOCAL enable_seqscan=off")
+        checks["index_plan_probe_seqscan_disabled"] = True
         plan = connection.execute("EXPLAIN (FORMAT JSON, COSTS FALSE) " + query).fetchone()
         checks["gist_query_plan_verified"] = _index_used(next(iter(plan.values())))
         encoded = connection.execute("SELECT ST_AsGeoJSON(geometry) AS geojson FROM heatshift_hosting_probe_geometry WHERE id=0").fetchone()["geojson"]
@@ -80,5 +93,7 @@ def rollback_postgis_probe(connection):
               and checks["gist_query_plan_verified"] and checks["geojson_roundtrip_verified"])
     return {"status": "passed" if passed else "blocked", "scope": "synthetic_temporary_geometry_only",
             "checks": checks, "rollback_verified": rollback_verified,
-            "extension_installed_before": bool(before_version), "extension_installed_after": bool(after_version),
+            "extension_installed_before": bool(original_version), "extension_installed_after": bool(after_version),
+            "extension_enabled_by_opt_in": not bool(original_version),
+            "rollback_scope": "temporary_geometry_and_index_only",
             "application_data_published": False, "production_load_verified": False}

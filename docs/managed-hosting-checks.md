@@ -51,9 +51,13 @@ python scripts/verify_hosting_backends.py \
   --output /tmp/hosting-postgis-check.json
 ```
 
-ชุดตรวจปฏิเสธ database ที่มี public tables อยู่แล้ว ยกเว้น `spatial_ref_sys` ของ PostGIS หาก provider ไม่มี extension package จะแสดง blocked และไม่พยายามติดตั้ง software ลงเครื่อง provider การเปิด PostGIS ชั่วคราว ตาราง geometry 100 ช่อง และ GiST index อยู่ภายใน transaction ที่บังคับ rollback เสมอ ตรวจ CRS 4326 → 3857 → 4326, validity, GeoJSON และแผน spatial query แล้วตรวจว่า extension state/public tables กลับเท่าเดิมและ temp table หาย ไม่มีการเพิ่ม observation, migrations หรือ pipeline publication
+ชุดตรวจปฏิเสธ database ที่มี public tables อยู่แล้ว ยกเว้น `spatial_ref_sys` ของ PostGIS หาก provider ไม่มี extension package จะแสดง blocked และไม่พยายามติดตั้ง software ลงเครื่อง provider หากมี package แต่ยังไม่เปิด extension จะแสดง `postgis_available_not_enabled` โดยไม่เปิดให้อัตโนมัติ
 
-มี statement timeout 15 วินาทีและ lock timeout 2 วินาที ทดสอบทั้งเส้นทางสำเร็จ การรันซ้ำ และการล้มเหลวหลังเขียน temp rows ใน isolated CI บน PostGIS จริง การผ่านทดสอบนี้พิสูจน์ extension/SQL capabilities ในฐานข้อมูลที่ทดสอบเท่านั้น ไม่ใช่ load test, permanent PostGIS setup หรือ production/free-hosting approval
+เฉพาะฐานข้อมูลทดสอบใหม่ที่ต้องการตั้งค่า PostGIS จริง สามารถเพิ่ม `--enable-test-postgis` คู่กับ `--postgis-transaction-test` ได้ flag นี้ **commit extension metadata ถาวร** แต่ไม่สร้างตาราง/ข้อมูล HEAT ไม่เปิดแล้ว rollback ตัว extension เพื่อให้ object IDs ของ PostGIS คงที่เมื่อทดสอบซ้ำ หากขั้น geometry ล้มเหลว extension ที่เลือกเปิดไว้อาจยังอยู่ รายงานระบุขอบเขตนี้แยกชัดเจน
+
+ตาราง geometry 100 ช่องและ GiST index อยู่ภายใน transaction ที่บังคับ rollback เสมอ ตรวจ CRS 4326 → 3857 → 4326, validity, GeoJSON และแผน spatial query โดยตั้ง `enable_seqscan=off` เฉพาะ transaction เพื่อพิสูจน์ว่า index path ใช้ได้ ไม่ใช่ benchmark ว่า planner จะเลือก index ในทุกโหลด จากนั้นตรวจว่า extension/public-table state หลังขั้น setup คงเดิมและ temp table หาย ไม่มี observation, migrations หรือ pipeline publication
+
+มี statement timeout 15 วินาทีและ lock timeout 2 วินาที ทดสอบเส้นทางไม่เปิด extension โดยปริยาย เส้นทาง setup ที่เลือกไว้ การรันซ้ำ และการล้มเหลวหลังเขียน temp rows ใน isolated CI บน PostGIS จริง การผ่านทดสอบนี้พิสูจน์ extension/SQL capabilities ในฐานข้อมูลที่ทดสอบเท่านั้น ไม่ใช่ load test หรือ production/free-hosting approval
 
 การผ่านวัน recovery ไม่ได้แปลว่าพื้นที่ถูกคืนแล้ว ต้องตรวจรายการ Recently deleted และยอด active + retained storage จาก provider ก่อนสร้าง database ใหม่ ห้ามใช้วันที่เพียงอย่างเดียวเพื่อข้าม gate
 
