@@ -54,7 +54,7 @@ def inspect(config):
     except (ValueError, TypeError):
         check(False, "api: invalid CORS JSON")
     map_style = services.get("web", {}).get("build", {}).get("args", {}).get("NEXT_PUBLIC_MAP_STYLE_URL", "")
-    check(urlparse(map_style).scheme == "https", "web: an approved HTTPS basemap style is required")
+    check(map_style == "/styles/community-osm.json" or urlparse(map_style).scheme == "https", "web: use the bundled community style or an approved HTTPS basemap style")
     check(bool(api.get("GEE_PROJECT")) and "change_me" not in api.get("GEE_PROJECT", "").lower(), "api: replace the Earth Engine project placeholder")
     try:
         address = ipaddress.ip_address(api.get("FORWARDED_ALLOW_IPS", ""))

@@ -88,7 +88,7 @@ services:
       args:
         NEXT_PUBLIC_API_URL: ""
         NEXT_PUBLIC_DEMO_MODE: "false"
-        NEXT_PUBLIC_MAP_STYLE_URL: ${NEXT_PUBLIC_MAP_STYLE_URL:?Set an approved basemap style URL}
+        NEXT_PUBLIC_MAP_STYLE_URL: ${NEXT_PUBLIC_MAP_STYLE_URL:-/styles/community-osm.json}
         API_INTERNAL_URL: http://api:8000
     environment:
       NEXT_PUBLIC_API_URL: ""

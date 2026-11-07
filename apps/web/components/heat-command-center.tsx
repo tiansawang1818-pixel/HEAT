@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { DataReadinessCard } from "@/components/data-readiness-card";
 import { HistoricalIngestionPanel } from "@/components/historical-ingestion-panel";
+import { subscribeDatasetUpdates } from "@/lib/dataset-updates";
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -311,59 +312,11 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
   }, [initialView, optimization?.run_id, optimization?.strategy, savedScenario?.id]);
 
   useEffect(() => {
-    void reload();
-    let eventSource: EventSource | null = null;
-    let pollTimer: ReturnType<typeof setInterval> | null = null;
-    try {
-      eventSource = new EventSource(streamUrl());
-      eventSource.onopen = () => setConnection("live");
-      eventSource.addEventListener("data-update", (event) => {
-        let refreshActive = true;
-        try {
-          const payload = JSON.parse((event as MessageEvent).data) as { affected_layers?: string[]; layer?: string };
-          const affected = payload.affected_layers || (payload.layer ? [payload.layer] : []);
-          refreshActive = !affected.length || affected.includes(activeLayer);
-        } catch {
-          // Unknown event shapes conservatively refresh the active layer.
-        }
-        void reload(true, true, refreshActive);
-        void reloadOptimizationStatus();
-      });
-      eventSource.addEventListener("candidate.approved", () => {
-        void reload(true, true, activeLayer === "candidates");
-        void reloadOptimizationStatus();
-        setUpdateNotice("candidate ผ่านหลักฐานแล้ว — ชั้นจุดลงทุนและสถานะแผนถูกอัปเดต");
-      });
-      eventSource.onmessage = (event) => {
-        try {
-          const payload = JSON.parse(event.data) as { type?: string };
-          if (payload.type === "data-update" || payload.type === "dataset_published") {
-            void reload(true, true, true);
-            void reloadOptimizationStatus();
-          }
-        } catch {
-          // Heartbeat messages may be plain text.
-        }
-      };
-      eventSource.onerror = () => {
-        eventSource?.close();
-        setConnection("polling");
-      };
-    } catch {
-      setConnection("polling");
-    }
-    pollTimer = setInterval(() => {
-      // Source checks can change freshness/error state without publishing data.
-      // Keep metadata current even while SSE is healthy; only fallback forces
-      // a feature refresh when no publication event has arrived.
-      const fallback = !eventSource || eventSource.readyState === EventSource.CLOSED || mapNeedsRetry.current;
-      void reload(false, true, fallback);
-      void reloadOptimizationStatus();
-    }, 60_000);
-    return () => {
-      eventSource?.close();
-      if (pollTimer) clearInterval(pollTimer);
-    };
+    return subscribeDatasetUpdates({
+      url: streamUrl(), activeLayer, reload, refreshPlans: reloadOptimizationStatus,
+      connection: setConnection, needsMapRetry: () => mapNeedsRetry.current,
+      candidateApproved: () => setUpdateNotice("โครงการผ่านหลักฐานแล้ว — ชั้นจุดลงทุนและสถานะแผนถูกอัปเดต"),
+    });
   }, [activeLayer, reload, reloadOptimizationStatus]);
 
   const activeLayerVersion = data.layers.find((layer) => layer.id === activeLayer)?.layer_version;
@@ -1262,8 +1215,9 @@ function ScenarioComparisonMaps({
           </div>
           <div className="scenario-map-stats">
             <span>ใช้งบ <strong>{formatBaht(scenario.total_cost_thb)}</strong></span>
-            <span>ผู้รับประโยชน์ <strong>{formatNumber(scenario.estimated_beneficiaries)}</strong></span>
+            <span>ผลรวมรายโครงการ <strong>{formatNumber(scenario.estimated_beneficiaries)}</strong></span>
           </div>
+          {scenario.status === "insufficient_data" && <p className="inline-warning">{scenario.limitations?.join(" · ") || "หลักฐานยังไม่พอสำหรับยุทธศาสตร์นี้"}</p>}
         </article>
       ))}
       <div className="scenario-sync-note"><Activity size={12} /> เลื่อนหรือซูมแผนที่ใดก็ได้ — มุมมองทั้งสามจะซิงก์กัน</div>
@@ -1367,9 +1321,10 @@ function OptimizerPanel(props: OptimizerPanelProps) {
         <>
           <Card className="result-card">
             <div><span>ใช้งบ</span><strong>{formatBaht(props.result.total_cost_thb)}</strong></div>
-            <div><span>ผู้รับประโยชน์โดยประมาณ</span><strong>{formatNumber(props.result.estimated_beneficiaries)}</strong></div>
+            <div><span>ผลรวมประมาณการ (ยังไม่หักซ้ำ)</span><strong>{formatNumber(props.result.estimated_beneficiaries)}</strong></div>
             <div><span>โครงการที่เลือก</span><strong>{props.result.allocations.length}</strong></div>
             {props.result.is_outdated && <p className="inline-warning">มีชุดข้อมูลใหม่กว่า กรุณาคำนวณอีกครั้ง</p>}
+            {props.result.limitations?.map((item, index) => <p className="readiness-scope" key={index}>{item}</p>)}
           </Card>
           <Button className="mt-2 w-full" variant="outline" disabled={props.exporting} onClick={props.onExport}>
             {props.exporting ? <RefreshCw className="animate-spin" size={15} /> : <Download size={15} />}

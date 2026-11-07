@@ -1,0 +1,16 @@
+{
+  "version": 8,
+  "name": "HEAT//SHIFT Community OSM",
+  "metadata": {"usage_policy": "https://operations.osmfoundation.org/policies/tiles/", "delivery": "interactive visible viewport only; no offline or bulk download"},
+  "sources": {
+    "osm": {
+      "type": "raster", "tiles": ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"], "tileSize": 256,
+      "maxzoom": 19,
+      "attribution": "<a href=\"https://www.openstreetmap.org/copyright\" target=\"_blank\" rel=\"noopener\">© OpenStreetMap contributors</a> · <a href=\"https://www.openstreetmap.org/fixthemap\" target=\"_blank\" rel=\"noopener\">รายงานปัญหาแผนที่</a>"
+    }
+  },
+  "layers": [
+    {"id": "background", "type": "background", "paint": {"background-color": "#071016"}},
+    {"id": "osm", "type": "raster", "source": "osm", "paint": {"raster-saturation": -0.85, "raster-brightness-max": 0.52, "raster-contrast": 0.22}}
+  ]
+}

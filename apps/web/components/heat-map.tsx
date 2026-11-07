@@ -112,29 +112,10 @@ export function HeatMap({
       minZoom: 8.5,
       maxZoom: 18,
       attributionControl: false,
-      style: process.env.NEXT_PUBLIC_MAP_STYLE_URL || {
-        version: 8,
-        sources: {
-          osm: {
-            type: "raster",
-            tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
-            tileSize: 256,
-            attribution: '<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap contributors</a>',
-          },
-        },
-        layers: [
-          { id: "background", type: "background", paint: { "background-color": "#071016" } },
-          {
-            id: "osm",
-            type: "raster",
-            source: "osm",
-            paint: { "raster-saturation": -0.85, "raster-brightness-max": 0.52, "raster-contrast": 0.22 },
-          },
-        ],
-      },
+      style: process.env.NEXT_PUBLIC_MAP_STYLE_URL || "/styles/community-osm.json",
     });
     if (!compact) map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bottom-left");
-    map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
+    map.addControl(new maplibregl.AttributionControl({ compact: false }), "bottom-right");
     const overlay = new MapboxOverlay({ interleaved: false, layers: [] });
     map.addControl(overlay as unknown as maplibregl.IControl);
     const emitViewport = () => {

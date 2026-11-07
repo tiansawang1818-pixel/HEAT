@@ -216,7 +216,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .scenario-map-header > span { overflow: hidden; font-size: 9px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .scenario-map-card.active .scenario-map-header > span { color: var(--cyan); }
 .scenario-map-canvas { position: relative; min-height: 0; overflow: hidden; }
-.scenario-map-canvas .maplibregl-ctrl-attrib { max-width: 110px; }
+.scenario-map-canvas .maplibregl-ctrl-attrib { max-width: 240px; white-space: normal; }
 .scenario-map-stats { display: grid; align-content: center; gap: 3px; padding: 5px 9px; border-top: 1px solid var(--line); background: rgba(9,21,29,.98); }
 .scenario-map-stats span { display: flex; justify-content: space-between; gap: 5px; color: #617985; font-size: 7px; }
 .scenario-map-stats strong { overflow: hidden; color: #b9cbd2; font: 600 8px ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
@@ -451,8 +451,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 
 .maplibregl-ctrl-group { border: 1px solid var(--line) !important; background: rgba(7,16,22,.88) !important; box-shadow: none !important; }
 .maplibregl-ctrl-group button { filter: invert(1); opacity: .7; }
-.maplibregl-ctrl-attrib { color: #657b85 !important; background: rgba(7,16,22,.76) !important; font-size: 8px !important; }
-.maplibregl-ctrl-attrib a { color: #7e969f !important; }
+.maplibregl-ctrl-attrib { color: #d6e5eb !important; background: rgba(7,16,22,.94) !important; font-size: 10px !important; }
+.maplibregl-ctrl-attrib a { color: #d6e5eb !important; }
 
 .historical-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
 .historical-form label { display: grid; gap: 6px; font-size: 11px; color: #a8bdc7; }
