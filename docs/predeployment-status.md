@@ -22,19 +22,20 @@
 - คู่มือ deployment, วิธีการทางวิทยาศาสตร์, แหล่งต้นทุนสาธารณะสำหรับคนตรวจ และบทนำเสนอ 3 นาทีที่แสดงข้อมูลขาดตามจริง
 - Managed hosting checks: สคริปต์ตรวจ PostGIS/TLS/Redis แบบอ่านอย่างเดียวเป็นค่าเริ่มต้น และโหมดตรวจคิวทดสอบหลัง restart ที่ไม่แตะคิวจริง พร้อมแก้ Celery broker/backend SSL และ node-redis SNI ตรวจ client connectivity กับ Redis บน Hostless จริงผ่าน เก็บรายงานที่ไม่มี credentials และ [ข้อความปัญหาที่เตรียมไว้แต่ยังไม่ได้ส่ง](hostless-readiness-support-draft.md)
 - Capacity collector ใน isolated CI วัด cgroup ของทั้ง 7 services พร้อม GET แบบตรวจ TLS แยก anonymous memory/file cache และไม่รวม peak จากคนละเวลา ปิดแหล่งข้อมูลก่อนเริ่ม scheduler โดยคง readiness gate ของแอปไว้ตามเดิม หากข้อมูลวัดไม่ครบหรือ baseline ต่ำกว่า pool จะไม่เปลี่ยนเป็นอนุมัติ production
+- เตรียม PostGIS capability probe สำหรับ database ใหม่ `heat-pg16-check`: บังคับ TLS/ชื่อปลายทาง ปฏิเสธตารางแอปที่มีอยู่ แยก flag เปิด extension ถาวรอย่างชัดเจนจาก transaction ของ geometry/index ที่บังคับ rollback ตรวจ CRS, GeoJSON, GiST plan และ spatial query โดยไม่สร้าง observation หรือ publication ผ่านการรันซ้ำ/ล้มเหลวกลางทางใน isolated PostGIS จริงทั้งสองสถาปัตยกรรมแล้ว [วิธีใช้](managed-hosting-checks.md#postgis-แบบ-rollback-only-ในฐานข้อมูลใหม่)
 
-โค้ดที่ตรวจล่าสุด: `bf092f4cdcadff5f9528293c6e1c023e5969c7dd` รวม historical/decision-integrity, managed-hosting/TLS และ capacity checks เอกสารหรือรายงานที่ commit ต่อจากนี้ไม่เปลี่ยน functional code ที่ CI ตรวจ
+โค้ดที่ตรวจล่าสุด: `1e7dab2a62ed555c22ec8fd6a28f6fe8c5b84994` รวม historical/decision-integrity, managed-hosting/TLS, capacity และ PostGIS capability checks เอกสารหรือรายงานที่ commit ต่อจากนี้ไม่เปลี่ยน functional code ที่ CI ตรวจ
 
 ## ผลตรวจ
 
-[GitHub Actions run 42396259747](https://github.com/tiansawang1818-pixel/HEAT/actions/runs/42396259747) ผ่านครบทั้ง 5 งาน ตรวจ job conclusions, API test summary และ capacity report จาก logs แล้ว:
+[GitHub Actions run 42399755441](https://github.com/tiansawang1818-pixel/HEAT/actions/runs/42399755441) ผ่านครบทั้ง 5 งาน ตรวจ job conclusions และ API/stack/ARM test summaries จาก logs แล้ว:
 
 | งาน | หลักฐาน |
 |---|---|
-| API | 189 unit/API tests ผ่าน และ dependency audit ผ่าน |
+| API | 201 unit/API tests ผ่าน และ dependency audit ผ่าน |
 | Web | 38 tests ผ่าน รวม Redis session integration, TypeScript ผ่าน, Next.js production build ผ่าน |
-| Stack amd64 | 4 integration tests ผ่าน: PostGIS/Redis/Celery/Beat/SSE และ historical cursor ข้าม session; ซ้อม backup/restore เทียบแถว/ checksum ครบ 22 application tables |
-| Native ARM | สร้าง PostGIS/API/Caddy แบบ arm64 และผ่าน integration 4 tests เดียวกันบน ARM จริง |
+| Stack amd64 | 7 integration tests ผ่าน: เพิ่ม explicit PostGIS setup, geometry/index rollback เมื่อสำเร็จ/ล้มเหลว และไม่เปิด extension โดยปริยาย ร่วมกับ PostGIS/Redis/Celery/Beat/SSE และ historical cursor; ซ้อม backup/restore เทียบแถว/checksum ครบ 22 application tables |
+| Native ARM | สร้าง PostGIS/API/Caddy แบบ arm64 และผ่าน integration 7 tests เดียวกันบน ARM จริง |
 | Release containers | หน้าเว็บ, admin gates, HTTPS/certificate verification, secure cookies, SSE ผ่าน Caddy/Next, config isolation, bounded latency, encrypted backup download recovery และ test alert ผ่าน เพิ่ม full-runtime baseline ครบ 10 รอบ พร้อมตรวจ external source checks เป็นศูนย์ |
 
 Release audit ใน CI **ตั้งใจยังติด data-readiness blocker** เพราะไม่มีข้อมูลและ credentials ของ provider จริง การผ่านชุดตรวจระบบไม่ใช่หลักฐานว่าข้อมูล/ราคาโครงการ/forecast พร้อมตัดสินใจแล้ว ชุดทดสอบใช้ synthetic fixtures ในฐานข้อมูลแยกและไม่เรียกบัญชีดาวเทียมจริง

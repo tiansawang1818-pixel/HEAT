@@ -1,0 +1,24 @@
+{
+  "evidence_recorded_at": "2026-11-07T18:14:33.915960+00:00",
+  "scope": "isolated_ci_postgis_capability_and_temporary_geometry_rollback",
+  "functional_code_sha": "1e7dab2a62ed555c22ec8fd6a28f6fe8c5b84994",
+  "ci_run_url": "https://github.com/tiansawang1818-pixel/HEAT/actions/runs/42399755441",
+  "all_five_ci_jobs_passed": true,
+  "api_tests_passed": 201,
+  "web_tests_passed": 38,
+  "integration_tests_per_architecture": {
+    "amd64": 7,
+    "arm64": 7
+  },
+  "postgis_cases_verified": [
+    "Persistent extension setup only with explicit opt-in in a fresh disposable test DB.",
+    "One hundred temporary geometry cells: CRS 4326/3857 roundtrip, validity, GeoJSON, GiST index path and spatial query.",
+    "Temporary geometry/index rollback verified on success and after an injected failure following inserts.",
+    "Repeated geometry checks on the same backend succeed without recreating extension metadata.",
+    "Without extension-setup opt-in an uninitialized database remains unchanged and blocked."
+  ],
+  "environmental_observations_published": false,
+  "hostless_postgis_verified": false,
+  "production_load_verified": false,
+  "complete_hosting_fit_verified": false
+}
