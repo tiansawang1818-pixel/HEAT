@@ -18,19 +18,91 @@ import httpx
 import pytest
 import redis
 from alembic.script import ScriptDirectory
-from sqlalchemy import func, select, text
+from sqlalchemy import create_engine, func, select, text
+from sqlalchemy.orm import sessionmaker
 
 
 if os.environ.get("HEATSHIFT_RUN_STACK_TESTS") != "true":
     pytest.skip("Real service integration requires an explicitly isolated CI stack", allow_module_level=True)
 
 from app.core.config import settings
+from app.db.base import Base
 from app.db.session import SessionLocal, engine
 from app.models.entities import AreaIndicator, DataSource, DatasetVersion, GeographicArea, PipelineEvent
 from app.services.checkpoints import SourceCheckpointStore, fingerprint
 from app.services.bootstrap import ensure_sources
 from app.services.geometry import to_db_geometry
 from app.services.locks import MONITOR_HARD_TIME_LIMIT_SECONDS, distributed_lock
+
+
+@pytest.fixture
+def isolated_history_database():
+    # Separate from the publication fixture's intentionally empty database.
+    assert engine.url.database == "heatshift_ci" and engine.url.host in {"localhost", "127.0.0.1"}
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+        connection.execute(text("CREATE DATABASE heatshift_history_ci"))
+    history_engine = create_engine(engine.url.set(database="heatshift_history_ci"))
+    try:
+        with history_engine.begin() as connection:
+            connection.execute(text("CREATE EXTENSION postgis"))
+        Base.metadata.create_all(history_engine)
+        yield sessionmaker(bind=history_engine, expire_on_commit=False)
+    finally:
+        history_engine.dispose()
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+            connection.execute(text("DROP DATABASE heatshift_history_ci"))
+
+
+def test_historical_checkpoints_survive_sessions_with_real_postgis_and_redis(monkeypatch, isolated_history_database):
+    from app.schemas.api import BackfillBudget, BackfillRequest
+    from app.services.connectors.base import AreaProcessingRecord, SourceAsset
+    from app.services.connectors.earth_engine import HistoricalPage, LandsatConnector
+    from app.services.historical import create_backfill, execute_backfill_step, resume_backfill
+    from app.services.pipeline import run_monitor
+    from app.services.versions import published_version
+
+    class SyntheticHistory(LandsatConnector):
+        produces_raster = False
+        catalogue_calls = 0
+
+        def image(self, year):
+            return SourceAsset.with_checksum("synthetic-ci-history-%s" % year, "synthetic-only",
+                datetime(year, 1, 2, tzinfo=timezone.utc), {"type": "Point", "coordinates": [100.5, 13.7]},
+                metadata={"fixture": True, "scientific_use": False})
+
+        def discover(self, latest_asset_id=None, checkpoint=None):
+            return [self.image(2024)]
+
+        def discover_historical_page(self, start_date, end_date, cursor, page_size=10, window_days=16):
+            self.catalogue_calls += 1
+            return HistoricalPage([self.image(2018), self.image(2019)],
+                                  {"window_start": end_date.isoformat(), "collection_index": 0}, 2, True)
+
+        def process(self, asset, areas):
+            return [AreaProcessingRecord(area["id"], {"lst_c_mean": 35, "lst_c_p90": 39},
+                coverage_fraction=.8, metadata={"fixture": True, "scientific_use": False}) for area in areas]
+
+    monkeypatch.setattr(settings, "historical_ingestion_enabled", True)
+    monkeypatch.setattr(settings, "gee_project", "synthetic-ci-not-a-real-provider-project")
+    connector = SyntheticHistory()
+    with isolated_history_database() as db:
+        ensure_sources(db)
+        db.add(GeographicArea(id="ci-history", name_th="พื้นที่สังเคราะห์ทดสอบย้อนหลัง", name_en="Synthetic history",
+            geometry=to_db_geometry(_polygon(100.5, 13.7)), source_name="Synthetic CI fixture", quality_status="synthetic_demo"))
+        db.commit()
+        run_monitor(db, connector, requested_by="isolated-history-test")
+        active_id = published_version(db, connector.dataset_id).id
+        job = create_backfill(db, BackfillRequest(source="landsat", start_date="2018-01-01", end_date="2020-01-01", max_assets=1), "ci-test")
+        job_id = job.id
+        assert execute_backfill_step(db, job_id, 0, connector)["status"] == "budget_exhausted"
+    # A new process/session can recover entirely from committed JSON; no in-memory cursor is required.
+    with isolated_history_database() as db:
+        resumed = resume_backfill(db, job_id, BackfillBudget(max_assets=2), "ci-test")
+        assert execute_backfill_step(db, resumed.id, 0, connector)["status"] == "completed"
+        assert connector.catalogue_calls == 1
+        assert published_version(db, connector.dataset_id).id == active_id
+        assert db.scalar(select(func.count()).select_from(DatasetVersion).where(
+            DatasetVersion.source_asset_id.like("synthetic-ci-history-%"), DatasetVersion.status == "published")) == 3
 
 
 @pytest.fixture(scope="module", autouse=True)

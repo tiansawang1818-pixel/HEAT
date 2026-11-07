@@ -1,11 +1,16 @@
 # การทดสอบและหลักฐาน CI
 
-ทุก push จะรัน GitHub Actions แยกเป็น 4 งาน:
+ทุก push ที่เปลี่ยนโค้ด/config และทุก pull request จะรัน GitHub Actions แยกเป็น 5 งาน ภายใต้โควตาบัญชีและเพดานค่าใช้จ่ายเดิม (push ที่เปลี่ยนเฉพาะคู่มือข้ามการทดสอบซ้ำ):
 
 - `api`: unit/API tests ด้วย SQLite รวม validation, retry, interrupted-worker recovery, locks, optimizer และ freshness
 - `web`: client API/OIDC flow tests (ตรวจ code/PKCE/nonce โดย mock provider), session encryption/TTL/logout/fail-closed กับ Redis จริง, dependency audit, TypeScript และ Next.js production build
 - `stack`: PostgreSQL/PostGIS และ Redis จริง พร้อม migration, API process และ Celery worker process แยกกัน
 - `containers`: production Compose isolation, Caddy validation, release image builds และ HTTP smoke ผ่าน Caddy โดยไม่เริ่ม source monitors หรือเรียก provider จริง
+- `arm64`: สร้าง PostGIS/API/Caddy บน standard ARM runner จริง แล้วตรวจ migration, spatial queries, Redis locks, Celery/Beat และ publication ใน stack ชั่วคราว ไม่ใช่การเปิด cloud hosting
+
+Historical ingestion tests ตรวจ page/cursor ของ Landsat ทั้งสอง collection, finite processing/catalogue budgets ที่รวม retry, duplicate delivery, worker recovery, cancellation, immutable resume และการคง observation/source check ล่าสุด Client subscription tests ตรวจ affected-layer refresh, metadata polling, stream outage, event deduplication และ cleanup โดยไม่เปลี่ยนเจ้าของ state ของมุมมอง/พื้นที่ที่เลือก
+
+Optimizer tests เทียบ OR-Tools กับ exhaustive portfolios ขนาดเล็ก ตรวจเพดานงบจริง ต้นทุนเศษบาท การปิด intervention/candidate ทั้งหมด น้ำหนัก custom โดยไม่มีค่าแฝง และการคง snapshot เดิมเมื่อ candidate เปลี่ยน Scenario baselines จัดอันดับจากอุณหภูมิ/beneficiary evidence จริงและบอกข้อมูลไม่พอเมื่อหลักฐานขาด
 
 SSE ต้องมี `Cache-Control: no-cache, no-transform` เพื่อไม่ให้ Next.js rewrite หรือ proxy บีบอัดแล้วค้างข้อความเล็ก งาน container ตรวจ initial frame ทั้งผ่าน Caddy และ Next โดยส่ง `Accept-Encoding: gzip, deflate` ไปด้วย และปฏิเสธการบีบอัด event stream
 

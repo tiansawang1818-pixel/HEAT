@@ -1,0 +1,9 @@
+# Append after the base/production files on an actual Linux ARM64 server.
+# Never attach an existing amd64 database volume; use a verified logical restore.
+services:
+  postgres:
+    image: heatshift-postgis:16-arm64
+    platform: linux/arm64
+    build:
+      context: .
+      dockerfile: infra/docker/postgis.Dockerfile

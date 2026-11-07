@@ -12,7 +12,7 @@ Image `heatshift-caddy:2.11.9` ใช้ official Caddy Alpine runtime และ
 2. ตั้งโดเมนและอีเมลต่ออายุใบรับรอง Helper สร้างรหัส PostgreSQL และ `DATABASE_URL` ให้ตรงกันแล้ว หากตั้งค่าเองให้ใช้รหัสสุ่ม เช่น `openssl rand -hex 32` เพื่อเลี่ยงอักขระที่ต้อง encode ใน URL
 3. ลงทะเบียน SSO client พร้อม redirect URI `https://<domain>/api/auth/callback` กำหนด issuer, audience, JWKS และ role claim ให้ตรงกับ token ขององค์กร `AUTH_SESSION_SECRET` ต้องเป็นค่าสุ่มคนละค่ากับรหัสฐานข้อมูล
 4. วาง Earth Engine service-account JSON นอก Git และกำหนด `GEE_CREDENTIALS_FILE` เป็น host path ของไฟล์จริง Compose mount เป็น secret ให้เฉพาะ API, migration และ workers บน Linux ให้ไฟล์อ่านได้โดย service UID/GID `10001:10001` เท่านั้น เช่น owner UID 10001 และ mode 0400 (Compose file-backed secret ใช้ bind mount จึงต้องจัดสิทธิ์ที่ host) ตรวจ project/สิทธิ์/quota ด้วย source check จริง ไม่ใช้บัญชีตัวอย่าง
-5. กำหนด `NEXT_PUBLIC_MAP_STYLE_URL` จากผู้ให้บริการที่อนุญาตการใช้งานและปริมาณ traffic ของโครงการ ค่า frontend เหล่านี้ถูกฝังตอน build จึงต้อง rebuild เมื่อเปลี่ยน
+5. เลือก `NEXT_PUBLIC_MAP_STYLE_URL` ค่า `/styles/community-osm.json` ใช้ tile OSM จริงแบบ interactive ปริมาณต่ำโดยไม่ต้องมีบัญชีเพิ่ม หรือใช้ HTTPS style ของผู้ให้บริการที่อนุญาต traffic ของโครงการ ค่า frontend ถูกฝังตอน build จึงต้อง rebuild เมื่อเปลี่ยน อ่าน [ข้อกำหนดแผนที่พื้นฐาน](basemap-delivery.md) ก่อนเปิด traffic
 6. ตรวจ subnet ของ Docker ไม่ชนกับเครือข่ายเซิร์ฟเวอร์ หากเปลี่ยนให้แก้ `HEATSHIFT_PROXY_SUBNET`, `HEATSHIFT_PROXY_DYNAMIC_RANGE` และ `HEATSHIFT_PROXY_IP` ร่วมกัน โดย dynamic range ต้องอยู่ใน subnet และไม่รวม IP ที่สงวนให้ Caddy Uvicorn เชื่อ forwarded client IP เฉพาะ Caddy address นี้ ห้ามเปิด API port หรือเพิ่ม wildcard trust
 
 ค่า `.env.production` ใช้ผ่าน `--env-file` ไม่ถูกยกทั้งไฟล์เข้าสู่ container โหมด production บังคับปิดข้อมูลสาธิต/fixture เปิด rate limit และใช้ OIDC ฐานข้อมูลและ Redis อยู่บน Docker network ภายใน Redis ใช้ durable AOF และแยก session ใน logical DB 2 ต้องจำกัดสิทธิ์เข้าถึง host/Docker ตามนโยบายองค์กร
@@ -44,6 +44,8 @@ HEATSHIFT_COMPOSE_ENV=production make backup
 ก่อนอัปเดตให้สำรองข้อมูล บันทึก Git commit และ image digest ของรุ่นที่ใช้งาน จากนั้น build รุ่นใหม่และรัน migration โดยไม่ใช้ `down --volumes` ในเซิร์ฟเวอร์จริง หาก migration เปลี่ยน schema แบบย้อนกลับไม่ได้ ให้ restore ใน environment แยกและตรวจสอบก่อนสลับ traffic ห้ามสั่ง downgrade หรือเขียนทับฐานข้อมูลโดยไม่มีแผนกู้คืนที่ตรวจแล้ว
 
 ## ขอบเขตการตรวจ
+
+เครื่อง Linux ARM64 มี override สำหรับ PostGIS จาก signed PGDG packages และ CI บน native ARM ดู [container architectures](container-architectures.md) ห้ามย้าย volume ฐานข้อมูลข้าม architecture โดยตรง การเตรียมนี้ไม่ยืนยันว่ามีเครื่องฟรีหรือสิทธิ์เปิด cloud แล้ว
 
 CI ตรวจ production Compose isolation, build images, เปิดหน้าเว็บทั้ง 7 หน้า, API rewrite ภายใน Next, SSO gate, secure-cookie attributes และ SSE ผ่าน HTTPS ของ Caddy โดยตรวจ hostname/certificate ด้วย CA เฉพาะ CI ไม่มีการปิด TLS verification หรือติดตั้ง root CA ลงเครื่องผู้ใช้ การออก certificate จาก public CA, DNS, SSO จริง, ข้อมูล Earth Engine จริง, backup storage, alert delivery และความจุภายใต้ traffic จริง ยังต้องตรวจในเซิร์ฟเวอร์ที่เลือกก่อนเปิดใช้
 

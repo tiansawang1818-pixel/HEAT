@@ -2,6 +2,10 @@ name: CI
 
 on:
   push:
+    paths-ignore:
+      - "docs/**"
+      - "README.md"
+      - "apps/web/AGENTS.md"
   pull_request:
 
 permissions:
@@ -115,6 +119,36 @@ jobs:
         run: python ../../scripts/verify_backup_restore_ci.py
         env:
           POSTGIS_CI_CONTAINER: ${{ job.services.postgres.id }}
+
+  arm64:
+    timeout-minutes: 20
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build native ARM database and application images
+        run: |
+          test "$(uname -m)" = aarch64
+          docker build -f infra/docker/postgis.Dockerfile -t heatshift-postgis:arm-ci .
+          docker build -f infra/docker/api.Dockerfile -t heatshift-api:arm-ci .
+          docker build -f infra/docker/caddy.Dockerfile -t heatshift-caddy:arm-ci .
+          test "$(docker image inspect heatshift-postgis:arm-ci --format '{{.Architecture}}')" = arm64
+          test "$(docker image inspect heatshift-api:arm-ci --format '{{.Architecture}}')" = arm64
+      - name: Start isolated native ARM services without contacting providers
+        run: |
+          docker run -d --name heatshift-arm-postgres -e POSTGRES_DB=heatshift_ci -e POSTGRES_USER=heatshift -e POSTGRES_PASSWORD=isolated-arm-ci-only -p 127.0.0.1:5432:5432 heatshift-postgis:arm-ci
+          docker run -d --name heatshift-arm-redis -p 127.0.0.1:6379:6379 redis:7.4-alpine
+          for attempt in $(seq 1 60); do docker exec heatshift-arm-postgres pg_isready -U heatshift -d heatshift_ci && break; sleep 1; done
+          docker exec heatshift-arm-postgres psql -U heatshift -d heatshift_ci -c 'SELECT PostGIS_Full_Version()'
+      - name: Verify migrations, spatial queries, real queue and scheduler on ARM
+        run: |
+          docker run --rm --network host -e ENVIRONMENT=test -e DEMO_MODE=false -e DATABASE_URL=postgresql+psycopg://heatshift:isolated-arm-ci-only@127.0.0.1:5432/heatshift_ci -e REDIS_URL=redis://127.0.0.1:6379/0 -e HEATSHIFT_RUN_STACK_TESTS=true heatshift-api:arm-ci sh -c 'alembic upgrade head && pytest integration -v'
+          docker run --rm -e HEATSHIFT_DOMAIN=heatshift.example.org -e ACME_EMAIL=operator@example.org -v "$PWD/infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$PWD/infra/caddy/routes.caddy:/etc/caddy/routes.caddy:ro" heatshift-caddy:arm-ci caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+      - name: Native ARM diagnostics
+        if: failure()
+        run: docker logs --tail 80 heatshift-arm-postgres
+      - name: Stop isolated native ARM services
+        if: always()
+        run: docker rm -f heatshift-arm-postgres heatshift-arm-redis || true
 
   containers:
     timeout-minutes: 25
