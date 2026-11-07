@@ -8,6 +8,8 @@
 
 ตรวจทรัพยากรที่ทำได้เองเพิ่มแล้ว: [CI baseline ของทั้ง 7 services](capacity-validation.md#ผลที่วัดแล้ว) วัด RAM รวมพร้อมกันสูงสุด 664.84 MiB / anonymous 499.13 MiB ในโหลดอ่านข้อมูลขนาดเล็ก ไม่มี OOM kill หรือ external source check ผลคือ `production_fit_not_established` ยังไม่ใช่ peak ingestion/optimizer หรือ provider resource admission
 
+ตรวจข้อเสนอสมัครบัญชีใหม่เมื่อ 8 พฤศจิกายน 2026 แล้ว: [Hostless Terms of Service](https://hostless.cloud/terms) จัดการสร้างหลายบัญชีเพื่อรับทรัพยากรฟรีเพิ่มไว้ใน `Uses Outside Fair Use` จึงไม่ใช้บัญชีซ้ำเพื่อข้าม retained-storage quota ยังไม่ได้สร้างบัญชีเพิ่ม ย้ายผู้ให้บริการ หรือติดต่อ support แทนผู้ใช้ ดู [ผลตรวจและทางเลือก](no-card-hosting-research.md#การทดลองสร้างใหม่และข้อจำกัด-retention)
+
 ## งานที่ทำและ push แล้ว
 
 - Historical ingestion หลายปี: keyset pages แยก Landsat 8/9, frozen date range, จำกัดจำนวนคำขอ/ความพยายามที่รวม retry, PostgreSQL cursor/pending, distributed locks, delivery generation, worker recovery และ cancel/resume เป็น job ใหม่ พร้อมหน้าควบคุมภาษาไทย Flag เรียก Earth Engine จริงยังปิดเป็นค่าเริ่มต้น

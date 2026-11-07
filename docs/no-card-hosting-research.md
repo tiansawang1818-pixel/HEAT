@@ -50,6 +50,8 @@
 
 ### การทดลองสร้างใหม่และข้อจำกัด retention
 
+ตรวจ [Terms of Service](https://hostless.cloud/terms) จากหน้าเว็บที่แสดงจริงเมื่อ 8 พฤศจิกายน 2026 (หน้าเอกสารระบุปรับปรุง 30 ตุลาคม 2026): หัวข้อ `Uses Outside Fair Use` ระบุ “creating multiple accounts to get more free resources.” จึงไม่สร้างบัญชี Hostless เพิ่มเพื่อข้ามโควตา storage ที่ยังอยู่ใน recovery window ไม่ได้ทดลองสมัครบัญชีซ้ำ และไม่มีหลักฐานว่าบัญชีใหม่จะข้ามระยะรอได้โดยได้รับอนุญาตจากผู้ให้บริการ
+
 ผู้ใช้เลือก **ยังไม่ส่งข้อความหาฝ่ายช่วยเหลือ** จึงเก็บ [ร่างข้อความ](hostless-readiness-support-draft.md) ไว้ ไม่ส่งให้บุคคลภายนอก หลังผู้ใช้ยืนยันการลบเฉพาะฐานข้อมูลทดสอบ `heat-compatibility-check` รวมการลบถาวรหากทำได้ จึงลบเข้าช่วง recovery แล้ว แต่ dashboard ระบุว่าปุ่ม `Delete Permanently` ใช้ได้หลัง recovery period เท่านั้น กำหนดคือ **15 พฤศจิกายน 2026 เวลา 00:29:23 น. กรุงเทพฯ** ไม่ force-click หรือเรียก API เพื่อข้ามข้อจำกัดนี้
 
 เตรียม PostgreSQL 16 ชื่อ `heat-pg16-check` ขนาด 0.2 vCPU / 256 MiB RAM / 256 MiB storage เพื่ออ่าน quote แล้ว **ไม่ได้กด Deploy** แม้หน้าฟอร์มแสดง `This resource total $0.00` และบอกว่า configuration อยู่ใน free limits แต่รายการ Recently deleted ยังบอกว่า storage 256 MiB ของตัวเดิมถูกเก็บและยัง billable หากรวมกับ Redis 256 MiB และตัวใหม่อีก 256 MiB จะเป็น 768 MiB ซึ่งเกิน pool 512 MiB จึงไม่ใช้ quote เฉพาะ resource เป็นหลักฐานว่าบิลทั้งบัญชีเป็นศูนย์ ต้องให้พื้นที่รอลบถูกคืนหรือมีคำยืนยันเงื่อนไขที่ไม่ขัดกันก่อนเปิดใหม่
@@ -67,6 +69,8 @@
 บริการ [Virtual Machines](https://hostless.cloud/products/virtual-machines) ของ Hostless เป็น early access แบบเสียเงิน แยกจาก free app allowance ไม่ใช่ VM ฟรีสำหรับรัน Docker Compose ทั้งชุด นอกจากนี้ [durable volumes](https://docs.hostless.cloud/billing/costbreakdown) คิดเงินแยกและไม่ใช้ free database-storage pool ห้ามตั้ง PostgreSQL ใน temporary app filesystem เพื่อหลบข้อจำกัด persistence
 
 ## ตัวเลือกที่ตัดออกจากรอบนี้
+
+ตรวจทางเลือกเพิ่มเติมเมื่อ 8 พฤศจิกายน 2026: [Supabase รองรับ PostGIS](https://supabase.com/docs/guides/database/extensions/postgis) แต่ [แผนฟรี](https://supabase.com/pricing) มี database 500 MB / RAM 500 MB และอาจพัก project หลังไม่ใช้งานหนึ่งสัปดาห์ จึงเป็นเพียงทางเลือกสำหรับแยกฐานข้อมูลไปตรวจต่อ ไม่ใช่หลักฐานว่าทั้ง HEAT stack จะทำงานต่อเนื่องฟรีได้ ยังไม่ได้สมัครบัญชีหรือสร้าง project ส่วน [Render Free](https://render.com/docs/free) ยังพักเว็บหลังไม่มี traffic 15 นาที ไม่มี free background worker และฐานข้อมูลฟรีหมดอายุ 30 วัน จึงไม่ทดแทนเงื่อนไขงานต่อเนื่องของผู้ใช้
 
 | บริการ | เหตุผล |
 |---|---|
