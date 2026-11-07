@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { askAssistant, compareScenarios, loadAreaDetail, loadDashboardData, loadDatasetVersions, loadLayerFeatures, loadProductionReadiness, loadPublishedDataReadiness, loadRasterTileDescriptor, runForecastScenario, saveScenario, searchAreaDirectory } from "./api";
+import { askAssistant, compareScenarios, loadAreaDetail, loadDashboardData, loadDatasetVersions, loadLayerFeatures, loadOptimizationRun, loadProductionReadiness, loadPublishedDataReadiness, loadRasterTileDescriptor, runForecastScenario, saveScenario, searchAreaDirectory } from "./api";
 import { formatBaht, formatNumber, freshnessLabel } from "./utils";
 
 afterEach(() => {
@@ -8,6 +8,20 @@ afterEach(() => {
 });
 
 describe("Thai presentation helpers", () => {
+  it("keeps missing decision evidence unknown and shows unsupported comparison reasons", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ run_id: "legacy-fixture", estimated_beneficiaries: null,
+      limitations: ["ไม่มี historical snapshot"], selected: [{ id: "legacy-site", estimated_cost_thb: null, estimated_beneficiaries: null }] })));
+    const legacy = await loadOptimizationRun("legacy-fixture");
+    expect(legacy.estimated_beneficiaries).toBeNull();
+    expect(legacy.allocations[0].cost_thb).toBeNull();
+    expect(formatBaht(legacy.allocations[0].cost_thb)).toBe("—");
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ budget_thb: 100000, scenarios: [
+      { strategy: "hottest_first", status: "insufficient_data", estimated_beneficiaries: null, limitations: ["ไม่มี LST"] },
+    ] })));
+    const scenarios = await compareScenarios({ budget_thb: 100000, intervention_types: ["tree_planting"] });
+    expect(scenarios[0]).toMatchObject({ status: "insufficient_data", estimated_beneficiaries: null, limitations: ["ไม่มี LST"] });
+  });
+
   it("keeps population counts, reference years, environmental observations and score calculation times distinct", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({
       id: "unit-area", indicators: { population_density: { value: 500, observed_at: "2026-01-01T00:00:00Z" } },

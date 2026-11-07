@@ -1,6 +1,7 @@
 import hashlib
 import html
 import json
+import math
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -56,7 +57,7 @@ from app.services.connectors import (
     SentinelConnector,
     WorldPopConnector,
 )
-from app.services.optimizer import Candidate, optimize_portfolio
+from app.services.optimizer import Candidate, baseline_portfolio, eligible_candidates, optimize_portfolio
 from app.services.pipeline import run_monitor
 from app.services.priority import calculate_priority, sensitivity_range
 from app.services.geometry import to_geojson
@@ -71,6 +72,10 @@ from app.services.versions import INDICATOR_DATASETS, LAYER_DATASETS, current_ve
 
 router = APIRouter()
 router.include_router(backfill_router)
+
+
+def _report_number(value, digits=0):
+    return "—" if value is None else format(float(value), ",.%df" % digits)
 
 
 def _aware(value: Optional[datetime]) -> Optional[datetime]:
@@ -1054,7 +1059,7 @@ def _candidate_rows(db: Session, ids: Optional[List[str]] = None) -> List[Candid
         CandidateIntervention.estimated_cost_thb.is_not(None),
         CandidateIntervention.feasibility_status == "eligible",
     )
-    if ids:
+    if ids is not None:
         query = query.where(CandidateIntervention.id.in_(ids))
     return [row for row in db.scalars(query).all() if row.evidence]
 
@@ -1080,16 +1085,19 @@ def _serialize_candidate(row: CandidateIntervention) -> Dict[str, Any]:
     }
 
 
-def _to_optimizer_candidates(rows: List[CandidateIntervention]) -> List[Candidate]:
+def _to_optimizer_candidates(rows: List[CandidateIntervention], temperatures=None) -> List[Candidate]:
     return [
         Candidate(
             id=row.id,
-            cost_thb=int(round(row.estimated_cost_thb or 0)),
+            # Reserve whole baht conservatively; never round a site's actual cost down.
+            cost_thb=math.ceil(row.estimated_cost_thb or 0),
             beneficiaries=float(row.estimated_beneficiaries or 0),
             priority_score=float(row.priority_score),
             benefit_score=float(row.benefit_score or 0),
             intervention_type=row.intervention_type,
             feasible=row.feasibility_status == "eligible",
+            surface_temperature_c=(temperatures or {}).get(row.area_id),
+            beneficiaries_available=row.estimated_beneficiaries is not None,
         )
         for row in rows
     ]
@@ -1111,6 +1119,14 @@ def _current_versions(db: Session) -> Dict[str, Any]:
     return current_versions(db)
 
 
+def _decision_fingerprint(rows, versions, enabled_types):
+    allowed = set(enabled_types) if enabled_types is not None else None
+    candidates = [_serialize_candidate(row) for row in sorted(rows, key=lambda row: row.id)
+                  if allowed is None or row.intervention_type in allowed]
+    return hashlib.sha256(json.dumps({"versions": versions, "candidates": candidates},
+                                    sort_keys=True, default=str).encode()).hexdigest()
+
+
 def _serialize_optimization_run(db: Session, run: OptimizationRun) -> Dict[str, Any]:
     allocation_rows = db.scalars(
         select(OptimizationAllocation)
@@ -1119,26 +1135,25 @@ def _serialize_optimization_run(db: Session, run: OptimizationRun) -> Dict[str, 
     ).all()
     selected = []
     estimated_beneficiaries = 0.0
+    snapshot_complete = True
+    beneficiaries_complete = True
     for allocation in allocation_rows:
-        candidate = db.get(CandidateIntervention, allocation.candidate_id)
-        if candidate is None:
-            continue
-        estimated_beneficiaries += float(candidate.estimated_beneficiaries or 0)
+        explanation = allocation.explanation or {}
+        candidate = explanation.get("candidate_snapshot")
+        if not isinstance(candidate, dict):
+            # Older runs cannot recover historical geometry/costs by reading today's candidate.
+            snapshot_complete = False
+            candidate = {"id": allocation.candidate_id, "name_th": "โครงการเดิมที่ไม่มีรายละเอียด snapshot",
+                         **{key: explanation.get(key) for key in (
+                             "priority_score", "estimated_beneficiaries", "estimated_cost_thb", "evidence", "uncertainty")}}
+        beneficiaries_complete = beneficiaries_complete and candidate.get("estimated_beneficiaries") is not None
+        estimated_beneficiaries += float(candidate.get("estimated_beneficiaries") or 0)
         selected.append(
             {
-                "id": candidate.id,
-                "area_id": candidate.area_id,
-                "name_th": candidate.name_th,
-                "intervention_type": candidate.intervention_type,
-                "geometry": to_geojson(candidate.geometry),
-                "estimated_cost_thb": candidate.estimated_cost_thb,
-                "annual_maintenance_thb": candidate.annual_maintenance_thb,
-                "estimated_beneficiaries": candidate.estimated_beneficiaries,
-                "priority_score": candidate.priority_score,
+                **{key: candidate.get(key) for key in (
+                    "id", "area_id", "name_th", "intervention_type", "geometry", "estimated_cost_thb",
+                    "annual_maintenance_thb", "estimated_beneficiaries", "priority_score", "feasibility_constraints", "evidence", "uncertainty")},
                 "objective_contribution": allocation.objective_contribution,
-                "feasibility_constraints": candidate.feasibility_constraints,
-                "evidence": candidate.evidence,
-                "uncertainty": candidate.uncertainty,
                 "explanation": allocation.explanation,
             }
         )
@@ -1148,7 +1163,8 @@ def _serialize_optimization_run(db: Session, run: OptimizationRun) -> Dict[str, 
         "budget_thb": run.budget_thb,
         "allocated_thb": run.allocated_thb,
         "unallocated_thb": max(0, run.budget_thb - run.allocated_thb),
-        "estimated_beneficiaries": estimated_beneficiaries,
+        "estimated_beneficiaries": estimated_beneficiaries if beneficiaries_complete else None,
+        "historical_candidate_snapshot_complete": snapshot_complete,
         "objective": run.objective,
         "objective_weights": run.objective_weights,
         "objective_value": run.objective_value,
@@ -1161,6 +1177,9 @@ def _serialize_optimization_run(db: Session, run: OptimizationRun) -> Dict[str, 
             "ผลประโยชน์เป็นค่าประมาณตามหลักฐานใน candidate แต่ละรายการ",
             "Heat Exposure Priority ไม่ใช่ข้อสรุปเรื่องรายได้หรือความเหลื่อมล้ำทางเศรษฐกิจ",
             "ผลลัพธ์นี้ผูกกับ dataset versions ที่บันทึกไว้และจะไม่ถูกแทนที่โดยอัตโนมัติ",
+            "จำนวนผู้รับประโยชน์เป็นผลรวมประมาณการรายโครงการ ยังไม่หักความซ้ำของคนหรือพื้นที่บริการ",
+            "ต้นทุนที่มีเศษบาทกันงบโดยปัดขึ้นเป็นบาทเต็ม ไม่ลดราคาจริงเพื่อให้พอดีงบ",
+            *([] if snapshot_complete else ["ผลรุ่นเก่าไม่มีรายละเอียด snapshot ครบ แสดงเฉพาะข้อมูลเดิมที่บันทึกไว้ โดยไม่แทนด้วยรายละเอียดโครงการปัจจุบัน"]),
         ],
     }
 
@@ -1187,6 +1206,7 @@ def optimization_run(request: OptimizationRequest, db: Session = Depends(get_db)
     for rank, candidate_id in enumerate(portfolio.selected_ids, start=1):
         row = by_id[candidate_id]
         explanation = {
+            "candidate_snapshot": _serialize_candidate(row),
             "priority_score": row.priority_score,
             "estimated_beneficiaries": row.estimated_beneficiaries,
             "estimated_cost_thb": row.estimated_cost_thb,
@@ -1230,7 +1250,8 @@ def optimization_run(request: OptimizationRequest, db: Session = Depends(get_db)
         "solver": portfolio.solver,
         "selected": selected,
         "input_versions": versions,
-        "limitations": ["ผลประโยชน์เป็นค่าประมาณตามหลักฐานใน candidate แต่ละรายการ", "ไม่ตีความคะแนนความร้อนเป็นฐานะทางเศรษฐกิจ"],
+        "limitations": ["ผลประโยชน์เป็นค่าประมาณตามหลักฐานใน candidate แต่ละรายการ", "ไม่ตีความคะแนนความร้อนเป็นฐานะทางเศรษฐกิจ",
+                         "ต้นทุนที่มีเศษบาทกันงบโดยปัดขึ้นเป็นบาทเต็ม", *portfolio.limitations],
     }
 
 
@@ -1258,17 +1279,17 @@ def optimization_run_report(run_id: str, db: Session = Depends(get_db)) -> HTMLR
     project_rows = "".join(
         """
         <tr>
-          <td>{rank}</td><td>{name}</td><td>{kind}</td><td class="number">{cost:,.0f}</td>
-          <td class="number">{beneficiaries:,.0f}</td><td class="number">{priority:.1f}</td>
+          <td>{rank}</td><td>{name}</td><td>{kind}</td><td class="number">{cost}</td>
+          <td class="number">{beneficiaries}</td><td class="number">{priority}</td>
         </tr>
         <tr class="detail"><td></td><td colspan="5"><strong>พื้นที่</strong> {area_id}<br><strong>เรขาคณิต</strong><pre>{geometry}</pre><strong>หลักฐาน</strong><pre>{evidence}</pre><strong>ความไม่แน่นอน</strong><pre>{uncertainty}</pre></td></tr>
         """.format(
             rank=index,
             name=text(item["name_th"]),
             kind=text(item["intervention_type"]),
-            cost=float(item["estimated_cost_thb"] or 0),
-            beneficiaries=float(item["estimated_beneficiaries"] or 0),
-            priority=float(item["priority_score"] or 0),
+            cost=_report_number(item["estimated_cost_thb"]),
+            beneficiaries=_report_number(item["estimated_beneficiaries"]),
+            priority=_report_number(item["priority_score"], 1),
             area_id=text(item["area_id"]),
             geometry=json_text(item["geometry"]),
             evidence=json_text(item["evidence"]),
@@ -1305,7 +1326,7 @@ def optimization_run_report(run_id: str, db: Session = Depends(get_db)) -> HTMLR
 {outdated_notice}
 <table class="meta">
   <tr><td><strong>Run ID</strong><br>{run_id}</td><td><strong>สร้างเมื่อ</strong><br>{created_at}</td><td><strong>Solver</strong><br>{solver}</td></tr>
-  <tr><td><strong>งบประมาณ</strong><br>฿{budget:,.0f}</td><td><strong>จัดสรรแล้ว</strong><br>฿{allocated:,.0f}</td><td><strong>ผู้รับประโยชน์โดยประมาณ</strong><br>{beneficiaries:,.0f}</td></tr>
+  <tr><td><strong>งบประมาณ</strong><br>฿{budget:,.0f}</td><td><strong>จัดสรรแล้ว</strong><br>฿{allocated:,.0f}</td><td><strong>ผลรวมประมาณการรายโครงการ (ยังไม่หักซ้ำ)</strong><br>{beneficiaries}</td></tr>
   <tr><td><strong>Objective</strong><br>{objective}</td><td><strong>Objective value</strong><br>{objective_value}</td><td><strong>จำนวนโครงการ</strong><br>{project_count}</td></tr>
 </table>
 <h2>โครงการที่ได้รับเลือก</h2>
@@ -1320,7 +1341,7 @@ def optimization_run_report(run_id: str, db: Session = Depends(get_db)) -> HTMLR
         solver=text(report["solver"]),
         budget=float(report["budget_thb"] or 0),
         allocated=float(report["allocated_thb"] or 0),
-        beneficiaries=float(report["estimated_beneficiaries"] or 0),
+        beneficiaries=_report_number(report["estimated_beneficiaries"]),
         objective=text(report["objective"]),
         objective_value=text(report["objective_value"]),
         project_count=len(report["selected"]),
@@ -1342,17 +1363,26 @@ def optimization_run_report(run_id: str, db: Session = Depends(get_db)) -> HTMLR
 
 @router.post("/scenarios/compare")
 def scenarios_compare(request: ScenarioCompareRequest, db: Session = Depends(get_db)) -> Dict[str, Any]:
+    versions = _current_versions(db)
     candidate_rows = _candidate_rows(db, request.candidate_ids)
-    candidates = _to_optimizer_candidates(candidate_rows)
+    temperature_version = versions.get(LAYER_DATASETS["temperature"], {}).get("version_id")
+    temperatures = dict(db.execute(select(AreaIndicator.area_id, AreaIndicator.value).where(
+        AreaIndicator.dataset_version_id == temperature_version, AreaIndicator.indicator_key == "lst_c_mean",
+        AreaIndicator.area_id.in_([row.area_id for row in candidate_rows]),
+    )).all()) if temperature_version else {}
+    candidates = _to_optimizer_candidates(candidate_rows, temperatures)
     candidates_by_id = {candidate.id: candidate for candidate in candidate_rows}
+    common_weights = _objective_weights("balanced", None)
     definitions = [
-        ("hottest_first", "ร้อนที่สุดก่อน", {"beneficiaries": 0.05, "priority": 0.85, "benefit": 0.05, "cost_effectiveness": 0.05}),
-        ("population_first", "ประชากรก่อน", {"beneficiaries": 0.85, "priority": 0.05, "benefit": 0.05, "cost_effectiveness": 0.05}),
-        ("heatshift_optimized", "HEAT//SHIFT สมดุล", _objective_weights("balanced", None)),
+        ("hottest_first", "ร้อนที่สุดก่อน"),
+        ("population_first", "ประชากรก่อน"),
+        ("heatshift_optimized", "HEAT//SHIFT สมดุล"),
     ]
     results = []
-    for key, label, weights in definitions:
-        portfolio = optimize_portfolio(candidates, request.budget_thb, weights, request.enabled_types)
+    for key, label in definitions:
+        portfolio = (optimize_portfolio(candidates, request.budget_thb, common_weights, request.enabled_types)
+                     if key == "heatshift_optimized" else
+                     baseline_portfolio(candidates, request.budget_thb, key, common_weights, request.enabled_types))
         allocations = []
         for rank, candidate_id in enumerate(portfolio.selected_ids, start=1):
             candidate = candidates_by_id[candidate_id]
@@ -1385,15 +1415,22 @@ def scenarios_compare(request: ScenarioCompareRequest, db: Session = Depends(get
                 "covered_area_ids": sorted({item["area_id"] for item in allocations}),
                 "objective_value": portfolio.objective_value,
                 "solver": portfolio.solver,
-                "weights": weights,
+                "weights": common_weights,
+                "status": portfolio.status,
+                "limitations": portfolio.limitations,
             }
         )
+    if _current_versions(db) != versions:
+        raise HTTPException(409, "ข้อมูลเปลี่ยนระหว่างเปรียบเทียบ กรุณาคำนวณใหม่เพื่อใช้เวอร์ชันเดียวกัน")
+    fingerprint = _decision_fingerprint(candidate_rows, versions, request.enabled_types)
     return {
         "budget_thb": request.budget_thb,
         "scenarios": results,
-        "input_versions": _current_versions(db),
+        "input_versions": versions,
+        "input_fingerprint": fingerprint,
+        "eligible_candidate_ids": [c.id for c in eligible_candidates(candidates, request.enabled_types)],
         "eligibility_consistent": True,
-        "comparison_note_th": "ทุกยุทธศาสตร์ใช้ candidate, feasibility และเพดานงบชุดเดียวกัน ต่างกันเฉพาะน้ำหนัก objective",
+        "comparison_note_th": "ใช้โครงการที่มีสิทธิ์ เวอร์ชันข้อมูล และงบชุดเดียวกัน ร้อนที่สุดก่อน/ประชากรก่อนเรียงตามหลักฐานแล้วเลือกที่งบพอ ส่วน HEAT//SHIFT ใช้ OR-Tools คะแนน objective ประเมินทุกพอร์ตด้วยน้ำหนักสมดุลเดียวกัน หากหลักฐานจัดอันดับขาดจะแสดงข้อมูลไม่เพียงพอ",
     }
 
 
@@ -1407,6 +1444,10 @@ def _serialize_saved_scenario(
     comparison = configuration.get("comparison", {})
     if not isinstance(comparison, dict):
         comparison = {}
+    versions = current_versions if current_versions is not None else _current_versions(db)
+    fingerprint = comparison.get("input_fingerprint")
+    candidate_inputs_changed = bool(fingerprint) and fingerprint != _decision_fingerprint(
+        _candidate_rows(db, configuration.get("candidate_ids")), versions, configuration.get("enabled_types"))
     return {
         "id": scenario.id,
         "name": scenario.name,
@@ -1415,7 +1456,7 @@ def _serialize_saved_scenario(
         "candidate_ids": configuration.get("candidate_ids"),
         "comparison": comparison if include_comparison else {},
         "dataset_versions": scenario.dataset_versions,
-        "is_outdated": scenario.dataset_versions != (current_versions if current_versions is not None else _current_versions(db)),
+        "is_outdated": scenario.dataset_versions != versions or candidate_inputs_changed,
         "created_at": _iso(scenario.created_at),
     }
 
@@ -1489,15 +1530,15 @@ def saved_scenario_report(scenario_id: str, db: Session = Depends(get_db)) -> HT
     sections = []
     for result in comparison.get("scenarios", []):
         rows = "".join(
-            "<tr><td>{rank}</td><td>{name}</td><td>{kind}</td><td class=\"number\">{cost:,.0f}</td>"
-            "<td class=\"number\">{beneficiaries:,.0f}</td><td><pre>{evidence}</pre></td></tr>"
+            "<tr><td>{rank}</td><td>{name}</td><td>{kind}</td><td class=\"number\">{cost}</td>"
+            "<td class=\"number\">{beneficiaries}</td><td><pre>{evidence}</pre></td></tr>"
             "<tr class=\"detail\"><td></td><td colspan=\"5\"><strong>พื้นที่</strong> {area_id}<br>"
             "<strong>เรขาคณิต</strong><pre>{geometry}</pre><strong>ความไม่แน่นอน</strong><pre>{uncertainty}</pre></td></tr>".format(
                 rank=int(item.get("rank", index)),
                 name=text(item.get("name_th")),
                 kind=text(item.get("intervention_type")),
-                cost=float(item.get("estimated_cost_thb") or 0),
-                beneficiaries=float(item.get("estimated_beneficiaries") or 0),
+                cost=_report_number(item.get("estimated_cost_thb")),
+                beneficiaries=_report_number(item.get("estimated_beneficiaries")),
                 evidence=json_text(item.get("evidence")),
                 area_id=text(item.get("area_id")),
                 geometry=json_text(item.get("geometry")),
@@ -1510,13 +1551,15 @@ def saved_scenario_report(scenario_id: str, db: Session = Depends(get_db)) -> HT
         sections.append(
             """
             <section><h2>{label}</h2>
-            <div class="summary">ใช้งบ ฿{allocated:,.0f} · ผู้รับประโยชน์โดยประมาณ {beneficiaries:,.0f} คน · Objective {objective} · ครอบคลุม {covered}</div>
+            <div class="summary">ใช้งบ ฿{allocated:,.0f} · ผลรวมประมาณการรายโครงการ (ยังไม่หักซ้ำ) {beneficiaries} คน · Objective {objective} · ครอบคลุม {covered}</div>
+            <p>{limitations}</p>
             <table><thead><tr><th>#</th><th>โครงการ</th><th>ประเภท</th><th>ต้นทุน (THB)</th><th>ผู้รับประโยชน์</th><th>หลักฐาน</th></tr></thead><tbody>{rows}</tbody></table>
             </section>
             """.format(
                 label=text(result.get("label_th") or result.get("strategy")),
                 allocated=float(result.get("allocated_thb") or 0),
-                beneficiaries=float(result.get("estimated_beneficiaries") or 0),
+                beneficiaries=_report_number(result.get("estimated_beneficiaries")),
+                limitations=text(" · ".join(result.get("limitations", []))),
                 objective=text(result.get("objective_value")),
                 covered=text(", ".join(result.get("covered_area_ids", [])) or "—"),
                 rows=rows,
@@ -1649,7 +1692,8 @@ def assistant_query(request: AssistantQuery, db: Session = Depends(get_db)) -> D
                             len(selected),
                             f"{optimization['allocated_thb']:,.0f}",
                             f"{parsed_budget:,.0f}",
-                            f"{optimization['estimated_beneficiaries']:,.0f}",
+                            ("ยังไม่มีหลักฐานครบ" if optimization['estimated_beneficiaries'] is None
+                             else f"{optimization['estimated_beneficiaries']:,.0f} (ผลรวมรายโครงการ ยังไม่หักซ้ำ)"),
                             preview,
                         )
                     )

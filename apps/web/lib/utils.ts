@@ -41,7 +41,8 @@ export function formatNumber(value?: number | null, digits = 0) {
   return new Intl.NumberFormat("th-TH", { maximumFractionDigits: digits }).format(value);
 }
 
-export function formatBaht(value: number) {
+export function formatBaht(value: number | null) {
+  if (value == null || !Number.isFinite(value)) return "—";
   if (value >= 1_000_000) return `฿${formatNumber(value / 1_000_000, 1)} ล้าน`;
   return `฿${formatNumber(value)}`;
 }
@@ -268,8 +269,8 @@ export interface OptimizationProject {
   id: string;
   name: string;
   intervention_type: string;
-  cost_thb: number;
-  estimated_beneficiaries?: number;
+  cost_thb: number | null;
+  estimated_beneficiaries?: number | null;
   priority_score?: number;
   latitude?: number;
   longitude?: number;
@@ -282,12 +283,14 @@ export interface OptimizationResult {
   strategy: string;
   budget_thb: number;
   total_cost_thb: number;
-  estimated_beneficiaries: number;
+  estimated_beneficiaries: number | null;
   objective_score?: number;
   dataset_versions?: Record<string, unknown>;
   allocations: OptimizationProject[];
   is_outdated?: boolean;
   is_demo?: boolean;
+  status?: string;
+  limitations?: string[];
 }
 
 export interface SavedScenarioRecord {

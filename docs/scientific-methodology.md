@@ -54,6 +54,12 @@ Subject to budget, eligibility, mutual-exclusion, capacity และ geographic 
 
 Output ต้องรายงาน solver status, gap/time limit, input versions, allocated/unspent budget และเหตุผลของ candidate ที่ถูกเลือก/ไม่เลือก ผล A/B/C ต้องใช้ eligibility/cost/input version เดียวกัน
 
+Implementation จัดสรรด้วย OR-Tools CP-SAT โดยงบรวมใช้บาทเต็มและปัดต้นทุนต่อจุดขึ้นเมื่อมีเศษบาท ค่า `enabled_types=[]` หรือ `candidate_ids=[]` หมายถึงไม่เลือกโครงการใด น้ำหนัก custom ที่ไม่ได้ระบุเป็นศูนย์ ไม่มีการเติมน้ำหนัก default แฝง ผลใหม่เก็บ geometry/cost/evidence snapshot ไว้กับ allocation; ผลเก่าที่ไม่มี snapshot จะแสดงข้อมูลไม่ครบ ไม่แทนด้วยรายละเอียดโครงการปัจจุบัน
+
+Scenario A เรียงตาม LST ของ published snapshot ที่ใช้ร่วมกันแล้วเลือกโครงการที่งบพอ Scenario B เรียงตามประมาณการผู้รับประโยชน์ที่มีหลักฐานด้วยข้อจำกัดเดียวกัน Scenario C ใช้ OR-Tools น้ำหนักสมดุล คะแนน objective ในการเปรียบเทียบใช้สูตรสมดุลเดียวกันทุกพอร์ต หาก eligible project ใดไม่มีหลักฐานสำหรับการจัดอันดับ baseline นั้นจะเป็น `insufficient_data` ไม่ใช้ priority score แทนอุณหภูมิจริง และไม่ใช้ประชากรศูนย์แทนข้อมูลที่ขาด
+
+จำนวนผู้รับประโยชน์รวมเป็นผลรวมประมาณการแต่ละโครงการ **ยังไม่หักซ้ำคนหรือพื้นที่บริการ** ไม่ใช่จำนวนคนไม่ซ้ำที่พิสูจน์แล้ว หากโครงการที่เลือกขาดประมาณการจะแสดงไม่ทราบแทนศูนย์ Saved scenarios เก็บ input fingerprint รวมรายละเอียด candidate; ต้นทุน/หลักฐานเปลี่ยนจะถูกทำเครื่องหมายล้าสมัยโดยไม่แทนผลเดิม
+
 ## Future outlook
 
 เริ่มด้วย scenario-based analysis และ baseline trend ก่อนอ้างว่าเป็น forecast:

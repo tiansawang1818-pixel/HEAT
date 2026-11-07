@@ -121,6 +121,6 @@ def recalculate_priority_scores(db: Session) -> int:
             )
         ).all():
             candidate.priority_score = result.score
-            candidate.dataset_versions = input_versions
+            candidate.dataset_versions = {**(candidate.dataset_versions or {}), **input_versions}
         updated += 1
     return updated

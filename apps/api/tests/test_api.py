@@ -684,7 +684,13 @@ def test_saved_optimization_can_be_retrieved_and_exported(client, db):
             candidate_id=candidate.id,
             rank=1,
             objective_contribution=91.2,
-            explanation={"traceable": True},
+            explanation={"traceable": True, "candidate_snapshot": {
+                "id": candidate.id, "area_id": area.id, "name_th": candidate.name_th,
+                "intervention_type": candidate.intervention_type, "geometry": candidate.geometry,
+                "estimated_cost_thb": candidate.estimated_cost_thb, "annual_maintenance_thb": candidate.annual_maintenance_thb,
+                "estimated_beneficiaries": candidate.estimated_beneficiaries, "priority_score": candidate.priority_score,
+                "evidence": candidate.evidence, "uncertainty": candidate.uncertainty,
+            }},
         )
     )
     db.commit()
@@ -701,8 +707,11 @@ def test_saved_optimization_can_be_retrieved_and_exported(client, db):
     assert comparison.status_code == 200
     assert comparison.json()["eligibility_consistent"] is True
     assert len(comparison.json()["scenarios"]) == 3
-    assert all(item["allocations"][0]["geometry"]["type"] == "Point" for item in comparison.json()["scenarios"])
-    assert all(item["covered_area_ids"] == [area.id] for item in comparison.json()["scenarios"])
+    scenarios = comparison.json()["scenarios"]
+    assert scenarios[0]["status"] == "insufficient_data"  # no satellite observation in this fixture
+    assert scenarios[0]["allocations"] == []
+    assert all(item["allocations"][0]["geometry"]["type"] == "Point" for item in scenarios[1:])
+    assert all(item["covered_area_ids"] == [area.id] for item in scenarios[1:])
 
     report = client.get(f"/api/optimization/runs/{run.id}/report")
     assert report.status_code == 200

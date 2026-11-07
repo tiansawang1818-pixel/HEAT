@@ -350,11 +350,13 @@ function normalizeOptimizationResult(raw: Record<string, unknown>, strategyFallb
     strategy: String(raw.objective || strategyFallback || "balanced"),
     budget_thb: Number(raw.budget_thb || 0),
     total_cost_thb: Number(raw.allocated_thb || 0),
-    estimated_beneficiaries: Number(raw.estimated_beneficiaries || 0),
+    estimated_beneficiaries: typeof raw.estimated_beneficiaries === "number" ? raw.estimated_beneficiaries : null,
     objective_score: Number(raw.objective_value || 0),
     dataset_versions: (raw.input_versions || {}) as Record<string, unknown>,
     is_outdated: Boolean(raw.is_outdated),
     allocations: selected.map(normalizeOptimizationProject),
+    status: String(raw.status || "completed"),
+    limitations: Array.isArray(raw.limitations) ? raw.limitations as string[] : [],
   };
 }
 
@@ -364,8 +366,8 @@ function normalizeOptimizationProject(item: Record<string, unknown>) {
     id: String(item.id),
     name: String(item.name_th || item.id),
     intervention_type: String(item.intervention_type || "unknown"),
-    cost_thb: Number(item.estimated_cost_thb || 0),
-    estimated_beneficiaries: Number(item.estimated_beneficiaries || 0),
+    cost_thb: typeof item.estimated_cost_thb === "number" ? item.estimated_cost_thb : null,
+    estimated_beneficiaries: typeof item.estimated_beneficiaries === "number" ? item.estimated_beneficiaries : null,
     priority_score: Number(item.priority_score || 0),
     longitude: geometry?.type === "Point" ? geometry.coordinates?.[0] : undefined,
     latitude: geometry?.type === "Point" ? geometry.coordinates?.[1] : undefined,
@@ -415,12 +417,14 @@ function normalizeScenarioComparison(value: Record<string, unknown>, budgetFallb
     strategy: String(item.label_th || item.strategy),
     budget_thb: budget,
     total_cost_thb: Number(item.allocated_thb || 0),
-    estimated_beneficiaries: Number(item.estimated_beneficiaries || 0),
+    estimated_beneficiaries: typeof item.estimated_beneficiaries === "number" ? item.estimated_beneficiaries : null,
     objective_score: Number(item.objective_value || 0),
     dataset_versions: (value.input_versions || {}) as Record<string, unknown>,
     allocations: Array.isArray(item.allocations)
       ? (item.allocations as Array<Record<string, unknown>>).map(normalizeOptimizationProject)
       : [],
+    status: String(item.status || "completed"),
+    limitations: Array.isArray(item.limitations) ? item.limitations as string[] : [],
   }));
 }
 
