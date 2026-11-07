@@ -7,7 +7,8 @@ const nextConfig = {
   allowedDevOrigins: ["127.0.0.1"],
   async rewrites() {
     const backend = process.env.API_INTERNAL_URL || process.env.BACKEND_INTERNAL_URL || "http://localhost:8000";
-    return [{ source: "/api/:path*", destination: `${backend}/api/:path*` }];
+    // App Router's dynamic admin handlers must run before the generic API proxy.
+    return { fallback: [{ source: "/api/:path*", destination: `${backend}/api/:path*` }] };
   },
 };
 

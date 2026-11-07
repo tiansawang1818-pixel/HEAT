@@ -32,12 +32,12 @@ def main():
     with opener.open(base + "/styles/community-osm.json", timeout=5) as response:
         style = json.load(response)
         assert style["version"] == 8 and "openstreetmap.org" in style["sources"]["osm"]["attribution"]
-    for path in ("/api/admin/backfills", "/api/admin/backfills/ci-test-only/cancel"):
+    for path in ("/api/admin/backfills", "/api/admin/backfills/ci-test-only/cancel", "/api/admin/candidates/ci-test-only/approve"):
         try:
             opener.open(Request(base + path, data=b'{}', headers={"Content-Type": "application/json"}), timeout=5)
             raise AssertionError("Unauthenticated historical operation was accepted")
         except HTTPError as error:
-            assert error.code == 401
+            assert error.code == 401, "Admin path did not reach its authenticated handler: %s (%s)" % (path, error.code)
     request = Request(base + "/api/admin/ingestion", data=b'{"source":"open-meteo"}', headers={"Content-Type": "application/json"})
     try:
         opener.open(request, timeout=5)

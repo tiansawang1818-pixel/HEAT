@@ -3,9 +3,11 @@
 > **Don't Just Map the Heat. Change the City.**
 > แพลตฟอร์มข่าวกรองเชิงพื้นที่เพื่อการตัดสินใจลงทุนลดความร้อนในกรุงเทพฯ
 
-HEAT//SHIFT เป็นระบบ map-first ที่แยกวันที่ผู้ให้บริการสังเกตข้อมูลออกจากวันที่ระบบตรวจสอบล่าสุดอย่างชัดเจน ระบบประกอบด้วย Next.js, FastAPI, PostgreSQL/PostGIS, Redis/Celery และ object storage สำหรับ raster ขนาดใหญ่ พร้อม workflow แบบ `STAGING → VALIDATION → PROCESSING → PUBLISHING → CACHE INVALIDATION → CLIENT NOTIFICATION`
+HEAT//SHIFT เป็นระบบ map-first ที่แยกวันที่ผู้ให้บริการสังเกตข้อมูลออกจากวันที่ระบบตรวจสอบล่าสุดอย่างชัดเจน ระบบประกอบด้วย Next.js, FastAPI, PostgreSQL/PostGIS และ Redis/Celery พร้อม raster provenance ที่อ้าง Earth Engine asset จริง และ workflow แบบ `STAGING → VALIDATION → PROCESSING → PUBLISHING → CACHE INVALIDATION → CLIENT NOTIFICATION`
 
 > **ข้อสำคัญ:** fixture ที่มากับ repository มีไว้ทดสอบ pipeline เท่านั้น ทุก record ระบุ `fixture_kind: synthetic` และห้ามนำไปแสดงเป็นการสังเกตจริง การใช้งานข้อมูลจริงต้องตั้ง credential ของ provider และผ่าน validation ก่อน publish
+
+ขณะนี้เตรียมและทดสอบโค้ดผ่าน GitHub แต่ **ยังไม่ได้ deploy** ผู้ใช้กำหนดไม่เสียเงิน ไม่ใช้บัตร และไม่ใช้เครื่องตนเองเป็นเซิร์ฟเวอร์ ยังไม่มีปลายทางฟรีที่ยืนยันว่ารัน stack และงานเบื้องหลังต่อเนื่องได้ ดู [เงื่อนไข hosting](docs/hosting-constraints.md) ก่อนเริ่มบริการหรือเปิดทรัพยากรใด ๆ คำสั่ง local ด้านล่างมีไว้สำหรับผู้พัฒนาที่อนุญาตสภาพแวดล้อมนั้น ไม่ใช่การให้ agent ใช้เครื่องผู้ใช้แทน cloud
 
 ## เริ่มใช้งาน
 
@@ -118,8 +120,8 @@ GitHub Actions ทดสอบ PostGIS + Redis + Celery จริงแยกจ
 - Google Earth Engine project + service account ที่มีสิทธิ์อ่าน Landsat, Sentinel-2 และ Dynamic World
 - WorldPop/HTTP configuration ตามเงื่อนไขการเผยแพร่ของ version ที่เลือก
 - OpenStreetMap Overpass ใช้ได้กับ Bangkok pilot; production ปริมาณสูงควรใช้ provider-approved extract/incremental feed และตั้ง rate limit อย่างรับผิดชอบ
-- Overture release URL/version (หากเปิด connector)
-- S3-compatible object storage สำหรับ raster/derived tiles
+- Overture ยังไม่มี connector ในรุ่นนี้ ใช้ OpenStreetMap สำหรับข้อมูล vector ที่รองรับ
+- S3-compatible object storage จำเป็นเมื่อเพิ่มการ export raster ที่ต้องถือครองเอง; รุ่นปัจจุบันใช้ Earth Engine asset/tiles จึงไม่บังคับเปิดบัญชี storage เพื่อดึงภาพ ดาวเทียมต้นทางไม่ได้ถูกสำรองด้วย database dump
 - `ADMIN_API_KEY` ใช้ได้เฉพาะ local/pilot; ต้องเปลี่ยนเป็น OIDC/SSO + RBAC ขององค์กรก่อนเปิดสู่ภายนอก
 - Production admin API บังคับ `ADMIN_AUTH_MODE=oidc` และตรวจ JWT signature/issuer/audience/expiry/role จาก JWKS; local shared key ถูกปฏิเสธแม้เปลี่ยนเป็นค่าที่คาดเดายาก
 
@@ -144,6 +146,11 @@ WorldPop Global2 ใช้งานแบบ anonymous ได้ภายใต�
 - [วิธีคำนวณและข้อจำกัดทางวิทยาศาสตร์](docs/scientific-methodology.md)
 - [Runbook การปฏิบัติการและเหตุขัดข้อง](docs/operations-runbook.md)
 - [Security และ production checklist](docs/security.md)
+- [นำเข้าข้อมูลย้อนหลังแบบจำกัดและทำต่อได้](docs/historical-ingestion.md)
+- [แผนที่พื้นฐานและ attribution](docs/basemap-delivery.md)
+- [สถาปัตยกรรม container / ARM](docs/container-architectures.md)
+- [แหล่งหลักฐานต้นทุนสำหรับตรวจ ไม่ใช่ราคาอนุมัติ](docs/cost-evidence-sources.md)
+- [บทนำเสนอ 3 นาทีที่แสดงข้อจำกัดตามจริง](docs/demo-script-th.md)
 
 ## License / attribution
 
