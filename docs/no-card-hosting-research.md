@@ -17,6 +17,16 @@
 - RAM/CPU ของ Next.js, API, worker, dispatcher และ Beat รวมกับฐานข้อมูล ภายใต้ resource requests ที่ provider อนุญาตจริง
 - entitlement ของบัญชีใหม่และการป้องกันค่าใช้จ่ายส่วนเกินที่ตรงข้อกำหนดผู้ใช้
 
+### ผลตรวจหน้าบัญชีจริง
+
+ตรวจช่องทางเชื่อมแล้วไม่พบ Hostless plugin ในรายการที่ค้นได้ จึงเปิดเว็บ Hostless แบบ read-only พบว่ายังไม่มี session ที่เข้าสู่ระบบ เริ่ม normal GitHub sign-in เพื่ออ่านหน้าขอสิทธิ์ แต่ **ไม่ได้กด Authorize**
+
+หน้าขอสิทธิ์ระบุ Hostless App โดย Hostless Cloud ขอการยืนยันตัวตน GitHub อ่านอีเมล และทำงานในนามบัญชีตามสิทธิ์ของแอป ยังไม่ได้ติดตั้ง app ให้เข้าถึง repository หรือเปิด resource ข้อมูล OAuth state, credentials และภาพบัญชีไม่เก็บใน Git
+
+การตรวจ entitlement/ฐานข้อมูลจริงต่อจึงติดที่การอนุญาตเชื่อมบัญชีใหม่ ต้องได้รับความยินยอมจากเจ้าของบัญชีก่อน การสร้างหรือเข้าบัญชีอยู่ภายใต้ [Terms of Service](https://hostless.cloud/terms) และ [Privacy Policy](https://hostless.cloud/privacy) ของผู้ให้บริการ ไม่ใช้คำสั่งให้ทำงานทั้งหมดเป็นการอนุญาตให้ยอมรับสิทธิ์บัญชี/สัญญาใหม่โดยอัตโนมัติ
+
+หลังอนุญาตจึงตรวจแผนที่บัญชีได้รับและ resource quotes ก่อน provision ใด ๆ และตรวจ PostGIS/Redis persistence ด้วยการทดสอบที่ได้รับอนุญาต ไม่รายงานว่ามีเครื่องแล้วจากการเข้าสู่ระบบเพียงอย่างเดียว
+
 [Spending limit](https://docs.hostless.cloud/plans/limits) ไม่ใช่ hard invoice cap: เอกสารระบุว่าเมื่อถึง limit จะบล็อก capacity แบบคิดเงินเพิ่ม แต่ resource ที่ทำงานอยู่ยังอาจคิดเงิน ดังนั้นห้ามเปิด paid capacity/ใส่บัตร/เติมเครดิตเพื่อให้ผ่าน admission โดยอัตโนมัติ
 
 บริการ [Virtual Machines](https://hostless.cloud/products/virtual-machines) ของ Hostless เป็น early access แบบเสียเงิน แยกจาก free app allowance ไม่ใช่ VM ฟรีสำหรับรัน Docker Compose ทั้งชุด นอกจากนี้ [durable volumes](https://docs.hostless.cloud/billing/costbreakdown) คิดเงินแยกและไม่ใช้ free database-storage pool ห้ามตั้ง PostgreSQL ใน temporary app filesystem เพื่อหลบข้อจำกัด persistence
