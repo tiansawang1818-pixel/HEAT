@@ -4,6 +4,8 @@
 
 **ยังไม่ได้ deploy และยังไม่มีเครื่องปลายทางที่ผ่านเงื่อนไขทั้งหมดของผู้ใช้** ไม่มีการเปิดบริการเสียเงิน เพิ่มบัตร สมัคร trial หรือใช้เครื่องผู้ใช้เป็น app server/worker/scheduler งานรอบนี้แก้ source และส่งการทดสอบไป GitHub ภายในเพดานบัญชีที่มีอยู่
 
+ความคืบหน้าการหา hosting: ผู้ใช้อนุญาตการเชื่อม GitHub และสร้าง/เข้าบัญชี Hostless ฟรีแล้ว ตรวจหน้า Current billing สำเร็จ ได้สิทธิ์รวมทั้งบัญชี 0.5 vCPU / 1024 MiB RAM / 512 MiB storage ไม่มีบัตรหรือเครดิต ยังไม่ได้ provision app/database/worker หรือติดตั้งแอปให้เข้าถึง HEAT ฐานข้อมูลขนาดต่ำสุดสองตัวใช้ storage pool ครบ ส่วน PostGIS และ resource fit ของทั้งระบบยังไม่ผ่านการทดสอบ ดู [ผลตรวจบัญชีจริง](no-card-hosting-research.md#ผลตรวจหน้าบัญชีจริง)
+
 ## งานที่ทำและ push แล้ว
 
 - Historical ingestion หลายปี: keyset pages แยก Landsat 8/9, frozen date range, จำกัดจำนวนคำขอ/ความพยายามที่รวม retry, PostgreSQL cursor/pending, distributed locks, delivery generation, worker recovery และ cancel/resume เป็น job ใหม่ พร้อมหน้าควบคุมภาษาไทย Flag เรียก Earth Engine จริงยังปิดเป็นค่าเริ่มต้น

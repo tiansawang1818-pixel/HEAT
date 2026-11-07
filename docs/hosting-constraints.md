@@ -37,7 +37,7 @@
 
 ตรวจ Koyeb/Northflank เพิ่มเติมวันที่ 7 พฤศจิกายน 2026 ยึดเอกสารข้อกำหนด instance/billing แทนคำโฆษณาว่า “free/always-on” ไม่มีการสมัคร เพิ่มวิธีชำระเงิน หรือเปิด trial
 
-ตรวจผู้ให้บริการเพิ่มเติมใน [no-card hosting research](no-card-hosting-research.md): Hostless มี free always-on app/worker allowance ที่น่าตรวจต่อ แต่ยังต้องยืนยัน PostGIS, persistence, RAM/CPU และ entitlement ของบัญชีจริง ไม่ใช่ VM ฟรี และยังไม่ใช่ปลายทางที่ผ่านครบ ส่วน ClawCloud พบประกาศยุติบริการ จึงไม่ใช้ข้อเสนอเก่ามาแนะนำให้สมัคร
+ตรวจผู้ให้บริการเพิ่มเติมใน [no-card hosting research](no-card-hosting-research.md): ผู้ใช้อนุญาต sign-in/สร้างบัญชี Hostless ฟรีแล้ว และตรวจ entitlement จาก Current billing ได้จริงที่ 0.5 vCPU / 1024 MiB RAM / 512 MiB storage รวมทั้งบัญชี ไม่มีบัตรหรือเครดิต ยังไม่ได้เปิด resources หรือติดตั้ง repo integration ฐานข้อมูล PostgreSQL/Redis ขนาดต่ำสุดรวมกันใช้พื้นที่ pool ครบและเหลือ RAM 512 MiB สำหรับ runtime อื่น ๆ ส่วน PostGIS/persistence/resource fit ยังไม่มีผลทดสอบจริง จึงยังไม่ใช่ปลายทางที่ผ่านครบ ส่วน ClawCloud พบประกาศยุติบริการ จึงไม่ใช้ข้อเสนอเก่ามาแนะนำให้สมัคร
 
 ห้ามเปิด Pay As You Go, เริ่ม free trial ที่หมดอายุแล้วอาจคิดเงิน, ใส่บัตร, สร้าง load ปลอมเพื่อเลี่ยง idle policy หรือเปลี่ยนไปใช้เครื่องผู้ใช้แทน เงื่อนไขผู้ให้บริการอาจเปลี่ยนได้ ต้องตรวจอีกครั้งก่อนเปิดทรัพยากรจริง
 
