@@ -17,6 +17,7 @@ import ssl
 import subprocess
 import time
 from urllib.parse import urlsplit
+from urllib.error import HTTPError
 from urllib.request import HTTPSHandler, build_opener
 
 
@@ -93,19 +94,26 @@ def main():
         return service, parse_cgroup(result.stdout)
 
     opener = build_opener(HTTPSHandler(context=ssl.create_default_context(cafile=args.ca_file)))
-    paths = ("/", "/observatory", "/optimizer", "/api/map/layers", "/api/areas", "/api/health/ready")
+    # /health/ready intentionally rejects an installation with every provider
+    # disabled. /health still checks the DB, without claiming data readiness.
+    paths = ("/", "/observatory", "/optimizer", "/api/map/layers", "/api/areas", "/api/health")
+
+    def read_only_request(path):
+        try:
+            with opener.open(args.url + path, timeout=15) as response:
+                if response.status != 200:
+                    raise ValueError("Read-only CI warmup failed")
+                response.read()
+        except HTTPError as error:
+            raise RuntimeError("Read-only CI warmup failed at %s (HTTP %s)" % (path, error.code)) from None
     # Warm the actual Next/FastAPI processes, without a second client process
     # inside their containers distorting the measured memory.
     for path in paths:
-        with opener.open(args.url + path, timeout=15) as response:
-            if response.status != 200:
-                raise ValueError("Read-only CI warmup failed")
-            response.read()
+        read_only_request(path)
     samples = []
     with ThreadPoolExecutor(max_workers=len(SERVICES)) as pool:
         for index in range(args.samples):
-            with opener.open(args.url + paths[index % len(paths)], timeout=15) as response:
-                response.read()
+            read_only_request(paths[index % len(paths)])
             samples.append(dict(pool.map(collect, SERVICES)))
             if index + 1 < args.samples:
                 time.sleep(args.interval)
@@ -122,6 +130,7 @@ def main():
     report = {"checked_at": datetime.now(timezone.utc).isoformat(),
               "scope": "isolated_github_ci_idle_and_read_only_http_profile",
               "architecture": platform.machine(), "functional_code_sha": os.environ.get("GITHUB_SHA"),
+              "application_readiness_verified": False,
               "samples": args.samples, "services": by_service, "assessment": assess_capacity(samples),
               "limitations": ["Measured on GitHub CI, not on Hostless. Provider allocation defaults and quotas are not proven.",
                               "Real environmental ingestion, large rasters, OR-Tools peak load and forecast training were not exercised.",

@@ -1,0 +1,20 @@
+{
+  "checked_at": "2026-11-07T17:19:35.263542+00:00",
+  "scope": "postgres_tls_handshake_only_no_credentials",
+  "sni_used": true,
+  "ca_and_hostname_verification_required": true,
+  "alpn_offered": [
+    "postgresql"
+  ],
+  "ssl_request_response": "S",
+  "postgres_starttls": {
+    "verified": false,
+    "error_type": "SSLEOFError",
+    "reason": "tls_handshake_failed_before_authentication"
+  },
+  "direct_tls": {
+    "verified": false,
+    "error_type": "SSLEOFError",
+    "reason": "tls_handshake_failed_before_authentication"
+  }
+}

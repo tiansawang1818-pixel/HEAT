@@ -44,4 +44,6 @@ python scripts/verify_hosting_backends.py \
 
 [รายงาน backend วันที่ 7 พฤศจิกายน 2026](verification/hostless-backends-2026-11-07.json) มีเฉพาะผลตรวจที่ตัดข้อมูลลับออก การกู้ PostgreSQL ไม่สำเร็จจึงยังไม่ผ่าน PostGIS หรือ whole-stack capacity ดู [รายละเอียดข้อจำกัด](no-card-hosting-research.md#ผลทดสอบ-backend-จริง)
 
+การตรวจเพิ่มเติมแยก PostgreSQL SSLRequest กับ direct TLS โดยส่ง SNI/ALPN `postgresql` และบังคับ certificate/hostname verification ทั้งสองกรณี พบ response `S` ต่อ SSLRequest แต่ handshake ถูกตัดก่อน authentication ทั้งสองโหมด จึงไม่ส่ง password ไปทดลองลดความปลอดภัย ดู [รายงาน TLS](verification/hostless-postgres-tls-diagnostic.json) และ [วิธีวัดทรัพยากรใน CI](capacity-validation.md)
+
 Celery กำหนด `broker_use_ssl` และ `redis_backend_use_ssl` แยกกัน พร้อมปฏิเสธ URI ที่ลด certificate/hostname checks ฝั่งเว็บใช้ node-redis พร้อม SNI ตาม hostname ของ `rediss://` ส่วน private Compose `redis://redis` ยังใช้ transport เดิม อ้างอิง [Celery SSL configuration](https://docs.celeryq.dev/en/stable/userguide/configuration.html#broker-use-ssl) และ [Hostless connection requirements](https://docs.hostless.cloud/databases/connecting)
