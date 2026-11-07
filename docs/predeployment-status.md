@@ -4,13 +4,15 @@
 
 **ยังไม่ได้ deploy และยังไม่มีเครื่องปลายทางที่ผ่านเงื่อนไขทั้งหมดของผู้ใช้** ไม่มีการเปิดบริการเสียเงิน เพิ่มบัตร สมัคร trial หรือใช้เครื่องผู้ใช้เป็น app server/worker/scheduler งานรอบนี้แก้ source และส่งการทดสอบไป GitHub ภายในเพดานบัญชีที่มีอยู่
 
-ความคืบหน้า hosting: Hostless ได้สิทธิ์รวม 0.5 vCPU / 1024 MiB RAM / 512 MiB storage Redis ผ่าน TLS, logical DB 0/1/2 และคิวหลัง graceful restart รวมถึง client ของ Celery/node-redis แต่ PostgreSQL ไม่ผ่าน health check ผู้ใช้อนุญาตให้ลบเพื่อทดลองสร้างใหม่แล้ว ตัวเดิมอยู่ใน recovery window และคืนพื้นที่ถาวรไม่ได้จนถึง **15 พฤศจิกายน 2026 เวลา 00:29:23 น. กรุงเทพฯ** ยังไม่สร้าง PostgreSQL 16 เพราะ quote $0 ของ resource ใหม่ไม่ยืนยันการนับ retained storage ทั้งบัญชี ปัจจุบันมี Redis ทำงานและ PostgreSQL หยุดรอลบ ไม่มี HEAT app/worker production บัตร เครดิต หรือ repo integration ผู้ใช้เลือกยังไม่ส่งข้อความหา support ดู [สถานะและหลักฐาน](no-card-hosting-research.md#การทดลองสร้างใหม่และข้อจำกัด-retention)
+ความคืบหน้า hosting: **Aiven PostgreSQL Free ทำงานและผ่าน SQL/PostGIS จริงแล้ว** หลังผู้ใช้ยืนยันข้อตกลง/สิทธิ์ GitHub สร้าง service `heat-postgis-check` แผน Free-1-1gb (PostgreSQL 18.6 / PostGIS 3.6.4) ตรวจ TLS/hostname, geometry/index/rollback และ migrations ครบ 21 application tables ใน logical database ทดสอบแยกผ่าน ไม่มีแถวข้อมูลแอป ไม่มีการผูกบัตร/เลือกแผนเสียเงิน แม้บัญชีจะมีแบนเนอร์ trial credits อัตโนมัติ ดู [ผลตรวจจริง](aiven-readiness.md) ยังไม่มี HEAT app/worker production หรือ repo integration
+
+Hostless บัญชีเดิมมีสิทธิ์รวม 0.5 vCPU / 1024 MiB RAM / 512 MiB storage Redis ผ่าน TLS, DB 0/1/2 และ graceful restart แต่ abrupt-crash recovery/appendfsync ยังไม่ยืนยัน PostgreSQL ของ Hostless ที่ผู้ใช้อนุญาตให้ลบยังคง recovery window จนถึง **15 พฤศจิกายน 2026 เวลา 00:29:23 น. กรุงเทพฯ** ไม่สร้าง PostgreSQL 16 เพิ่มหรือข้าม retained-storage quota การตรวจ Aiven ทำได้โดยไม่รอวันดังกล่าว ผู้ใช้เลือกยังไม่ส่งข้อความหา support ตามเดิม
 
 ตรวจทรัพยากรที่ทำได้เองเพิ่มแล้ว: [CI baseline ของทั้ง 7 services](capacity-validation.md#ผลที่วัดแล้ว) วัด RAM รวมพร้อมกันสูงสุด 664.84 MiB / anonymous 499.13 MiB ในโหลดอ่านข้อมูลขนาดเล็ก ไม่มี OOM kill หรือ external source check ผลคือ `production_fit_not_established` ยังไม่ใช่ peak ingestion/optimizer หรือ provider resource admission
 
-ตรวจข้อเสนอสมัครบัญชีใหม่เมื่อ 8 พฤศจิกายน 2026 แล้ว: [Hostless Terms of Service](https://hostless.cloud/terms) จัดการสร้างหลายบัญชีเพื่อรับทรัพยากรฟรีเพิ่มไว้ใน `Uses Outside Fair Use` จึงไม่ใช้บัญชีซ้ำเพื่อข้าม retained-storage quota ยังไม่ได้สร้างบัญชีเพิ่ม ย้ายผู้ให้บริการ หรือติดต่อ support แทนผู้ใช้ ดู [ผลตรวจและทางเลือก](no-card-hosting-research.md#การทดลองสร้างใหม่และข้อจำกัด-retention)
+ตรวจข้อเสนอสมัครบัญชีใหม่เมื่อ 8 พฤศจิกายน 2026 แล้ว: [Hostless Terms of Service](https://hostless.cloud/terms) จัดการสร้างหลายบัญชีเพื่อรับทรัพยากรฟรีเพิ่มไว้ใน `Uses Outside Fair Use` จึงไม่สร้าง Hostless ซ้ำเพื่อข้าม retained-storage quota ต่อมาผู้ใช้เลือก Aiven แทนและยืนยันการสมัครแล้ว โดยไม่ติดต่อ support แทนผู้ใช้ ดู [ผลตรวจและทางเลือก](no-card-hosting-research.md#การทดลองสร้างใหม่และข้อจำกัด-retention)
 
-ทางเลือกที่ไม่ต้องรอเพื่อเริ่มตรวจ PostGIS: [Aiven PostgreSQL Free + Hostless runtime/Redis เดิม](split-free-hosting.md) เอกสาร Aiven ระบุไม่ใช้บัตร/รองรับ PostGIS แต่ยังไม่มีบัญชีหรือผล SQL จริง ต้องเตรียม project CA, connection budget 20 ช่อง และตรวจ admission/load/crash recovery ของระบบที่แยก provider ก่อนเปิดจริง การรอ Hostless PostgreSQL 16 จึงไม่ใช่ทางเลือกเดียว แต่ยังไม่มีทางใดผ่าน hosting gate ครบแล้ว
+ใช้แนวทาง [Aiven PostgreSQL Free + Hostless runtime/Redis เดิม](split-free-hosting.md) ตรวจ project CA/20 connections/PostGIS/migrations จริงแล้ว เตรียม bounded pools และแก้ SSE ไม่ยึด connection ระหว่างรอ ต้องตรวจ admission/load/crash recovery ของระบบที่แยก provider ก่อนเปิดจริง ยังไม่มีทางใดผ่าน hosting gate ครบแล้ว
 
 ## งานที่ทำและ push แล้ว
 
@@ -27,16 +29,17 @@
 - Managed hosting checks: สคริปต์ตรวจ PostGIS/TLS/Redis แบบอ่านอย่างเดียวเป็นค่าเริ่มต้น และโหมดตรวจคิวทดสอบหลัง restart ที่ไม่แตะคิวจริง พร้อมแก้ Celery broker/backend SSL และ node-redis SNI ตรวจ client connectivity กับ Redis บน Hostless จริงผ่าน เก็บรายงานที่ไม่มี credentials และ [ข้อความปัญหาที่เตรียมไว้แต่ยังไม่ได้ส่ง](hostless-readiness-support-draft.md)
 - Capacity collector ใน isolated CI วัด cgroup ของทั้ง 7 services พร้อม GET แบบตรวจ TLS แยก anonymous memory/file cache และไม่รวม peak จากคนละเวลา ปิดแหล่งข้อมูลก่อนเริ่ม scheduler โดยคง readiness gate ของแอปไว้ตามเดิม หากข้อมูลวัดไม่ครบหรือ baseline ต่ำกว่า pool จะไม่เปลี่ยนเป็นอนุมัติ production
 - เตรียม PostGIS capability probe สำหรับ database ใหม่ `heat-pg16-check`: บังคับ TLS/ชื่อปลายทาง ปฏิเสธตารางแอปที่มีอยู่ แยก flag เปิด extension ถาวรอย่างชัดเจนจาก transaction ของ geometry/index ที่บังคับ rollback ตรวจ CRS, GeoJSON, GiST plan และ spatial query โดยไม่สร้าง observation หรือ publication ผ่านการรันซ้ำ/ล้มเหลวกลางทางใน isolated PostGIS จริงทั้งสองสถาปัตยกรรมแล้ว [วิธีใช้](managed-hosting-checks.md#postgis-แบบ-rollback-only-ในฐานข้อมูลใหม่)
+- เพิ่ม provider CA สำหรับ Aiven, จำกัด connection pool ต่อ process และคืน connection ของ SSE ก่อนส่ง frame/รอ ตรวจด้วย single-connection pool ว่า publisher ยังเขียน publication ได้ขณะ map client เชื่อมอยู่ ใช้ probe กับ fresh `heat-postgis-check` บน Aiven จริงผ่านแล้ว
 
-โค้ดที่ตรวจล่าสุด: `1e7dab2a62ed555c22ec8fd6a28f6fe8c5b84994` รวม historical/decision-integrity, managed-hosting/TLS, capacity และ PostGIS capability checks เอกสารหรือรายงานที่ commit ต่อจากนี้ไม่เปลี่ยน functional code ที่ CI ตรวจ
+โค้ดที่ตรวจล่าสุด: `77dd718553156e6e954e52082a3f1a7d1a0a14fc` รวม historical/decision-integrity, managed-hosting/TLS, capacity, provider CA, bounded pools และ SSE connection release เอกสารหรือรายงานที่ commit ต่อจากนี้ไม่เปลี่ยน functional code ที่ CI ตรวจ
 
 ## ผลตรวจ
 
-[GitHub Actions run 42399755441](https://github.com/tiansawang1818-pixel/HEAT/actions/runs/42399755441) ผ่านครบทั้ง 5 งาน ตรวจ job conclusions และ API/stack/ARM test summaries จาก logs แล้ว:
+[GitHub Actions run 42403035779](https://github.com/tiansawang1818-pixel/HEAT/actions/runs/42403035779) ผ่านครบทั้ง 5 งาน ตรวจ job conclusions และ API/Web/stack/ARM test summaries จาก logs แล้ว:
 
 | งาน | หลักฐาน |
 |---|---|
-| API | 201 unit/API tests ผ่าน และ dependency audit ผ่าน |
+| API | 215 unit/API tests ผ่าน รวม provider CA, pool exhaustion และ SSE connection release; dependency audit ผ่าน |
 | Web | 38 tests ผ่าน รวม Redis session integration, TypeScript ผ่าน, Next.js production build ผ่าน |
 | Stack amd64 | 7 integration tests ผ่าน: เพิ่ม explicit PostGIS setup, geometry/index rollback เมื่อสำเร็จ/ล้มเหลว และไม่เปิด extension โดยปริยาย ร่วมกับ PostGIS/Redis/Celery/Beat/SSE และ historical cursor; ซ้อม backup/restore เทียบแถว/checksum ครบ 22 application tables |
 | Native ARM | สร้าง PostGIS/API/Caddy แบบ arm64 และผ่าน integration 7 tests เดียวกันบน ARM จริง |

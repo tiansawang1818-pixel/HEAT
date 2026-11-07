@@ -10,7 +10,7 @@
 
 | ส่วนระบบ | ปลายทางที่เสนอ | หลักฐานและสิ่งที่ต้องตรวจ |
 |---|---|---|
-| PostgreSQL/PostGIS | Aiven แผน Free หนึ่ง service | เอกสารระบุ PostGIS; ยังต้องสร้าง test database ที่ได้รับอนุญาต ตรวจ TLS, extension, CRS/index, migrations และ backup/restore จริง |
+| PostgreSQL/PostGIS | Aiven แผน Free หนึ่ง service | ตรวจ TLS, PostGIS 3.6.4, CRS/index/rollback และ migrations จริงผ่านแล้ว; ยังไม่มี load/backup restore จาก provider จริง |
 | Redis broker / results / sessions | Hostless Redis เดิม | ผ่าน TLS, DB 0/1/2 และ graceful restart แล้ว; abrupt-crash recovery/appendfsync ยังไม่ผ่าน |
 | Next.js, FastAPI, ingestion worker, dispatcher, Beat | Hostless บัญชีเดิม | [รองรับ Docker/apps/workers](https://docs.hostless.cloud/app/hostlessfile) แต่ต้องตรวจ entitlement และ quote รวมทุก process จริง ไม่อ้างว่า pool ที่เหลือพอจาก baseline CI |
 | PostgreSQL ที่รอลบ | คง recovery state เดิม | ไม่ restore ไม่ force-delete และไม่นับ retained storage ว่าคืนแล้ว |
@@ -42,6 +42,8 @@
 ฐานข้อมูลที่มี inactivity rule อาจใช้กับงานจริงเป็นระยะได้ การพัก compute ของ database ที่ resume จาก SQL เองต่างจากการพัก worker จนไม่มีผู้ตรวจข้อมูล อย่างไรก็ตามยังไม่มีผลทดสอบว่าบริการเหล่านี้รองรับ schedule/โหลดจริงของ HEAT ภายในโควตา และไม่ใช้ข้ออ้างนี้สร้าง traffic ปลอม
 
 ## สถานะการตัดสินใจ
+
+ผู้ใช้เลือก Aiven และดำเนินการจริงแล้ว ดู [Aiven readiness](aiven-readiness.md) และ [รายงาน SQL/PostGIS/migrations](verification/aiven-postgis-2026-11-08.json) ไม่ต้องรอ retained storage ของ Hostless เพื่อผ่านด่าน PostgreSQL นี้
 
 แนะนำตรวจ **Aiven PostgreSQL Free + Hostless บัญชีเดิม** ก่อน เพราะแก้จุดที่ติด PostgreSQL โดยไม่เพิ่ม storage ของ Hostless ไม่ใช้บัตร และไม่เปลี่ยนคิวที่เคยตรวจได้แล้ว มี fallback เป็น Supabase; Neon ต้องแก้/วัด compute budget เพิ่ม จึงยังไม่ใช่ตัวเลือกแรก
 

@@ -1,0 +1,127 @@
+{
+  "checked_at": "2026-11-07T18:50:10.066593+00:00",
+  "timezone_note": "UTC timestamps; local calendar date is 8 November 2026 in Asia/Bangkok",
+  "scope": "aiven_free_postgresql_and_postgis_compatibility_only",
+  "functional_code_sha": "77dd718553156e6e954e52082a3f1a7d1a0a14fc",
+  "provider_ui": {
+    "service": "heat-postgis-check",
+    "status": "Running",
+    "plan": "Free-1-1gb",
+    "cpu": 1,
+    "memory_gb": 1,
+    "storage_gb": 1,
+    "additional_storage": false,
+    "connection_limit": 20,
+    "card_added": false,
+    "paid_service_created": false,
+    "account_trial_banner_present": true,
+    "service_uses_trial_credits": false
+  },
+  "postgres": {
+    "status": "passed",
+    "tls_hostname_verified": true,
+    "server": {
+      "version": "18.6",
+      "database_bytes": 16340671
+    },
+    "tls": {
+      "ssl": true,
+      "version": "TLSv1.3"
+    },
+    "spatial_extensions": [
+      {
+        "name": "postgis",
+        "default_version": "3.6.4",
+        "installed_version": "3.6.4"
+      },
+      {
+        "name": "postgis_raster",
+        "default_version": "3.6.4",
+        "installed_version": null
+      },
+      {
+        "name": "postgis_sfcgal",
+        "default_version": "3.6.4",
+        "installed_version": null
+      },
+      {
+        "name": "postgis_tiger_geocoder",
+        "default_version": "3.6.4",
+        "installed_version": null
+      },
+      {
+        "name": "postgis_topology",
+        "default_version": "3.6.4",
+        "installed_version": null
+      }
+    ],
+    "spatial_check": {
+      "projected_srid": 3857,
+      "valid_geometry": true
+    }
+  },
+  "postgis_transaction_test": {
+    "status": "passed",
+    "scope": "synthetic_temporary_geometry_only",
+    "checks": {
+      "postgis_version": "3.6.4",
+      "geometry": {
+        "rows": 100,
+        "all_valid": true,
+        "srid": 4326,
+        "projected_srid": 3857,
+        "roundtrip_error_degrees": 1.432144669219779e-14
+      },
+      "spatial_query_ids": [
+        0
+      ],
+      "index_plan_probe_seqscan_disabled": true,
+      "gist_query_plan_verified": true,
+      "geojson_roundtrip_verified": true
+    },
+    "rollback_verified": true,
+    "extension_installed_before": true,
+    "extension_installed_after": true,
+    "extension_enabled_by_opt_in": false,
+    "rollback_scope": "temporary_geometry_and_index_only",
+    "application_data_published": false,
+    "production_load_verified": false,
+    "tls_hostname_verified": true
+  },
+  "database_setup": {
+    "scope": "dedicated_aiven_test_database_only",
+    "application_deployed": false,
+    "can_create_database": true,
+    "role_connection_limit": -1,
+    "server_max_connections": 20,
+    "status": "created",
+    "database_name": "heat-postgis-check"
+  },
+  "schema_readiness": {
+    "checked_at": "2026-11-07T18:50:10.066593+00:00",
+    "scope": "fresh_aiven_schema_compatibility_only",
+    "application_deployed": false,
+    "provider_monitors_started": false,
+    "database_created": true,
+    "postgis_version": "3.6 USE_GEOS=1 USE_PROJ=1 USE_STATS=1",
+    "application_table_count": 21,
+    "all_application_tables_created": true,
+    "no_application_rows": true,
+    "migrations_at_head": true,
+    "revision": "20261106_0004",
+    "tls_hostname_verified": true,
+    "status": "passed"
+  },
+  "postgres_compatibility_status": "passed",
+  "whole_application_capacity_verified": false,
+  "zero_cost_for_whole_stack_verified": false,
+  "application_deployed": false,
+  "provider_monitors_started": false,
+  "notes": [
+    "Three logical databases in one Free service: defaultdb, heat-postgis-check, heatshift-readiness-check. No second Aiven service was created.",
+    "PostGIS extension was explicitly enabled only in fresh test databases. Synthetic spatial rows and GiST indexes were rolled back; no environmental observations were created.",
+    "Standalone backend probe aggregate is blocked because Redis was intentionally not included. PostgreSQL and spatial checks passed independently.",
+    "Aiven defaults displayed sslmode=require; the probes and schema migration used verify-full with the service project CA and verified hostname.",
+    "The Free plan is single-node, has an inactivity shutdown rule and no SLA. A Running badge is not a full-stack production readiness or availability guarantee."
+  ]
+}

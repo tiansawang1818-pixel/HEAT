@@ -1,6 +1,6 @@
 # ตรวจปลายทางฟรีที่ไม่ใช้บัตรเพิ่มเติม
 
-สถานะล่าสุด: เชื่อม Hostless และทดสอบ PostgreSQL/Redis จริงแล้ว ต่อมาผู้ใช้อนุญาตให้ลบ PostgreSQL ทดสอบเพื่อทดลองสร้างใหม่ ตัวเดิมเข้า recovery window และคืน storage ถาวรไม่ได้จนถึง 15 พฤศจิกายน 2026 เวลา 00:29:23 น. กรุงเทพฯ ปัจจุบันมี Redis ทำงานและ PostgreSQL ที่หยุดรอลบ ยังไม่ได้สร้าง PostgreSQL 16 หรือ deploy เว็บ/API/worker ของ HEAT ไม่มีบัตร เครดิต หรือ repo integration ผลแต่ละรอบมี timestamp ในรายงาน ไม่ใช้วันที่บันทึกเอกสารแทนวันที่ข้อมูลสิ่งแวดล้อม
+สถานะล่าสุด: **Aiven Free PostgreSQL/PostGIS ผ่านการตรวจจริงแล้ว** หลังผู้ใช้เลือกและยืนยันการสมัคร ดู [ผล SQL/TLS/geometry/migrations](aiven-readiness.md) ยังไม่มี HEAT app/worker production ส่วน Hostless Redis ยังทำงานและ PostgreSQL เดิมอยู่ใน recovery window จนถึง 15 พฤศจิกายน 2026 เวลา 00:29:23 น. กรุงเทพฯ ไม่มีการสร้าง PostgreSQL 16 เพิ่ม ไม่มีบัตรหรือ repo integration บัญชี Aiven ได้ trial credits อัตโนมัติแต่ resource เลือก Free ไม่ใช้แผนคิดเงิน ผลแต่ละรอบมี timestamp ในรายงาน ไม่ใช้วันที่บันทึกเอกสารแทนวันที่ข้อมูลสิ่งแวดล้อม
 
 ## Hostless: ตัวเลือก PaaS ที่ยังต้องยืนยัน
 
@@ -84,6 +84,6 @@
 
 ## ข้อสรุปที่รายงานได้
 
-ตรวจวิธีไม่ต้องรอพื้นที่เพิ่มเติมแล้ว: [แผนแยกผู้ให้บริการ](split-free-hosting.md) เสนอ Aiven PostgreSQL Free สำหรับทดสอบ PostGIS โดยใช้ Hostless บัญชีเดิมกับ Redis/runtime ต่อ มีข้อจำกัด CA certificate, 20 connections, inactivity และ whole-stack admission ที่ต้องตรวจจริง ยังไม่ได้สมัคร/เปิด service ใหม่ ไม่ถือว่าสถานะ hosting ผ่านแล้ว
+ใช้ [แผนแยกผู้ให้บริการ](split-free-hosting.md) จริงแล้ว: Aiven PostgreSQL Free ผ่าน project CA/TLS, เพดาน 20 connections, PostGIS และ migrations โดยใช้ Hostless บัญชีเดิมกับ Redis/runtime ต่อ ยังมี inactivity, whole-stack admission/load, provider backup และ Redis crash durability ที่ต้องตรวจ ไม่ถือว่าสถานะ hosting ทั้งระบบผ่านแล้ว
 
 Hostless ผ่านขั้นบัญชี, entitlement, resource admission ที่เคยทดสอบ และ Redis TLS/logical databases/graceful restart retention แล้ว มี CI baseline ทรัพยากรจริงเพิ่มเติม แต่ **ยังไม่ผ่าน PostgreSQL readiness/PostGIS, Redis crash durability และ whole-stack capacity** ขณะนี้ติดพื้นที่ PostgreSQL รอลบก่อนทดลอง instance ใหม่ภายใน pool ได้ การติดตั้ง repo integration ยังไม่ได้ทำ ไม่มี production deployment และไม่รับรองว่ารัน HEAT ทั้งชุดได้ฟรีจาก quote เฉพาะ resource หรือยอด billing ชั่วขณะ
