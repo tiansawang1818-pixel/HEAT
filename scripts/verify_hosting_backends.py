@@ -27,7 +27,7 @@ def error_reason(error):
         (("timeout", "timed out"), "connection_timeout"),
         (("name or service not known", "could not translate host", "nodename nor servname", "name resolution"), "dns_failed"),
         (("connection refused",), "connection_refused"),
-        (("noperm", "permission denied"), "permission_denied"),
+        (("noperm", "permission denied", "no permissions"), "permission_denied"),
         (("unknown command", "command is disabled", "command not allowed"), "command_unavailable"),
     ):
         if any(needle in message for needle in needles):

@@ -21,6 +21,7 @@ spec.loader.exec_module(probe)
     ("certificate verify failed: secret-uri", "tls_verification_failed"),
     ("connection timed out", "connection_timeout"),
     ("NOPERM command unavailable", "permission_denied"),
+    ("User gateway has no permissions to run config|get", "permission_denied"),
     ("unknown command CONFIG private-details", "command_unavailable"),
     ("unexpected provider details secret-value", "backend_request_failed"),
 ])

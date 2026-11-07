@@ -1,6 +1,6 @@
 # ตรวจปลายทางฟรีที่ไม่ใช้บัตรเพิ่มเติม
 
-วันที่ตรวจ: 7 พฤศจิกายน 2026 — ผู้ใช้ยืนยันการเชื่อม GitHub และสร้าง/เข้าบัญชี Hostless ฟรีแล้ว ตรวจหน้าบัญชีจริงสำเร็จ แต่ยังไม่ได้เปิด app, worker หรือ database เพิ่มบัตร หรือติดตั้ง GitHub App ให้เข้าถึง repository HEAT การพบข้อเสนอฟรีหรือเข้าสู่บัญชีได้ยังไม่เท่ากับได้รับทรัพยากรที่รันระบบครบได้จริง
+วันที่ตรวจ: 7 พฤศจิกายน 2026 — เชื่อมบัญชี Hostless และเปิด PostgreSQL/Redis **สำหรับตรวจ compatibility เท่านั้น** ภายใน free entitlement แล้ว ยังไม่ได้ deploy เว็บ/API/worker ของ HEAT เพิ่มบัตร หรือติดตั้ง GitHub App ให้เข้าถึง repository ผลทดสอบ Redis บางส่วนผ่าน แต่ PostgreSQL ยังไม่พร้อมเชื่อมต่อ จึงยังรับรอง hosting ของระบบครบชุดไม่ได้
 
 ## Hostless: ตัวเลือก PaaS ที่ยังต้องยืนยัน
 
@@ -13,7 +13,7 @@
 รายการที่ยังไม่ยืนยัน:
 
 - managed PostgreSQL ติดตั้ง PostGIS และให้สิทธิ์ `CREATE EXTENSION postgis` ได้หรือไม่ เอกสารที่อ่านยืนยัน PostgreSQL แต่ไม่ได้ยืนยัน PostGIS
-- Redis persistence/queue recovery, connection limits และ session storage ที่เหมาะสมกับ Celery/SSO
+- Redis `appendfsync`, connection limits และพฤติกรรมเมื่อใช้หน่วยความจำเต็ม; TLS/logical databases และคิวทดสอบหลัง graceful restart ผ่านแล้ว แต่ไม่ใช้แทนการทดสอบ crash recovery
 - RAM/CPU ของ Next.js, API, worker, dispatcher และ Beat รวมกับฐานข้อมูล ภายใต้ resource requests ที่ provider อนุญาตจริง
 - การยอมรับ resource configuration ของทั้ง stack ภายใน entitlement ที่ตรวจแล้ว และการป้องกันค่าใช้จ่ายส่วนเกินที่ตรงข้อกำหนดผู้ใช้
 
@@ -25,18 +25,30 @@
 
 | รายการตรวจจาก UI จริง | ผล |
 |---|---|
-| บัญชีและ project | เข้าบัญชีได้ มี project เริ่มต้น ยังไม่มี runtime resources |
+| บัญชีและ project | เข้าบัญชีได้ มี project เริ่มต้น และฐานข้อมูลทดสอบสองตัว ไม่มี HEAT app/worker |
 | รอบ billing ที่แสดง | 7 พฤศจิกายน – 7 ธันวาคม 2026 |
 | Free entitlement | 0.5 vCPU / 1024 MiB RAM / 512 MiB storage รวมทุก project ของบัญชี; Current billing ระบุว่าแชร์ระหว่าง app, worker, cron, database และ Objects |
-| การชำระเงิน | ไม่มีบัตร ไม่มีเครดิต ยอดใช้/ค้างจ่ายที่แสดง USD 0.00 ไม่ได้เปลี่ยน spending limit ซึ่งหน้า Preview แสดง No limit |
+| การชำระเงิน | ไม่มีบัตร ไม่มีเครดิต ไม่ได้เปลี่ยน spending limit ซึ่งหน้า Preview แสดง No limit หลังทดสอบหน้า Current billing แสดง USD 0.00 และ Collecting usage data ยังไม่ใช่ invoice สรุปหรือการรับรองค่าใช้จ่ายในอนาคต |
 | Database engine | ตัวเลือก PostgreSQL, Valkey, Redis, ClickHouse, CouchDB, MongoDB; PostgreSQL ที่เลือกแสดง image `postgres:17` ไม่มีตัวเลือก PostGIS ในรายการที่เปิดตรวจ |
 | ขนาด database แบบ Custom | CPU ต่ำสุด 0.2 vCPU, RAM ต่ำสุด 256 MiB, storage ต่ำสุด 256 MiB (`256Mi` ในหน้า Review) |
-| Quote ก่อน deploy | PostgreSQL ขนาดต่ำสุดแสดง Est. monthly cost USD 0.00; **ไม่ได้กด Deploy** จึงยังไม่ยืนยัน provisioning, extension หรือ persistence |
+| Resource admission | เปิด PostgreSQL และ Redis อย่างละ 0.2 vCPU / 256 MiB RAM / 256 MiB storage ได้ โดย quote USD 0.00 ทั้งคู่; การเปิด resource สำเร็จไม่เท่ากับ engine พร้อมใช้งาน |
 | Marketplace | รายการ 13 บริการที่แสดงไม่มี PostGIS; ไม่ได้ deploy บริการใด |
 
 หาก PostgreSQL และ Redis ใช้ขนาดต่ำสุดเดียวกัน จะรวมเป็น **0.4 vCPU / 512 MiB RAM / 512 MiB storage** เหลือเพียง 0.1 vCPU / 512 MiB RAM และไม่มีพื้นที่ database pool ที่เหลือ สำหรับ Next.js, API, ingestion worker, control worker และ Beat ใน architecture ปัจจุบัน นี่เป็นการคำนวณ resource requests จากตัวเลขใน UI ไม่ใช่ benchmark และไม่ใช่หลักฐานว่ารันงาน geospatial จริงได้ภายใน RAM/CPU ดังกล่าว
 
-ไม่พบตัวเลือก PostGIS **ไม่เท่ากับพิสูจน์ว่า extension ใช้ไม่ได้** ต้องตรวจ `pg_available_extensions`, สิทธิ์เปิด extension และคำสั่ง spatial บนฐานข้อมูลจริงก่อนย้าย migrations ไปใช้ ไม่เปิด PostgreSQL เปล่าแล้วอ้างว่าได้ PostGIS แล้ว ยังไม่ได้ทดสอบ Redis persistence/recovery หรือขนาดการใช้งานจริง และ quote ราคาไม่ใช่ทรัพยากรที่ provision สำเร็จ
+### ผลทดสอบ backend จริง
+
+ดู [รายงานที่ตัดข้อมูลลับออก](verification/hostless-backends-2026-11-07.json) และ [วิธีรันซ้ำ](managed-hosting-checks.md) ผลตรวจ SQL/Redis สุดท้ายในรายงานคือ 7 พฤศจิกายน 2026 เวลา 12:51 UTC (19:51 น. กรุงเทพฯ) ไม่ใช้เวลานี้แทน observation timestamp ของ environmental data
+
+- **PostgreSQL:** endpoint ปิดการเชื่อมต่อ TLS ก่อนเริ่ม SQL (`SSL SYSCALL error: EOF detected`) จึงยังอ่าน `pg_available_extensions` ไม่ได้ หลัง health check และ restart หนึ่งครั้ง หน้า Resources ระบุ `Database restart did not become ready within five minutes` ลองเพิ่มเป็น 0.3 vCPU / 512 MiB RAM / 256 MiB storage ซึ่ง quote ยัง USD 0.00 และรวม Redis แล้วยังไม่เกิน pool แต่ update ยังล้มเหลวด้วย `The database started but did not pass its health check` ไม่มีการปิด TLS verification หรือเปลี่ยนไปใช้ plaintext เพื่อฝืนเชื่อม
+- **Redis:** ใช้ endpoint/ACL credentials ที่หน้า dashboard ออกให้จริง ตรวจ certificate/hostname ผ่าน และ `SELECT`/`PING` database 0, 1, 2 ได้ `INFO persistence` แสดง AOF เปิดและสถานะเขียน `ok`
+- **คิวหลัง restart:** สร้าง marker และรายการข้อความสองรายการใน namespace สุ่มแยกจากคิว Celery พร้อม TTL 1 ชั่วโมง จากนั้น restart เฉพาะ Redis ทดสอบผ่าน dashboard ตรวจ `run_id` เปลี่ยน และ marker/ลำดับรายการยังครบ ผลนี้พิสูจน์ graceful restart retention ของการทดสอบนี้ ไม่รับรอง abrupt crash, disk failure หรือข้อมูลทุกช่วงเวลา
+- **ข้อจำกัด Redis:** ACL ปฏิเสธ `CONFIG GET` จึงยังยืนยัน `appendfsync` ไม่ได้ `INFO memory` แสดง `noeviction` และ `maxmemory=0` ซึ่งไม่ใช่หลักฐานว่ามี RAM ไม่จำกัด ต้องทดสอบ backpressure/cgroup OOM กับโควตาจริงก่อน production
+- **Client ของแอป:** หลังเพิ่ม explicit Celery broker/backend SSL settings ทดสอบ broker connection และ result backend PING กับ Redis จริงผ่าน ฝั่งเว็บทดสอบ node-redis ด้วย SNI/hostname verification และ database 2 ได้ PONG ไม่มีการเริ่ม web/API server, worker หรือ scheduler ในเครื่องผู้ใช้
+
+การทดสอบกู้ PostgreSQL ใช้ resource requests รวมกับ Redis เป็น 0.5 vCPU / 768 MiB RAM / 512 MiB storage จึงไม่เหลือ CPU request สำหรับเพิ่ม HEAT runtime ตาม configuration นี้ นี่เป็นขนาดเพื่อวินิจฉัย ไม่ใช่ deployment plan ที่ผ่าน load/capacity test ไม่มีการเพิ่ม storage, paid volume, trial, บัตร หรือเครดิต
+
+ไม่พบตัวเลือก PostGIS **ไม่เท่ากับพิสูจน์ว่า extension ใช้ไม่ได้** แต่ฐานข้อมูลยังไม่พร้อมให้ตรวจ SQL จึงถือว่าด่านนี้ไม่ผ่าน ต้องได้ engine ที่ healthy แล้วตรวจ extension และ spatial query จริง ไม่ย้าย migrations หรือ deploy เว็บเปล่าเพื่ออ้างว่าระบบครบแล้ว Operational logs ของฐานข้อมูลยังไม่ได้เปิด collection; ไม่ส่งข้อความหาผู้ให้บริการแทนเจ้าของโดยไม่มีคำสั่ง
 
 สำหรับการเชื่อมในอนาคต [connection documentation](https://docs.hostless.cloud/databases/connecting) ระบุให้ PostgreSQL ตรวจ certificate/hostname ด้วย `sslmode=verify-full` และ Redis/Valkey ใช้ TLS พร้อม SNI ของ hostname จริง ต้องทดสอบ client ของ HEAT โดยคงการตรวจ certificate ไว้ ไม่ใช้ `sslmode=require` เป็นหลักฐานว่า hostname ผ่านการตรวจแล้ว
 
@@ -58,4 +70,4 @@
 
 ## ข้อสรุปที่รายงานได้
 
-Hostless เชื่อมบัญชีฟรีและยืนยัน entitlement จากหน้าบัญชีจริงแล้ว จึงพ้นขั้นรออนุญาต sign-in แต่ยังไม่ผ่าน compatibility ของ HEAT ทั้งระบบ: PostGIS, Redis durability, resource fit และพื้นที่เก็บข้อมูลยังไม่มีผลทดสอบจริง การติดตั้ง repo integration ก็ยังไม่ได้ทำ เงื่อนไข zero-cost/no-card/no-local-server/continuous background processing ยังไม่ได้รับการพิสูจน์ทั้งหมด ไม่มีการ deploy ใหม่หรือเปลี่ยน stack เพื่ออ้างว่าข้อจำกัดหมดไปแล้ว
+Hostless ผ่านขั้นบัญชี, entitlement, free resource admission และ Redis TLS/logical databases/graceful restart retention แล้ว แต่ **ยังไม่ผ่าน PostgreSQL readiness/PostGIS, Redis crash durability และ whole-stack capacity** การติดตั้ง repo integration ยังไม่ได้ทำ ไม่มี production deployment ใหม่ และไม่มีการรับรองว่ารัน HEAT ทั้งชุดได้ฟรีจาก quote หรือยอด billing ชั่วขณะ การตรวจต่อที่มีประโยชน์ต้องแก้ PostgreSQL readiness ให้ได้ก่อน แล้ววัด runtime ทั้งชุดภายใน pool โดยไม่ลดข้อกำหนดข้อมูล/ความต่อเนื่องของผู้ใช้

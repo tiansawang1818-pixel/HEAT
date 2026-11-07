@@ -9,6 +9,7 @@ from celery import Celery
 from billiard.exceptions import SoftTimeLimitExceeded
 
 from app.core.config import settings
+from app.core.redis_tls import celery_redis_tls_settings
 from app.db.session import SessionLocal
 from app.models.entities import IngestionJob
 from app.services.bootstrap import ensure_sources
@@ -25,6 +26,7 @@ from app.services.historical import dispatch_backfills, execute_backfill_step
 
 celery_app = Celery("heatshift", broker=settings.redis_url, backend=settings.redis_url)
 celery_app.conf.update(
+    **celery_redis_tls_settings(settings.redis_url),
     task_serializer="json",
     result_serializer="json",
     accept_content=["json"],

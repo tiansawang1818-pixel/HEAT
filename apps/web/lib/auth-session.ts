@@ -3,6 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { createClient } from "redis";
 import { NextRequest } from "next/server";
 import { openAuthValue, sealAuthValue, sameSecret } from "@/lib/auth-crypto";
+import { sessionRedisOptions } from "@/lib/redis-connection";
 
 export interface AdminSession {
   accessToken: string;
@@ -27,10 +28,7 @@ export async function closeAdminSessionStore() {
 async function store() {
   if (!redisClient?.isReady) {
     if (!connecting) {
-      const client = createClient({
-        url: process.env.AUTH_REDIS_URL || process.env.REDIS_URL || "redis://localhost:6379/2",
-        socket: { connectTimeout: 1500, reconnectStrategy: false }, disableOfflineQueue: true,
-      });
+      const client = createClient(sessionRedisOptions(process.env.AUTH_REDIS_URL || process.env.REDIS_URL || "redis://localhost:6379/2"));
       client.on("error", () => { /* Fail closed; never log connection credentials or tokens. */ });
       connecting = client.connect().then(() => { redisClient = client; return client; }).finally(() => { connecting = undefined; });
     }

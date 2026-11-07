@@ -1,0 +1,60 @@
+{
+  "checked_at": "2026-11-07T12:51:18.803863+00:00",
+  "scope": "managed_backend_compatibility_only",
+  "postgres": {
+    "status": "error",
+    "reason": "connection_closed_before_query",
+    "postgis_verified": false
+  },
+  "redis": {
+    "status": "blocked",
+    "restart": {
+      "status": "passed",
+      "server_restart_observed": true,
+      "queue_retained": true
+    },
+    "tls_hostname_verified": true,
+    "logical_databases": [
+      0,
+      1,
+      2
+    ],
+    "persistence": {
+      "aof_enabled": 1,
+      "aof_last_write_status": "ok",
+      "rdb_last_bgsave_status": "ok"
+    },
+    "memory": {
+      "used_memory": 1115936,
+      "maxmemory": 0,
+      "maxmemory_policy": "noeviction"
+    },
+    "configuration": {
+      "status": "not_verified",
+      "reason": "permission_denied"
+    },
+    "durable_configuration_verified": false,
+    "reason": "persistence_or_restart_not_verified"
+  },
+  "whole_application_capacity_verified": false,
+  "zero_cost_verified": false,
+  "status": "blocked",
+  "application_client_checks": {
+    "celery": {
+      "result_backend_ping": true,
+      "broker_connected": true
+    },
+    "node_redis_session_store": {
+      "tlsVerificationRequired": true,
+      "logicalDatabase": 2,
+      "sessionStorePing": "PONG"
+    },
+    "scope": "Client connectivity only; no local app server, worker or scheduler was started."
+  },
+  "limitations": [
+    "PostgreSQL health check failed after one restart and one resize within the free pool; SQL and PostGIS could not be inspected.",
+    "Redis graceful restart retention is verified for isolated expiring test keys only; abrupt crash recovery is not verified.",
+    "Redis ACL denies CONFIG GET; appendfsync is not verified. INFO memory reports noeviction and maxmemory=0; cgroup OOM behavior is not verified.",
+    "Capacity and cost of the complete application are not verified. No production application was deployed."
+  ]
+}
