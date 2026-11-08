@@ -30,9 +30,9 @@ def main():
     run(compose + ["stop", "api", "web", "worker", "dispatcher", "beat"], timeout=90)
     run(["docker", "run", "-d", "--name", name, "--network", network,
          "--cpus=0.3", "--memory=768m", "--memory-swap=768m", "--read-only",
-         "--tmpfs", "/tmp:rw,size=96m,mode=1777", "-p", "127.0.0.1:13012:3000",
+         "--tmpfs", "/tmp:rw,size=96m,mode=1777", "-p", "127.0.0.1:13012:8000",
          "--env-file", env_file, "-e", "CI=true", "-e", "GITHUB_ACTIONS=true",
-         "-e", "HEATSHIFT_ISOLATED_CI=true", "-e", "REDIS_URL=redis://redis:6379/0",
+         "-e", "HEATSHIFT_ISOLATED_CI=true", "-e", "PORT=8000", "-e", "REDIS_URL=redis://redis:6379/0",
          "-e", "AUTH_REDIS_URL=redis://redis:6379/2", "-e", "ENVIRONMENT=production",
          "-e", "ADMIN_AUTH_MODE=oidc", "-e", "DEMO_MODE=false", "-e", "ALLOW_FIXTURE_INGESTION=false",
          "heatshift-hostless:ci"], capture=True)
@@ -100,6 +100,7 @@ def main():
             "checked_at": datetime.now(timezone.utc).isoformat(),
             "scope": "isolated_github_ci_combined_runtime", "functional_code_sha": os.environ.get("GITHUB_SHA"),
             "cpu_limit": 0.3, "memory_limit_bytes": 768 * 1024 ** 2,
+            "provider_assigned_web_port": 8000,
             "peak_sampled_memory_bytes": max(row["memory_bytes"] for row in samples),
             "sample_count": len(samples), "process_count": 5,
             "read_only_root_filesystem": True, "swap_enabled": False,

@@ -4,7 +4,7 @@
 
 ## โปรเซสและ persistence
 
-`scripts/hostless_runtime.py` เริ่ม migrations ก่อน แล้วดูแล Next.js, FastAPI, ingestion worker, control dispatcher และ Beat รวม 5 โปรเซสใน container เดียว พอร์ตภายนอกเป็น Next.js ตาม `PORT`; API ฟังเฉพาะ loopback 8000 ใช้ generic proxy ที่ build ด้วย `API_INTERNAL_URL=http://127.0.0.1:8000` งาน admin ยังคงผ่าน App Router ที่ตรวจสิทธิ์ก่อน
+`scripts/hostless_runtime.py` เริ่ม migrations ก่อน แล้วดูแล Next.js, FastAPI, ingestion worker, control dispatcher และ Beat รวม 5 โปรเซสใน container เดียว พอร์ตภายนอกเป็น Next.js ตาม `PORT` ที่ provider กำหนด (Hostless ส่ง 8000 ในการเปิดจริงครั้งแรก); API ฟังเฉพาะ loopback 18000 ใช้ generic proxy ที่ build ด้วย `API_INTERNAL_URL=http://127.0.0.1:18000` งาน admin ยังคงผ่าน App Router ที่ตรวจสิทธิ์ก่อน หาก provider กำหนดพอร์ตเว็บชนกับพอร์ต API ส่วนตัว ตัวเริ่มระบบปฏิเสธก่อนเปิดโปรเซส
 
 เมื่อโปรเซสใดหยุดแม้ exit code 0 ตัวดูแลหยุดกลุ่มที่เหลือและคืน nonzero เพื่อให้ platform restart ทั้งแอป ส่ง SIGTERM และรอ bounded grace ก่อน SIGKILL การทดสอบ child restart ไม่แทนการพิสูจน์ข้อมูลคิวครบหลัง abrupt crash
 
@@ -32,6 +32,6 @@ Health check ของ platform ใช้ `/api/health` ซึ่งตรวจ
 
 Unit tests ตรวจ TLS/CA, configuration ที่ไม่ปลอดภัย, process exit/shutdown และการไม่รายงานตัวเลขศูนย์แทนข้อมูลที่อ่านไม่ได้ การทดสอบ process ใช้ Python subprocess สั้น ๆ ไม่เปิด web/API/worker ในเครื่อง
 
-`scripts/verify_hostless_runtime_ci.py` ปฏิเสธการรันนอก GitHub CI สร้าง image ใน CI ใช้ backends ชั่วคราวที่ปิด provider ทุกแหล่งแล้ว บังคับ CPU 0.3 / RAM 768 MiB / no swap / read-only root ตรวจหน้าเว็บ API admin gates SSE cgroup และ kill/restart โปรเซสจริง ตรวจ source checks เป็นศูนย์ก่อนจบ รายงาน artifact `heatshift-hostless-runtime-ci.json`
+`scripts/verify_hostless_runtime_ci.py` ปฏิเสธการรันนอก GitHub CI สร้าง image ใน CI ใช้ backends ชั่วคราวที่ปิด provider ทุกแหล่งแล้ว บังคับ CPU 0.3 / RAM 768 MiB / no swap / read-only root และ inject `PORT=8000` ตามพฤติกรรม Hostless จริง ตรวจหน้าเว็บ API admin gates SSE cgroup และ kill/restart โปรเซสจริง ตรวจ source checks เป็นศูนย์ก่อนจบ รายงาน artifact `heatshift-hostless-runtime-ci.json`
 
 การตรวจนี้ใช้ HTTP เฉพาะ loopback ใน CI และ private Compose backends ที่จำกัดด้วย CI guards ไม่ใช้แทน TLS/ใบรับรอง/latency ของ Aiven–Hostless จริง หลังเปิดจริงต้องตรวจ certificate, source schedules/publication, bounded workload และ usage/quote จาก provider อีกครั้ง รวมถึงคิวและ backup/recovery ก่อน production release

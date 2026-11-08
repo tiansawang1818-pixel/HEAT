@@ -13,6 +13,9 @@ import time
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 
+PRIVATE_API_PORT = 18000
+
+
 def prepare_environment(source, scratch):
     env = dict(source)
     for key in ("DEMO_MODE", "ALLOW_FIXTURE_INGESTION", "NEXT_PUBLIC_DEMO_MODE"):
@@ -26,7 +29,7 @@ def prepare_environment(source, scratch):
     env.update(ENVIRONMENT="production", ADMIN_AUTH_MODE="oidc", ADMIN_API_KEY="",
                DASHBOARD_ADMIN_TOKEN="", DATABASE_POOL_SIZE="2", DATABASE_MAX_OVERFLOW="0",
                DATABASE_POOL_TIMEOUT_SECONDS="10", HOSTNAME="0.0.0.0",
-               API_INTERNAL_URL="http://127.0.0.1:8000", NEXT_PUBLIC_API_URL="",
+               API_INTERNAL_URL=f"http://127.0.0.1:{PRIVATE_API_PORT}", NEXT_PUBLIC_API_URL="",
                RATE_LIMIT_ENABLED="true", XDG_CACHE_HOME=str(scratch / "cache"))
     env["HOSTLESS_COMBINED_RUNTIME"] = "true"
     parsed = urlsplit(env.get("DATABASE_URL", ""))
@@ -62,6 +65,8 @@ def prepare_environment(source, scratch):
     port = int(env.get("PORT", "3000"))
     if not 1024 <= port <= 65535:
         raise ValueError("Invalid web port")
+    if port == PRIVATE_API_PORT:
+        raise ValueError("Assigned web port conflicts with the private API port")
     env["PORT"] = str(port)
     return env
 
@@ -71,7 +76,7 @@ def runtime_commands(root):
     celery = [sys.executable, "-m", "celery", "-A", "app.worker.celery_app"]
     worker = ["worker", "--loglevel=INFO", "--pool=prefork", "--concurrency=1", "--without-gossip", "--without-mingle"]
     return {
-        "api": ([sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8000"], api),
+        "api": ([sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", str(PRIVATE_API_PORT)], api),
         "web": (["node", "server.js"], root / "apps" / "web"),
         "ingestion": (celery + worker + ["-Q", "celery", "--hostname=ingestion@%h"], api),
         "dispatcher": (celery + worker + ["-Q", "control", "--hostname=dispatcher@%h"], api),

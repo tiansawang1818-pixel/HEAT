@@ -6,7 +6,7 @@ RUN npm ci
 FROM web-dependencies AS web-builder
 ENV NEXT_PUBLIC_API_URL="" NEXT_PUBLIC_DEMO_MODE=false \
     NEXT_PUBLIC_MAP_STYLE_URL=/styles/community-osm.json \
-    API_INTERNAL_URL=http://127.0.0.1:8000 NEXT_TELEMETRY_DISABLED=1
+    API_INTERNAL_URL=http://127.0.0.1:18000 NEXT_TELEMETRY_DISABLED=1
 COPY apps/web/ ./
 RUN npm run build
 

@@ -35,6 +35,16 @@ def test_managed_connections_require_provider_ca_and_override_weaker_uri(tmp_pat
     assert prepared["DATABASE_MAX_OVERFLOW"] == "0"
 
 
+def test_hostless_assigned_port_8000_keeps_web_and_api_separate(tmp_path):
+    from urllib.parse import urlsplit
+    prepared = runtime.prepare_environment({**managed_environment(), "PORT": "8000"}, tmp_path)
+    commands = runtime.runtime_commands(tmp_path)
+    api_port = commands["api"][0][-1]
+    assert prepared["PORT"] == "8000"
+    assert api_port != prepared["PORT"]
+    assert urlsplit(prepared["API_INTERNAL_URL"]).port == int(api_port)
+
+
 @pytest.mark.parametrize("overrides", [
     {"DATABASE_CA_PEM_BASE64": ""}, {"DATABASE_CA_PEM_BASE64": "invalid"},
     {"DEMO_MODE": "true"}, {"ALLOW_FIXTURE_INGESTION": "true"},
@@ -43,6 +53,7 @@ def test_managed_connections_require_provider_ca_and_override_weaker_uri(tmp_pat
     {"AUTH_REDIS_URL": "rediss://cache.example.org/2?ssl_cert_reqs=none"},
     {"DATABASE_URL": "postgresql://db.example.org/heatshift?host=other.example.org"},
     {"AUTH_SESSION_SECRET": "short"},
+    {"PORT": str(runtime.PRIVATE_API_PORT)},
 ])
 def test_unsafe_or_incomplete_configuration_is_rejected(tmp_path, overrides):
     with pytest.raises((ValueError, OSError)):
