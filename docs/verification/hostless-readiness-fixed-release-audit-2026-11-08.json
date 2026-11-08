@@ -1,0 +1,179 @@
+{
+  "schema_version": 1,
+  "checked_at": "2026-11-08T14:11:23.473077+00:00",
+  "scope": "automated_release_candidate_checks",
+  "trust": "public_ca",
+  "checks": [
+    {
+      "code": "api",
+      "passed": true
+    },
+    {
+      "code": "configuration",
+      "passed": false
+    },
+    {
+      "code": "data",
+      "passed": false
+    },
+    {
+      "code": "sso_configuration",
+      "passed": false
+    }
+  ],
+  "automated_checks_passed": false,
+  "configuration_blockers": [
+    {
+      "code": "security.oidc",
+      "message_th": "OIDC production configuration ยังไม่ครบหรือไม่ได้ใช้ HTTPS",
+      "action_th": "ตั้ง ADMIN_AUTH_MODE=oidc พร้อม HTTPS issuer/JWKS, audience และ admin roles"
+    },
+    {
+      "code": "provider.earth_engine_project",
+      "message_th": "ยังไม่ได้กำหนด GEE_PROJECT",
+      "action_th": "กำหนด project ที่เปิด Earth Engine API และมี quota ที่ได้รับอนุมัติ"
+    }
+  ],
+  "data_checks": [
+    {
+      "code": "monitoring.bma-boundaries",
+      "status": "ready",
+      "label_th": "การติดตามอัตโนมัติ: Bangkok district boundaries",
+      "detail_th": "เปิดการติดตามอัตโนมัติแล้ว"
+    },
+    {
+      "code": "source.bma-boundaries",
+      "status": "blocked",
+      "label_th": "Bangkok district boundaries",
+      "detail_th": "ยังไม่มีเวอร์ชันจริงที่ผ่าน validation และเผยแพร่พร้อมรายงาน"
+    },
+    {
+      "code": "monitoring.landsat",
+      "status": "ready",
+      "label_th": "การติดตามอัตโนมัติ: Landsat 8/9",
+      "detail_th": "เปิดการติดตามอัตโนมัติแล้ว"
+    },
+    {
+      "code": "source.landsat",
+      "status": "blocked",
+      "label_th": "Landsat 8/9",
+      "detail_th": "ยังไม่มีเวอร์ชันจริงที่ผ่าน validation และเผยแพร่พร้อมรายงาน"
+    },
+    {
+      "code": "monitoring.sentinel",
+      "status": "ready",
+      "label_th": "การติดตามอัตโนมัติ: Sentinel-2",
+      "detail_th": "เปิดการติดตามอัตโนมัติแล้ว"
+    },
+    {
+      "code": "source.sentinel",
+      "status": "blocked",
+      "label_th": "Sentinel-2",
+      "detail_th": "ยังไม่มีเวอร์ชันจริงที่ผ่าน validation และเผยแพร่พร้อมรายงาน"
+    },
+    {
+      "code": "monitoring.dynamic-world",
+      "status": "ready",
+      "label_th": "การติดตามอัตโนมัติ: Google Dynamic World",
+      "detail_th": "เปิดการติดตามอัตโนมัติแล้ว"
+    },
+    {
+      "code": "source.dynamic-world",
+      "status": "blocked",
+      "label_th": "Google Dynamic World",
+      "detail_th": "ยังไม่มีเวอร์ชันจริงที่ผ่าน validation และเผยแพร่พร้อมรายงาน"
+    },
+    {
+      "code": "monitoring.open-meteo",
+      "status": "ready",
+      "label_th": "การติดตามอัตโนมัติ: Open-Meteo",
+      "detail_th": "เปิดการติดตามอัตโนมัติแล้ว"
+    },
+    {
+      "code": "source.open-meteo",
+      "status": "ready",
+      "label_th": "Open-Meteo",
+      "detail_th": "มีเวอร์ชันจริงที่เผยแพร่และมี validation report ผ่าน"
+    },
+    {
+      "code": "check.open-meteo",
+      "status": "ready",
+      "label_th": "การตรวจล่าสุด: Open-Meteo",
+      "detail_th": "ตรวจแหล่งข้อมูลสำเร็จภายในรอบที่กำหนด"
+    },
+    {
+      "code": "license.open-meteo",
+      "status": "warning",
+      "label_th": "สิทธิ์ใช้ข้อมูล: Open-Meteo",
+      "detail_th": "metadata ไม่ยืนยันเงื่อนไขสิทธิ์ ต้องตรวจหลักฐานก่อนเปิดเผยข้อมูล"
+    },
+    {
+      "code": "monitoring.worldpop",
+      "status": "ready",
+      "label_th": "การติดตามอัตโนมัติ: WorldPop",
+      "detail_th": "เปิดการติดตามอัตโนมัติแล้ว"
+    },
+    {
+      "code": "source.worldpop",
+      "status": "blocked",
+      "label_th": "WorldPop",
+      "detail_th": "ยังไม่มีเวอร์ชันจริงที่ผ่าน validation และเผยแพร่พร้อมรายงาน"
+    },
+    {
+      "code": "monitoring.osm",
+      "status": "ready",
+      "label_th": "การติดตามอัตโนมัติ: OpenStreetMap",
+      "detail_th": "เปิดการติดตามอัตโนมัติแล้ว"
+    },
+    {
+      "code": "source.osm",
+      "status": "blocked",
+      "label_th": "OpenStreetMap",
+      "detail_th": "ยังไม่มีเวอร์ชันจริงที่ผ่าน validation และเผยแพร่พร้อมรายงาน"
+    },
+    {
+      "code": "coverage.boundaries",
+      "status": "blocked",
+      "label_th": "ขอบเขตพื้นที่ทางการ",
+      "detail_th": "มีขอบเขตที่ตรวจแล้ว 0 พื้นที่"
+    },
+    {
+      "code": "coverage.pilot",
+      "status": "blocked",
+      "label_th": "พื้นที่นำร่องที่มีข้อมูลครบ",
+      "detail_th": "มี 0 พื้นที่ที่อุณหภูมิ NDVI พืชพรรณ สิ่งปลูกสร้าง และประชากรอ้างอิงเวอร์ชันปัจจุบันร่วมกัน"
+    },
+    {
+      "code": "population.reference_year",
+      "status": "blocked",
+      "label_th": "ปีอ้างอิงประชากร",
+      "detail_th": "ต้องมี population estimates และปีอ้างอิงจริง"
+    },
+    {
+      "code": "map.raster_metadata",
+      "status": "blocked",
+      "label_th": "ที่มาของ raster layers",
+      "detail_th": "พบ metadata WGS84 สำหรับ 0 เวอร์ชัน; ยังต้องตรวจภาพ tiles กับพื้นที่จริง"
+    },
+    {
+      "code": "priority.current_inputs",
+      "status": "blocked",
+      "label_th": "คะแนนอ้างอิงข้อมูลปัจจุบัน",
+      "detail_th": "ยังไม่มีคะแนนที่ตรวจย้อนกลับไปยังข้อมูลนำร่องชุดปัจจุบันได้"
+    },
+    {
+      "code": "investment.evidence",
+      "status": "blocked",
+      "label_th": "โครงการพร้อมหลักฐาน",
+      "detail_th": "มี 0 โครงการในพื้นที่นำร่องที่มีหลักฐานต้นทุนและความเหมาะสมที่ผู้ดูแลบันทึกแล้ว"
+    }
+  ],
+  "external_verification_required_th": [
+    "ตรวจ SSO ด้วยบัญชีผู้ดูแลจริง รวมการปฏิเสธบัญชีที่ไม่มีสิทธิ์",
+    "ตรวจ DNS, HTTPS, ภาพ raster และขอบเขตพื้นที่บนเซิร์ฟเวอร์จริง",
+    "ตรวจใบอนุญาตแผนที่และข้อมูลตามรูปแบบการใช้งานของโครงการ",
+    "ซ้อมกู้คืนจากปลายทางสำรองจริง ทดสอบ alert delivery และโหลดที่คาดการณ์",
+    "ทบทวนหลักฐานต้นทุน การสำรวจพื้นที่ และข้อจำกัดทางวิทยาศาสตร์โดยผู้รับผิดชอบ"
+  ],
+  "limitations_th": "ผลตรวจอัตโนมัติไม่แทนการทดสอบ SSO จริง การตรวจภาพดาวเทียม สิทธิ์ข้อมูล และการซ้อมระบบปฏิบัติการบนเซิร์ฟเวอร์จริง"
+}

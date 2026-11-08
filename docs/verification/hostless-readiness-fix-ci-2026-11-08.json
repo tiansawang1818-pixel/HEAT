@@ -1,0 +1,23 @@
+{
+  "checked_at": "2026-11-08T14:09:05.632682+00:00",
+  "scope": "isolated_github_ci_combined_runtime",
+  "functional_code_sha": "f45573d2fe8977f32061635ca3cd7198215ad109",
+  "cpu_limit": 0.3,
+  "memory_limit_bytes": 805306368,
+  "provider_assigned_web_port": 8000,
+  "peak_sampled_memory_bytes": 483352576,
+  "sample_count": 10,
+  "process_count": 5,
+  "read_only_root_filesystem": true,
+  "swap_enabled": false,
+  "pages_api_admin_gates_sse_verified": true,
+  "child_failure_and_restart_verified": true,
+  "concurrent_startup_reads_with_sse": 8,
+  "liveness_with_database_paused_verified": true,
+  "max_liveness_probe_seconds": 0.09371370499997056,
+  "external_source_checks": 0,
+  "provider_resource_admission_verified": false,
+  "real_ingestion_optimizer_peak_verified": false,
+  "complete_hosting_fit_verified": false,
+  "github_actions_url": "https://github.com/tiansawang1818-pixel/HEAT/actions/runs/42487644459"
+}

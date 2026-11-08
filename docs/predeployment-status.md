@@ -1,18 +1,23 @@
-# สถานะก่อนเปิด HEAT//SHIFT
+# สถานะ HEAT//SHIFT ก่อน production release
 
-เวลาของการตรวจแต่ละชุดบันทึกในรายงาน (UTC); กำหนด recovery ของ Hostless ด้านล่างใช้ Asia/Bangkok
+ตรวจวันที่ 8 พฤศจิกายน 2026 (Asia/Bangkok); timestamps ใน JSON ใช้ UTC
 
-**ยังไม่ได้ deploy และยังไม่มีเครื่องปลายทางที่ผ่านเงื่อนไขทั้งหมดของผู้ใช้** ไม่มีการเปิดบริการเสียเงิน เพิ่มบัตร สมัคร trial หรือใช้เครื่องผู้ใช้เป็น app server/worker/scheduler งานรอบนี้แก้ source และส่งการทดสอบไป GitHub ภายในเพดานบัญชีที่มีอยู่
+**แก้ Hostless rollout สำเร็จแล้ว** เว็บนำร่องที่ https://heatshift.hostless.app/ ใช้รุ่นใหม่ `f45573d2fe8977f32061635ca3cd7198215ad109` จริง หน้า Deployments แสดง `Deployed LIVE` สำหรับ deployment `6af080a1cb0b276633784aaf` ตรวจ HTTPS และคำขอพร้อมกัน 8 รายการขณะ SSE เปิดแล้วตอบ 200 ครบ แต่ยังไม่ผ่าน production release ด้านข้อมูล/SSO
 
-ความคืบหน้า hosting: **Aiven PostgreSQL Free ทำงานและผ่าน SQL/PostGIS จริงแล้ว** หลังผู้ใช้ยืนยันข้อตกลง/สิทธิ์ GitHub สร้าง service `heat-postgis-check` แผน Free-1-1gb (PostgreSQL 18.6 / PostGIS 3.6.4) ตรวจ TLS/hostname, geometry/index/rollback และ migrations ครบ 21 application tables ใน logical database ทดสอบแยกผ่าน ไม่มีแถวข้อมูลแอป ไม่มีการผูกบัตร/เลือกแผนเสียเงิน แม้บัญชีจะมีแบนเนอร์ trial credits อัตโนมัติ ดู [ผลตรวจจริง](aiven-readiness.md) ยังไม่มี HEAT app/worker production หรือ repo integration
+สาเหตุที่แก้: [Hostless ให้เวลาแต่ละ health probe 1 วินาที](https://docs.hostless.cloud/app/healthcheck) เดิมใช้ `/api/health` ที่รอ Aiven/connection pool เปลี่ยน platform probe เป็น `/api/health/live` ที่ไม่ checkout DB และตรวจว่า provider รับค่าจริงแล้ว คง `/api/health`, `/api/health/ready`, system/data readiness และ admin authentication ไว้ ไม่เพิ่ม CPU/RAM/replica/volume หรือผูกบัตร รอบแก้รุ่นนี้ไม่สั่ง Pause/Restart เว็บด้วยมือ
 
-Hostless บัญชีเดิมมีสิทธิ์รวม 0.5 vCPU / 1024 MiB RAM / 512 MiB storage Redis ผ่าน TLS, DB 0/1/2 และ graceful restart แต่ abrupt-crash recovery/appendfsync ยังไม่ยืนยัน PostgreSQL ของ Hostless ที่ผู้ใช้อนุญาตให้ลบยังคง recovery window จนถึง **15 พฤศจิกายน 2026 เวลา 00:29:23 น. กรุงเทพฯ** ไม่สร้าง PostgreSQL 16 เพิ่มหรือข้าม retained-storage quota การตรวจ Aiven ทำได้โดยไม่รอวันดังกล่าว ผู้ใช้เลือกยังไม่ส่งข้อความหา support ตามเดิม
+เพิ่ม startup logs แยก configuration/migrations/processes โดยไม่พิมพ์ URI, secrets หรือ exception message Log จริงของรุ่นใหม่แสดง migrations สำเร็จประมาณ 9 วินาที เริ่มครบ 5 โปรเซส และ API ฟังพอร์ต 18000 ก่อน provider เปลี่ยน traffic
 
-ตรวจทรัพยากรที่ทำได้เองเพิ่มแล้ว: [CI baseline ของทั้ง 7 services](capacity-validation.md#ผลที่วัดแล้ว) วัด RAM รวมพร้อมกันสูงสุด 664.84 MiB / anonymous 499.13 MiB ในโหลดอ่านข้อมูลขนาดเล็ก ไม่มี OOM kill หรือ external source check ผลคือ `production_fit_not_established` ยังไม่ใช่ peak ingestion/optimizer หรือ provider resource admission
+ประวัติก่อนแก้: รุ่น `daad58e`, `96ef703`, `eefe886` เคยไม่ผ่าน readiness และให้บริการด้วย `5f24c4a` ช่วงนั้นผู้ใช้อนุญาต Pause/Resume เฉพาะแอปไม่เกิน 10 นาที ตรวจ API กลับ 200 เวลา 20:46 น. ภายในประมาณ 6 นาที ไม่หยุด Aiven/Redis รายงานเดิมเก็บเป็นหลักฐานประวัติ ไม่ใช้เป็นสถานะปัจจุบัน
 
-ตรวจข้อเสนอสมัครบัญชีใหม่เมื่อ 8 พฤศจิกายน 2026 แล้ว: [Hostless Terms of Service](https://hostless.cloud/terms) จัดการสร้างหลายบัญชีเพื่อรับทรัพยากรฟรีเพิ่มไว้ใน `Uses Outside Fair Use` จึงไม่สร้าง Hostless ซ้ำเพื่อข้าม retained-storage quota ต่อมาผู้ใช้เลือก Aiven แทนและยืนยันการสมัครแล้ว โดยไม่ติดต่อ support แทนผู้ใช้ ดู [ผลตรวจและทางเลือก](no-card-hosting-research.md#การทดลองสร้างใหม่และข้อจำกัด-retention)
+## สิ่งที่ยืนยันบน cloud จริง
 
-ใช้แนวทาง [Aiven PostgreSQL Free + Hostless runtime/Redis เดิม](split-free-hosting.md) ตรวจ project CA/20 connections/PostGIS/migrations จริงแล้ว เตรียม bounded pools และแก้ SSE ไม่ยึด connection ระหว่างรอ ต้องตรวจ admission/load/crash recovery ของระบบที่แยก provider ก่อนเปิดจริง ยังไม่มีทางใดผ่าน hosting gate ครบแล้ว
+- Review quote ของแอป $0.00, CPU 0.3 / RAM 768 MiB / replica 1 / ไม่มี volume รวม Redis 0.2 / 256 เท่ากับ entitlement CPU 0.5 / RAM 1024 ไม่มี headroom สำหรับเพิ่ม replica โดยอาศัย free pool เดิม ไม่รับประกันเงื่อนไขราคาในอนาคต
+- HTTPS ใช้ public CA; API health และ runtime endpoint ตอบจริง ระบบรายงานครบ 5 โปรเซส CPU limit 0.3 / memory limit 805,306,368 bytes; snapshots ระหว่างการตรวจจริงเวลา 21:10 ใช้ RAM สูงสุดที่สุ่มวัด 526,761,984 bytes และ OOM kill 0 ไม่ใช่ peak ingestion/optimizer
+- Aiven Free service `heat-postgis-check`: PostgreSQL 18.6 / PostGIS 3.6.4; logical database แอป `heatshift`, role `heatshift_runtime` จำกัด connection 10, ไม่มี superuser/create database/create role/replication และไม่มีสิทธิ์แก้ migrations ใช้ TLS verify-full และ provider CA
+- scheduler เรียก Open-Meteo จริงอัตโนมัติและเผยแพร่เวอร์ชันพร้อม validation report แล้ว บริบทอากาศเป็น model estimate/forecast ไม่ใช่ satellite LST
+- BMA national catalog ตอบ 403 และยังมีขอบเขตที่เผยแพร่ 0 เขต ข้อมูลดาวเทียม/ประชากร/priority/โครงการลงทุนยังไม่พร้อม ไม่สร้างข้อมูลมาทดแทน
+- ต้นทาง BMA CKAN ที่ data.bangkok.go.th ตรวจแบบอ่านอย่างเดียวได้ HTTP 200 สำหรับ dataset/resource เดียวกัน ต้นทางระบุ format `shapfile` และไฟล์ `.zip` วันที่แก้ไขจริง 2021-03-09 โค้ดรองรับพร้อม validation ของ ZIP/CRS/50 เขต แต่ยังไม่ได้ยืนยัน publication บน Hostless
 
 ## งานที่ทำและ push แล้ว
 
@@ -31,31 +36,31 @@ Hostless บัญชีเดิมมีสิทธิ์รวม 0.5 vCPU /
 - เตรียม PostGIS capability probe สำหรับ database ใหม่ `heat-pg16-check`: บังคับ TLS/ชื่อปลายทาง ปฏิเสธตารางแอปที่มีอยู่ แยก flag เปิด extension ถาวรอย่างชัดเจนจาก transaction ของ geometry/index ที่บังคับ rollback ตรวจ CRS, GeoJSON, GiST plan และ spatial query โดยไม่สร้าง observation หรือ publication ผ่านการรันซ้ำ/ล้มเหลวกลางทางใน isolated PostGIS จริงทั้งสองสถาปัตยกรรมแล้ว [วิธีใช้](managed-hosting-checks.md#postgis-แบบ-rollback-only-ในฐานข้อมูลใหม่)
 - เพิ่ม provider CA สำหรับ Aiven, จำกัด connection pool ต่อ process และคืน connection ของ SSE ก่อนส่ง frame/รอ ตรวจด้วย single-connection pool ว่า publisher ยังเขียน publication ได้ขณะ map client เชื่อมอยู่ ใช้ probe กับ fresh `heat-postgis-check` บน Aiven จริงผ่านแล้ว
 
-โค้ดที่ตรวจล่าสุด: `77dd718553156e6e954e52082a3f1a7d1a0a14fc` รวม historical/decision-integrity, managed-hosting/TLS, capacity, provider CA, bounded pools และ SSE connection release เอกสารหรือรายงานที่ commit ต่อจากนี้ไม่เปลี่ยน functional code ที่ CI ตรวจ
+## ผลตรวจโค้ดล่าสุด
 
-## ผลตรวจ
+Source `f45573d2fe8977f32061635ca3cd7198215ad109` ผ่าน [GitHub Actions 42487644459](https://github.com/tiansawang1818-pixel/HEAT/actions/runs/42487644459) ครบ 5 jobs:
 
-[GitHub Actions run 42403035779](https://github.com/tiansawang1818-pixel/HEAT/actions/runs/42403035779) ผ่านครบทั้ง 5 งาน ตรวจ job conclusions และ API/Web/stack/ARM test summaries จาก logs แล้ว:
+- API 241 tests และ dependency audit
+- Web 38 tests, TypeScript และ production build
+- PostGIS/Redis/Celery/Beat/SSE integration 7 tests บน amd64 และ ARM จริง พร้อม isolated backup/restore
+- Release containers: HTTPS/admin gates/cookies/SSE, bounded reads, encrypted backup download recovery และ alert delivery
+- Combined runtime ภายใต้ CPU 0.3 / RAM 768 MiB / read-only root / no swap ใช้พอร์ตเว็บ 8000 ตาม Hostless ตรวจคำขอเริ่มต้นพร้อมกัน 8 รายการขณะ SSE เปิด และ kill/restart worker จริง ผ่านทั้ง 5 โปรเซส RAM สูงสุดใน 10 samples 483,352,576 bytes เพิ่มการ pause PostgreSQL ใน CI แล้ว probe ตอบภายใน 0.094 วินาทีสูงสุดจาก 3 คำขอ และตรวจ DB อีกครั้งหลัง unpause ดู [รายงาน CI](verification/hostless-readiness-fix-ci-2026-11-08.json)
 
-| งาน | หลักฐาน |
-|---|---|
-| API | 215 unit/API tests ผ่าน รวม provider CA, pool exhaustion และ SSE connection release; dependency audit ผ่าน |
-| Web | 38 tests ผ่าน รวม Redis session integration, TypeScript ผ่าน, Next.js production build ผ่าน |
-| Stack amd64 | 7 integration tests ผ่าน: เพิ่ม explicit PostGIS setup, geometry/index rollback เมื่อสำเร็จ/ล้มเหลว และไม่เปิด extension โดยปริยาย ร่วมกับ PostGIS/Redis/Celery/Beat/SSE และ historical cursor; ซ้อม backup/restore เทียบแถว/checksum ครบ 22 application tables |
-| Native ARM | สร้าง PostGIS/API/Caddy แบบ arm64 และผ่าน integration 7 tests เดียวกันบน ARM จริง |
-| Release containers | หน้าเว็บ, admin gates, HTTPS/certificate verification, secure cookies, SSE ผ่าน Caddy/Next, config isolation, bounded latency, encrypted backup download recovery และ test alert ผ่าน เพิ่ม full-runtime baseline ครบ 10 รอบ พร้อมตรวจ external source checks เป็นศูนย์ |
+แก้ pool wait ของ SSE ให้ทำงานนอก event loop และ batch source status จาก 3 reads ต่อแหล่งเป็นรวมไม่เกิน 4 queries ต่อรายการแหล่งข้อมูล ทดสอบการคืน connection ขณะ pool เต็มทั้งตอน connect/poll และคง observation/check timestamps แยกกัน ตรวจ ARM readiness ด้วย TCP เพื่อไม่รับ temporary initdb server เป็นฐานข้อมูลพร้อมใช้งาน
 
-Release audit ใน CI **ตั้งใจยังติด data-readiness blocker** เพราะไม่มีข้อมูลและ credentials ของ provider จริง การผ่านชุดตรวจระบบไม่ใช่หลักฐานว่าข้อมูล/ราคาโครงการ/forecast พร้อมตัดสินใจแล้ว ชุดทดสอบใช้ synthetic fixtures ในฐานข้อมูลแยกและไม่เรียกบัญชีดาวเทียมจริง
+[Release audit ผ่าน HTTPS จริง](verification/hostless-readiness-fixed-release-audit-2026-11-08.json) ยังคง blocked ตามจริง: API ready แต่ configuration ขาด OIDC และ GEE_PROJECT; data/SSO ยังไม่ครบ ไม่ลดเกณฑ์เพื่อเปิด release
 
-## สิ่งที่ยังต้องมีจากภายนอกก่อนเปิดจริง
+## สิ่งที่ยังเหลือ
 
-1. **ทรัพยากรปลายทาง:** เครื่อง/สิทธิ์ใช้ฟรีที่รองรับ PostGIS, Redis และงานต่อเนื่องจริง โดยไม่ใช้บัตรหรือคิดเงินเกินโควตา ยังไม่มีที่ยืนยันครบเงื่อนไข ไม่รับรอง 24/7 จากบริการที่พักตัวหรือ scheduled CI
-2. **สิทธิ์ข้อมูลและตัวตน:** Google/Earth Engine project ที่ผ่านการยืนยันการใช้งาน/โควตาและสิทธิ์ credentials พร้อม SSO identity/role ของผู้ดูแลจริง ห้ามใส่ secret ในแชตหรือ Git
-3. **ข้อมูลและหลักฐานการลงทุน:** ภาพดาวเทียมที่ผ่าน calibration/coverage validation และประวัติที่เพียงพอ; OSM/provider checks ที่สำเร็จ; ราคาต่อจุดที่มีหลักฐานและผู้รับผิดชอบยืนยัน site feasibility, land control และ design/accessibility ไม่มีการอนุมัติแทนเจ้าของงาน
-4. **ตรวจบนเครื่องและข้อมูลจริง:** DNS/TLS, SSO, automatic schedules, provider quotas, raster/vector alignment, browser UX, load/capacity, alert delivery และ off-host backup/recovery จากปลายทางจริง จากนั้นรัน release audit อีกครั้ง
+1. ด่าน Hostless rollout ผ่านแล้ว ดู [ผลตรวจปลายทางจริง](verification/hostless-readiness-fixed-live-2026-11-08.json); ยังต้องตรวจภาระงาน ingestion/optimizer จริงซึ่งต่างจาก bounded reads ที่ผ่านแล้ว
+2. ยืนยัน BMA publication 50 เขตจาก scheduler แล้วตรวจ OSM/WorldPop และ geographic alignment; ห้ามใช้วันที่ ingest แทนวันที่ resource
+3. สิทธิ์ Earth Engine project/credentials ที่ได้รับอนุมัติ และ OIDC identity/roles ของผู้ดูแลจริง ยังไม่มี ห้ามใส่ placeholder หรือส่ง secret ในแชต/Git
+4. ภาพ LST/NDVI/land cover ที่ผ่าน validation, ประวัติหลายฤดู และประชากรพร้อมปีอ้างอิง ก่อนคำนวณ priority/แนวโน้ม/สถานการณ์อนาคต
+5. หลักฐานราคาต่อโครงการและการยืนยัน site feasibility/สิทธิ์พื้นที่โดยผู้รับผิดชอบ ก่อนแผนลงทุนใช้งานจริง
+6. ทดสอบโหลด ingestion/optimizer จริง, Redis abrupt-crash recovery/ความคงทนคิว, off-host backup/restore และ alert delivery จากปลายทางจริง ชุดตรวจ CI ไม่แทนสิ่งเหล่านี้
 
-ข้อมูล WorldPop/ขอบเขตที่เคยตรวจแบบ read-only ไม่ทดแทนข้อมูล LST/NDVI ที่ยังขาด และไม่ทำให้การพยากรณ์ห้าปีผ่านเกณฑ์โดยอัตโนมัติ ไม่ฝึกโมเดลหรือแสดง prediction เมื่อ historical/temporal/spatial validation ยังไม่ผ่าน งบ optimizer เป็นเงินลงทุนเริ่มต้น; การบำรุงรักษาและ lifecycle assumptions ต้องมีหลักฐานแยก
+ผู้ใช้ยังไม่อนุญาตส่งข้อความหา support ไม่มีการติดต่อแทนผู้ใช้ PostgreSQL เดิมบน Hostless ยังคง recovery window ถึง 15 พฤศจิกายน 2026 เวลา 00:29:23 น. ไม่สร้างบัญชีซ้ำหรือข้าม storage quota
 
-ในช่วงที่ยังไม่มีทรัพยากรข้างต้น ไม่มีงาน background ของ production รันอยู่ การเปิดแชตหรือปิดฝาเครื่องไม่ได้ทำให้ระบบกลายเป็นบริการ cloud ที่ทำงานต่อเนื่อง
+Aiven service เป็น Free จริงแม้มี trial banner ของบัญชี; Free service ไม่ใช้ trial credits แต่มี inactivity policy และไม่มี SLA จึงไม่รับประกัน uptime 24/7 ดู [Aiven readiness](aiven-readiness.md), [combined runtime](hostless-runtime.md), [ข้อจำกัดวิทยาศาสตร์](scientific-methodology.md) และ [deployment](server-deployment.md)
 
-เอกสารที่เกี่ยวข้อง: [hosting constraints](hosting-constraints.md), [historical ingestion](historical-ingestion.md), [server deployment](server-deployment.md), [container architectures](container-architectures.md), [science/limitations](scientific-methodology.md), [cost evidence](cost-evidence-sources.md), [demo script](demo-script-th.md)
+รายงานปัจจุบันรวมใน main แล้ว รายงานก่อนแก้ยังเก็บแยกตาม timestamps เพื่อไม่เปลี่ยนประวัติให้ดูเหมือนผ่านตั้งแต่แรก

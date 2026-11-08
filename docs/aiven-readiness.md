@@ -1,5 +1,8 @@
 # ผลตรวจ Aiven Free สำหรับ HEAT//SHIFT
 
+> อัปเดต 8 พฤศจิกายน 2026: มีเว็บนำร่องบน Hostless รุ่น `f45573d` ผ่าน health check และ Open-Meteo publication จริงแล้ว แต่ production readiness ด้านข้อมูลดาวเทียม/SSO ยังไม่ครบ ดู [สถานะปัจจุบัน](predeployment-status.md) รายละเอียดด้านล่างเป็นผลการตรวจช่วงเตรียมฐานข้อมูลก่อนเปิดแอป
+
+
 ตรวจจริงวันที่ 8 พฤศจิกายน 2026 (Asia/Bangkok) เวลาของ SQL checks ใน [รายงานที่ตัดข้อมูลลับออก](verification/aiven-postgis-2026-11-08.json) เป็น UTC ไม่มี URI, รหัสผ่าน, account IDs, email verification links หรือ project CA ใน Git
 
 ## สิ่งที่ทำแล้ว
