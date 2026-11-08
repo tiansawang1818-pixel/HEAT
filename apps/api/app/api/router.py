@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, StreamingResponse
+from starlette.concurrency import run_in_threadpool
 from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -157,16 +158,32 @@ def _viewport_rows(
     return rows
 
 
-def _source_status(db: Session, source: DataSource) -> Dict[str, Any]:
-    latest_any = db.scalar(select(DatasetVersion).where(DatasetVersion.source_id == source.id).order_by(desc(DatasetVersion.discovered_at)).limit(1))
-    latest = db.scalar(
-        select(DatasetVersion)
-        .where(DatasetVersion.source_id == source.id, DatasetVersion.status == "published")
-        .order_by(desc(DatasetVersion.observed_at))
-        .limit(1)
-    )
-    check = db.scalar(select(SourceCheck).where(SourceCheck.source_id == source.id).order_by(desc(SourceCheck.checked_at)).limit(1))
+def _latest_source_rows(db: Session, model: Any, source_ids: List[str], order_column: Any, *filters: Any) -> Dict[str, Any]:
+    if not source_ids:
+        return {}
+    ranked = select(model.id, func.row_number().over(
+        partition_by=model.source_id,
+        order_by=(order_column.desc().nulls_last(), model.id.desc()),
+    ).label("source_rank")).where(model.source_id.in_(source_ids), *filters).subquery()
+    rows = db.scalars(select(model).join(ranked, model.id == ranked.c.id).where(ranked.c.source_rank == 1)).all()
+    return {row.source_id: row for row in rows}
+
+
+def _source_statuses(db: Session, sources: List[DataSource]) -> List[Dict[str, Any]]:
+    source_ids = [source.id for source in sources]
+    latest_any = _latest_source_rows(db, DatasetVersion, source_ids, DatasetVersion.discovered_at)
+    published = _latest_source_rows(db, DatasetVersion, source_ids, DatasetVersion.observed_at, DatasetVersion.status == "published")
+    checks = _latest_source_rows(db, SourceCheck, source_ids, SourceCheck.checked_at)
     now = datetime.now(timezone.utc)
+    return [_format_source_status(source, latest_any.get(source.id), published.get(source.id), checks.get(source.id), now) for source in sources]
+
+
+def _source_status(db: Session, source: DataSource) -> Dict[str, Any]:
+    return _source_statuses(db, [source])[0]
+
+
+def _format_source_status(source: DataSource, latest_any: Optional[DatasetVersion], latest: Optional[DatasetVersion],
+                          check: Optional[SourceCheck], now: datetime) -> Dict[str, Any]:
     reason = "ยังไม่มีข้อมูลที่ผ่านการตรวจสอบ"
     status = "unavailable"
     if latest_any and latest_any.status in {"staged", "validating", "processing", "publishing"}:
@@ -255,13 +272,13 @@ def metrics(db: Session = Depends(get_db)) -> Response:
 @router.get("/datasets")
 def datasets(db: Session = Depends(get_db)) -> Dict[str, Any]:
     sources = db.scalars(select(DataSource).where(DataSource.source_type != "test_fixture").order_by(DataSource.name)).all()
-    return {"items": [_source_status(db, source) for source in sources], "count": len(sources)}
+    return {"items": _source_statuses(db, sources), "count": len(sources)}
 
 
 @router.get("/datasets/status")
 def dataset_status(db: Session = Depends(get_db)) -> Dict[str, Any]:
     sources = db.scalars(select(DataSource).where(DataSource.source_type != "test_fixture").order_by(DataSource.name)).all()
-    items = [_source_status(db, source) for source in sources]
+    items = _source_statuses(db, sources)
     return {
         "items": items,
         "summary": {status: sum(1 for item in items if item["status"] == status) for status in ["up_to_date", "updating", "stale", "unavailable", "error"]},
@@ -1707,7 +1724,7 @@ def assistant_query(request: AssistantQuery, db: Session = Depends(get_db)) -> D
                     }
                 )
     elif "ล่าสุด" in question or "ข้อมูลใหม่" in question or "ดาวเทียม" in question:
-        sources = [_source_status(db, source) for source in db.scalars(select(DataSource)).all()]
+        sources = _source_statuses(db, list(db.scalars(select(DataSource)).all()))
         observed = [item for item in sources if item["last_source_observation"]]
         if not observed:
             answer = "ขณะนี้ยังไม่มีข้อมูลที่ผ่านการตรวจสอบและเผยแพร่ จึงไม่ควรระบุวันที่สังเกตการณ์"
@@ -1848,10 +1865,9 @@ def ingestion_status(job_id: Optional[str] = None, db: Session = Depends(get_db)
         select(DataSource).where(DataSource.source_type != "test_fixture").order_by(DataSource.name)
     ).all()
     source_checks = []
+    latest_checks = _latest_source_rows(db, SourceCheck, [source.id for source in sources], SourceCheck.checked_at)
     for source in sources:
-        check = db.scalar(
-            select(SourceCheck).where(SourceCheck.source_id == source.id).order_by(desc(SourceCheck.checked_at)).limit(1)
-        )
+        check = latest_checks.get(source.id)
         source_checks.append(
             {
                 "source_id": source.id,
@@ -1997,20 +2013,21 @@ def _events_after_cursor(db: Session, cursor: str, limit: int = 50) -> Optional[
 
 @router.get("/events/stream")
 async def events_stream(request: Request, after: Optional[str] = None, db: Session = Depends(get_db)) -> StreamingResponse:
-    async def generate():
-        cursor = after or request.headers.get("Last-Event-ID")
-        if cursor and db.get(PipelineEvent, cursor) is None:
-            cursor = None
-        if cursor is None:
-            latest = db.scalar(
-                select(PipelineEvent).order_by(desc(PipelineEvent.created_at), desc(PipelineEvent.id)).limit(1)
-            )
-            cursor = latest.id if latest else None
-        # SSE connections can remain open for hours. Return the database
-        # connection before yielding or waiting, especially on small pools.
-        db.rollback()
-        yield "retry: 5000\n: connected\n\n"
-        while not await request.is_disconnected():
+    def initial_cursor(cursor):
+        try:
+            if cursor and db.get(PipelineEvent, cursor) is None:
+                cursor = None
+            if cursor is None:
+                latest = db.scalar(
+                    select(PipelineEvent).order_by(desc(PipelineEvent.created_at), desc(PipelineEvent.id)).limit(1)
+                )
+                cursor = latest.id if latest else None
+            return cursor
+        finally:
+            db.rollback()
+
+    def read_frames(cursor):
+        try:
             if cursor:
                 rows = _events_after_cursor(db, cursor)
                 if rows is None:
@@ -2037,9 +2054,20 @@ async def events_stream(request: Request, after: Optional[str] = None, db: Sessi
                     }
                     wire_event = "data-update" if event.event_type == "layer.published" else event.event_type
                     frames.append("id: %s\nevent: %s\ndata: %s\n\n" % (event.id, wire_event, json.dumps(payload, ensure_ascii=False)))
-            # Materialize frames before rollback expires ORM objects. No
-            # transaction is held while clients receive frames or sleep.
+            return cursor, frames
+        finally:
+            # Materialize frames before returning the connection. A small
+            # managed pool must remain available while clients receive data.
             db.rollback()
+
+    async def generate():
+        # A synchronous pool checkout can wait for another request's cleanup.
+        # Keep that wait off the event loop so the other request can finish.
+        # Calls are awaited sequentially; this Session is never used concurrently.
+        cursor = await run_in_threadpool(initial_cursor, after or request.headers.get("Last-Event-ID"))
+        yield "retry: 5000\n: connected\n\n"
+        while not await request.is_disconnected():
+            cursor, frames = await run_in_threadpool(read_frames, cursor)
             for frame in frames or [": heartbeat\n\n"]:
                 yield frame
             import asyncio

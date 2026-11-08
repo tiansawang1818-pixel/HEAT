@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check the combined image under its proposed cap, in disposable GitHub CI only."""
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
@@ -75,6 +76,16 @@ def main():
         with urlopen(base + "/api/events/stream", timeout=10) as response:
             assert response.readline().strip() == b"retry: 5000"
             assert response.readline().strip() == b": connected"
+            startup_paths = ["/api/health", "/api/system/runtime", "/api/datasets/status", "/api/map/layers",
+                             "/api/areas", "/api/priority/rankings", "/api/ingestion/status", "/api/health"]
+
+            def read_startup(path):
+                with urlopen(base + path, timeout=20) as startup_response:
+                    assert startup_response.status == 200
+                    startup_response.read()
+
+            with ThreadPoolExecutor(max_workers=len(startup_paths)) as clients:
+                list(clients.map(read_startup, startup_paths))
         samples = []
         for _ in range(10):
             with urlopen(base + "/api/map/layers", timeout=15) as response:
@@ -105,6 +116,7 @@ def main():
             "sample_count": len(samples), "process_count": 5,
             "read_only_root_filesystem": True, "swap_enabled": False,
             "pages_api_admin_gates_sse_verified": True, "child_failure_and_restart_verified": True,
+            "concurrent_startup_reads_with_sse": len(startup_paths),
             "external_source_checks": 0, "provider_resource_admission_verified": False,
             "real_ingestion_optimizer_peak_verified": False, "complete_hosting_fit_verified": False,
         }

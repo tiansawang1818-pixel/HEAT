@@ -28,10 +28,12 @@ Health check ของ platform ใช้ `/api/health` ซึ่งตรวจ
 
 `GET /api/system/runtime` รายงาน cgroup CPU/RAM limits, memory ปัจจุบัน, OOM counters และสถานะโปรเซส โดยไม่เผย PID, env หรือ secrets เป็นการสังเกต ณ เวลาตรวจ ไม่ใช่ peak load หรือการรับรองบิลทั้งบัญชี
 
+SSE ทำ synchronous database reads ผ่าน thread pool และคืน connection ก่อนส่ง frame เพื่อไม่ให้การรอ pool ขัดขวาง event loop/การปิดคำขออื่น Status APIs ใช้ window queries รวมแหล่งข้อมูล แทนการอ่าน 3 ครั้งต่อแหล่งข้อมูล ซึ่งลด round trips ระหว่าง Hostless กับ Aiven โดยไม่ cache วันที่สังเกตการณ์หรือข้าม validation
+
 ## ตรวจโดยไม่รันเซิร์ฟเวอร์ในเครื่องผู้ใช้
 
 Unit tests ตรวจ TLS/CA, configuration ที่ไม่ปลอดภัย, process exit/shutdown และการไม่รายงานตัวเลขศูนย์แทนข้อมูลที่อ่านไม่ได้ การทดสอบ process ใช้ Python subprocess สั้น ๆ ไม่เปิด web/API/worker ในเครื่อง
 
 `scripts/verify_hostless_runtime_ci.py` ปฏิเสธการรันนอก GitHub CI สร้าง image ใน CI ใช้ backends ชั่วคราวที่ปิด provider ทุกแหล่งแล้ว บังคับ CPU 0.3 / RAM 768 MiB / no swap / read-only root และ inject `PORT=8000` ตามพฤติกรรม Hostless จริง ตรวจหน้าเว็บ API admin gates SSE cgroup และ kill/restart โปรเซสจริง ตรวจ source checks เป็นศูนย์ก่อนจบ รายงาน artifact `heatshift-hostless-runtime-ci.json`
 
-การตรวจนี้ใช้ HTTP เฉพาะ loopback ใน CI และ private Compose backends ที่จำกัดด้วย CI guards ไม่ใช้แทน TLS/ใบรับรอง/latency ของ Aiven–Hostless จริง หลังเปิดจริงต้องตรวจ certificate, source schedules/publication, bounded workload และ usage/quote จาก provider อีกครั้ง รวมถึงคิวและ backup/recovery ก่อน production release
+การตรวจเพิ่มคำขอเริ่มต้นพร้อมกัน 8 รายการขณะที่ SSE เปิดอยู่ภายใต้ cap เดียวกัน ใช้ HTTP เฉพาะ loopback ใน CI และ private Compose backends ที่จำกัดด้วย CI guards ไม่ใช้แทน TLS/ใบรับรอง/latency ของ Aiven–Hostless จริง หลังเปิดจริงต้องตรวจ certificate, source schedules/publication, bounded workload และ usage/quote จาก provider อีกครั้ง รวมถึงคิวและ backup/recovery ก่อน production release

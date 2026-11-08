@@ -90,3 +90,49 @@ def test_connected_sse_client_does_not_starve_a_single_connection_pool(tmp_path)
         asyncio.run(scenario())
     finally:
         engine.dispose()
+
+
+@pytest.mark.parametrize("phase", ["connect", "poll"])
+def test_sse_waiting_for_pool_leaves_event_loop_free_to_release_other_request(tmp_path, phase):
+    import asyncio
+    from app.api.router import events_stream
+    from app.models.entities import PipelineEvent
+
+    engine = real_create_engine("sqlite+pysqlite:///" + str(tmp_path / "sse-contention.db"),
+                                pool_size=1, max_overflow=0, pool_timeout=0.3,
+                                connect_args={"check_same_thread": False})
+    PipelineEvent.__table__.create(engine)
+
+    class ConnectedRequest:
+        headers = {}
+
+        async def is_disconnected(self):
+            return False
+
+    async def scenario():
+        with Session(engine) as stream_db:
+            response = await events_stream(ConnectedRequest(), db=stream_db)
+            body = response.body_iterator
+            if phase == "poll":
+                assert "connected" in await body.__anext__()
+            holder = engine.connect()
+            released = asyncio.Event()
+
+            def release_other_request():
+                holder.close()
+                released.set()
+
+            scheduled = asyncio.get_running_loop().call_later(0.05, release_other_request)
+            try:
+                frame = await asyncio.wait_for(body.__anext__(), timeout=1)
+                assert released.is_set()
+                assert ("connected" if phase == "connect" else "heartbeat") in frame
+            finally:
+                scheduled.cancel()
+                holder.close()
+                await body.aclose()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        engine.dispose()
