@@ -1,0 +1,81 @@
+name: BMA source connectivity
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Probe official metadata and archive without publishing application data
+        run: |
+          python - <<'PY'
+          import hashlib, io, json, sys, urllib.request, zipfile
+          from datetime import datetime, timezone
+          from pathlib import Path
+          from urllib.parse import urlsplit
+
+          destination = Path('/tmp/heat-bma-source-probe')
+          destination.mkdir()
+          report = {'checked_at': datetime.now(timezone.utc).isoformat(),
+                    'scope': 'official_boundary_source_connectivity_only',
+                    'application_data_published': False,
+                    'geographic_validation_completed': False}
+          host = 'data.bangkok.go.th'
+          package_id = 'e537025b-1cf6-4c5b-8e46-c2e976f13283'
+          resource_id = 'd7be7e84-9d84-4595-bf8f-79b0bc01f1ae'
+
+          class OfficialRedirectsOnly(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, request, response, code, message, headers, target):
+                  parsed = urlsplit(target)
+                  if parsed.scheme != 'https' or parsed.hostname != host or parsed.username:
+                      raise ValueError('Unapproved source redirect')
+                  return super().redirect_request(request, response, code, message, headers, target)
+
+          opener = urllib.request.build_opener(OfficialRedirectsOnly())
+          def read(url, maximum):
+              request = urllib.request.Request(url, headers={'User-Agent': 'HEATSHIFT/1.0 noncommercial urban climate research'})
+              with opener.open(request, timeout=25) as response:
+                  data = response.read(maximum + 1)
+              if len(data) > maximum:
+                  raise ValueError('Source exceeds bounded download size')
+              return data
+
+          try:
+              catalog_url = 'https://' + host + '/api/3/action/package_show?id=' + package_id
+              catalog = json.loads(read(catalog_url, 1_000_000))
+              package = catalog['result']
+              if not catalog.get('success') or package.get('id') != package_id:
+                  raise ValueError('Unexpected official dataset')
+              resource = next(item for item in package['resources'] if item['id'] == resource_id)
+              parsed = urlsplit(resource['url'])
+              if parsed.scheme != 'https' or parsed.hostname != host or parsed.username or not parsed.path.lower().endswith('.zip'):
+                  raise ValueError('Unapproved archive URL')
+              archive_bytes = read(resource['url'], 10_000_000)
+              with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
+                  for suffix in ['.shp', '.shx', '.dbf', '.prj']:
+                      matches = [item for item in archive.infolist() if item.filename.lower().endswith(suffix)]
+                      if len(matches) != 1 or matches[0].file_size > 10_000_000:
+                          raise ValueError('Invalid shapefile archive members')
+              (destination / 'district.zip').write_bytes(archive_bytes)
+              (destination / 'catalog.json').write_text(json.dumps(catalog, ensure_ascii=False, indent=2))
+              report.update(status='reachable', catalog_url=catalog_url, dataset_id=package_id,
+                            resource_id=resource_id, source_modified_at=resource.get('last_modified'),
+                            source_url=resource['url'], license=package.get('license_title'),
+                            archive_bytes=len(archive_bytes), sha256=hashlib.sha256(archive_bytes).hexdigest())
+          except Exception as error:
+              report.update(status='unavailable', error_type=type(error).__name__)
+          (destination / 'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
+          print(json.dumps(report, ensure_ascii=False))
+          sys.exit(0 if report['status'] == 'reachable' else 1)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bma-source-probe
+          path: /tmp/heat-bma-source-probe/
+          retention-days: 7
