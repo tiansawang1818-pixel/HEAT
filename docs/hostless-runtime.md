@@ -24,7 +24,9 @@
 
 ตัวเริ่มระบบบังคับ production/OIDC, ปิด demo/fixture ingestion, ล้าง legacy admin keys และจำกัด pool 2 / overflow 0 / timeout 10 ต่อ process หาก OIDC ยังไม่ครบ admin operations ยังคงปฏิเสธ และ production/data readiness ยัง blocked ตามจริง ไม่แก้ readiness ให้ผ่านเพื่อเปิด container
 
-Health check ของ platform ใช้ `/api/health` ซึ่งตรวจ DB ผ่าน Next proxy ส่วน `/api/health/ready` และ release audit ยังคงเป็นเกณฑ์ข้อมูล/ระบบที่เข้มกว่า ห้ามใช้ platform Running แทนหลักฐานว่าข้อมูลจริงครบแล้ว
+Health check ของ platform ใช้ `/api/health/live` ผ่าน Next proxy ไป API หลัง startup สำเร็จ โดยไม่รอ DB เนื่องจาก [Hostless ให้เวลาแต่ละ probe 1 วินาที](https://docs.hostless.cloud/app/healthcheck) ส่วน `/api/health` ยังตรวจ DB, `/api/health/ready` ยังคืน 503 เมื่อ DB ใช้ไม่ได้ และ `/api/system/readiness`, data-readiness และ release audit ยังคงตรวจ configuration/ข้อมูล/SSO ห้ามใช้ platform Running แทนหลักฐานว่าข้อมูลจริงครบแล้ว
+
+ตัวเริ่มระบบบันทึก phase ของ configuration/migrations/processes พร้อมระยะเวลาของ migrations และชื่อชนิดข้อผิดพลาดเท่านั้น ไม่บันทึก exception message, URI หรือ secrets เพื่อแยกปัญหาก่อน API เริ่มฟังพอร์ตได้
 
 `GET /api/system/runtime` รายงาน cgroup CPU/RAM limits, memory ปัจจุบัน, OOM counters และสถานะโปรเซส โดยไม่เผย PID, env หรือ secrets เป็นการสังเกต ณ เวลาตรวจ ไม่ใช่ peak load หรือการรับรองบิลทั้งบัญชี
 

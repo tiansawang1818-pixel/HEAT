@@ -127,10 +127,17 @@ def main():
     stop = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.set())
+    phase = "configuration"
     try:
+        print(json.dumps({"event": "runtime.boot", "phase": phase}), flush=True)
         env = prepare_environment(os.environ, scratch)
         scratch.mkdir(mode=0o700, parents=True, exist_ok=True)
+        phase = "migrations"
+        migration_started = time.monotonic()
+        print(json.dumps({"event": "runtime.boot", "phase": phase}), flush=True)
         subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], cwd=root / "apps" / "api", env=env, check=True, timeout=120)
+        print(json.dumps({"event": "runtime.migrations_completed", "duration_ms": round((time.monotonic() - migration_started) * 1000)}), flush=True)
+        phase = "processes"
 
         def announce(children):
             state = {name: child.pid for name, child in children.items()}
@@ -138,9 +145,9 @@ def main():
             print(json.dumps({"event": "runtime.started", "components": list(state)}), flush=True)
 
         return supervise(runtime_commands(root), env, stop, on_started=announce)
-    except Exception:
+    except Exception as error:
         # Never print configuration, URI arguments, CA contents or exceptions.
-        print(json.dumps({"event": "runtime.startup_failed"}), flush=True)
+        print(json.dumps({"event": "runtime.startup_failed", "phase": phase, "error_type": type(error).__name__}), flush=True)
         return 1
 
 

@@ -64,6 +64,20 @@ def main():
         assert observed["cpu_limit_cores"] == 0.3
         assert observed["memory_limit_bytes"] == 768 * 1024 ** 2
         assert all(observed["components"].values())
+        # Hostless gives its liveness probe only one second. An unavailable
+        # database must not turn that probe into a dependency timeout.
+        probe_times = []
+        run(["docker", "pause", postgres])
+        try:
+            for _ in range(3):
+                started = time.monotonic()
+                with urlopen(base + "/api/health/live", timeout=1) as probe:
+                    assert probe.status == 200 and json.load(probe)["status"] == "ok"
+                probe_times.append(time.monotonic() - started)
+        finally:
+            run(["docker", "unpause", postgres])
+        with urlopen(base + "/api/health", timeout=10) as dependency_probe:
+            assert dependency_probe.status == 200
         for path in ("/", "/observatory", "/optimizer", "/api/map/layers", "/api/system/data-readiness"):
             with urlopen(base + path, timeout=20) as response:
                 assert response.status == 200
@@ -117,6 +131,8 @@ def main():
             "read_only_root_filesystem": True, "swap_enabled": False,
             "pages_api_admin_gates_sse_verified": True, "child_failure_and_restart_verified": True,
             "concurrent_startup_reads_with_sse": len(startup_paths),
+            "liveness_with_database_paused_verified": True,
+            "max_liveness_probe_seconds": max(probe_times),
             "external_source_checks": 0, "provider_resource_admission_verified": False,
             "real_ingestion_optimizer_peak_verified": False, "complete_hosting_fit_verified": False,
         }

@@ -16,5 +16,6 @@ scaling:
   max_replicas: 1
 health_check:
   type: http
-  http_path: /api/health
+  # Hostless probes time out after 1 second; dependency checks have their own endpoints.
+  http_path: /api/health/live
   interval_in_seconds: 30
