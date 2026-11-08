@@ -1,0 +1,20 @@
+# One supervised runtime shares this entire request. PostgreSQL is external.
+# Existing Redis: 0.2 vCPU / 256 MiB. Total CPU/RAM requests: 0.5 / 1024.
+build:
+  system: docker
+working_directory: /
+build_context_directory: /
+dockerfile_path: infra/docker/hostless.Dockerfile
+start_command: python /workspace/scripts/hostless_runtime.py
+scaling:
+  trigger: http_requests
+  min_cpu: 0.3
+  max_cpu: 0.3
+  min_memory: 768
+  max_memory: 768
+  min_replicas: 1
+  max_replicas: 1
+health_check:
+  type: http
+  http_path: /api/health
+  interval_in_seconds: 30

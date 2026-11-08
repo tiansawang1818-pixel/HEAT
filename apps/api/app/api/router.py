@@ -64,6 +64,7 @@ from app.services.geometry import to_geojson
 from app.services.tiles import earth_engine_tiles
 from app.services.observability import prometheus_metrics
 from app.services.readiness import production_readiness
+from app.services.runtime_status import runtime_status
 from app.services.forecast_workflow import ForecastInProgress, compute_forecast
 from app.services.data_readiness import published_data_readiness
 from app.services.locks import LockBackendUnavailable
@@ -2047,6 +2048,11 @@ async def events_stream(request: Request, after: Optional[str] = None, db: Sessi
 
     # Next.js and intermediate proxies must not gzip/coalesce small SSE frames.
     return StreamingResponse(generate(), media_type="text/event-stream", headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"})
+
+
+@router.get("/system/runtime")
+def system_runtime() -> Dict[str, Any]:
+    return runtime_status()
 
 
 @router.get("/system/refresh-schedule")
