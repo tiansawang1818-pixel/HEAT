@@ -1,13 +1,16 @@
 import io
 import zipfile
+from datetime import datetime, timezone
 
 import httpx
+import pytest
 import shapefile
 from pyproj import Transformer
 from sqlalchemy import func, select
 
 from app.models.entities import DatasetVersion, DistrictBoundary, GeographicArea
-from app.services.connectors.catalogs import BangkokBoundaryConnector
+from app.services.connectors.base import SourceAsset
+from app.services.connectors.catalogs import BANGKOK_EXTENT, BangkokBoundaryConnector
 from app.services.pipeline import run_monitor
 
 
@@ -66,7 +69,8 @@ def _demo_areas(db):
     db.commit()
 
 
-def test_official_boundary_ingestion_replaces_demo_geometry_and_versions_history(db, monkeypatch):
+@pytest.mark.parametrize("resource_format", ["ZIP", "shapfile"])
+def test_official_boundary_ingestion_replaces_demo_geometry_and_versions_history(db, monkeypatch, resource_format):
     _demo_areas(db)
     archive = _boundary_zip()
     state = {"modified": "2021-03-09T12:57:47+00:00", "downloads": 0}
@@ -87,7 +91,7 @@ def test_official_boundary_ingestion_replaces_demo_geometry_and_versions_history
                             {
                                 "id": "d7be7e84-9d84-4595-bf8f-79b0bc01f1ae",
                                 "name": "50 เขตของกรุงเทพมหานคร",
-                                "format": "ZIP",
+                                "format": resource_format,
                                 "last_modified": state["modified"],
                                 "url": "https://data.bangkok.go.th/download/district.zip",
                             }
@@ -125,3 +129,14 @@ def test_official_boundary_ingestion_replaces_demo_geometry_and_versions_history
     assert len(active_boundaries) == 50
     assert len(historic_boundaries) == 50
     assert state["downloads"] == 2
+
+
+@pytest.mark.parametrize("metadata", [
+    {"resource_format": "CSV", "resource_url": "https://data.bangkok.go.th/download/district.zip"},
+    {"resource_format": "shapfile", "resource_url": "https://data.bangkok.go.th/download/district.csv"},
+    {"resource_format": "shapfile", "resource_url": "https://unapproved.example/district.zip"},
+])
+def test_boundary_format_alias_still_requires_approved_zip_resource(metadata):
+    asset = SourceAsset.with_checksum("isolated-test-resource", "test-version", datetime.now(timezone.utc),
+                                      BANGKOK_EXTENT, metadata=metadata)
+    assert BangkokBoundaryConnector().validate(asset)["passed"] is False

@@ -28,7 +28,7 @@ OVERPASS_GRID_DIVISIONS=2
 WORLDPOP_API_BASE_URL=https://api.worldpop.org/v3
 WORLDPOP_API_KEY=
 WORLDPOP_REFERENCE_YEAR=
-BMA_BOUNDARY_CATALOG_URL=https://data.go.th/api/3/action/package_show
+BMA_BOUNDARY_CATALOG_URL=https://data.bangkok.go.th/api/3/action/package_show
 BMA_BOUNDARY_DATASET_ID=e537025b-1cf6-4c5b-8e46-c2e976f13283
 BMA_BOUNDARY_RESOURCE_ID=d7be7e84-9d84-4595-bf8f-79b0bc01f1ae
 BMA_BOUNDARY_MAX_DOWNLOAD_BYTES=10000000
@@ -42,7 +42,9 @@ Mount Google service-account JSON as a Docker/Kubernetes secret; do not copy it 
 ### Bangkok administrative boundaries
 
 - ตรวจ CKAN metadata ของชุด `e537025b-1cf6-4c5b-8e46-c2e976f13283` และ resource ID ที่ตรึงไว้ก่อนดาวน์โหลด
+- ใช้ CKAN API ของกรุงเทพมหานครโดยตรง; การตรวจจาก Hostless วันที่ 8 พฤศจิกายน 2026 พบ national catalog `data.go.th/api/3/action/package_show` ตอบ 403 แต่ origin catalog ของ BMA ตอบ 200 สำหรับ dataset/resource เดียวกัน ไม่มีการเพิ่ม API key หรือข้ามการยืนยันตัวตน
 - รับเฉพาะ HTTPS จาก `data.bangkok.go.th`, จำกัดขนาด ZIP/member และอ่าน archive ในหน่วยความจำโดยไม่ extract path ลง filesystem
+- ต้นทางระบุ format ว่า `shapfile`; เก็บค่านี้ตามจริง และรับ alias ของ shapefile เฉพาะ URL `.zip` บน host ที่อนุญาต จากนั้นตรวจ ZIP และสมาชิก `.shp/.shx/.dbf/.prj` จริงเหมือนเดิม
 - อ่าน Shapefile encoding CP874, แปลง `EPSG:32647` เป็น `EPSG:4326`, repair geometry และตรวจว่าครบ 50 district codes/ชื่อไม่ซ้ำ
 - คำนวณ SHA-256 จาก ZIP จริง เก็บ `DistrictBoundary` ทุกเวอร์ชัน และปิด `valid_to` ของขอบเขตก่อนหน้าแทนการลบประวัติ
 - เมื่อมี demo area ชื่อเดียวกัน ระบบอัปเกรด record เดิมเป็น official boundary เพื่อไม่สร้างเขตซ้ำใน local database

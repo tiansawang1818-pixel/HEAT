@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     worldpop_api_base_url: str = "https://api.worldpop.org/v3"
     worldpop_api_key: Optional[str] = None
     worldpop_reference_year: Optional[int] = None
-    bma_boundary_catalog_url: str = "https://data.go.th/api/3/action/package_show"
+    bma_boundary_catalog_url: str = "https://data.bangkok.go.th/api/3/action/package_show"
     bma_boundary_dataset_id: str = "e537025b-1cf6-4c5b-8e46-c2e976f13283"
     bma_boundary_resource_id: str = "d7be7e84-9d84-4595-bf8f-79b0bc01f1ae"
     bma_boundary_max_download_bytes: int = 10_000_000

@@ -88,7 +88,8 @@ class BangkokBoundaryConnector(SourceConnector):
                     "resource_url": resource_url,
                     "resource_last_modified_at": last_modified,
                     "license": package.get("license_title") or "License not specified",
-                    "publisher": "Bangkok Metropolitan Administration / data.go.th",
+                    "publisher": "Bangkok Metropolitan Administration",
+                    "catalog_url": settings.bma_boundary_catalog_url,
                     "processor_version": self.processor_version,
                     "data_class": "official_administrative_boundary",
                 },
@@ -102,7 +103,10 @@ class BangkokBoundaryConnector(SourceConnector):
         parsed = urlparse(resource_url)
         if parsed.scheme != "https" or parsed.hostname != "data.bangkok.go.th":
             errors.append("BMA boundary resource URL must use the approved data.bangkok.go.th HTTPS host")
-        if str(asset.metadata.get("resource_format", "")).upper() != "ZIP":
+        resource_format = str(asset.metadata.get("resource_format", "")).strip().upper()
+        # The BMA catalog labels this ZIP as "shapfile". Preserve that original
+        # metadata, but still require the archive suffix and validate its bytes.
+        if resource_format not in {"ZIP", "SHP", "SHAPEFILE", "SHAPFILE"} or not parsed.path.lower().endswith(".zip"):
             errors.append("BMA boundary resource must be the configured ZIP shapefile")
         return {
             "passed": not errors,
