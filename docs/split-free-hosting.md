@@ -1,5 +1,8 @@
 # ทางเลือกแยก hosting เพื่อไม่รอ PostgreSQL ของ Hostless
 
+> อัปเดต 8 พฤศจิกายน 2026: มีเว็บนำร่องบน Hostless และ Open-Meteo publication จริงแล้ว แต่ release ใหม่/readiness และข้อมูลดาวเทียมยังไม่ครบ ดู [สถานะปัจจุบัน](predeployment-status.md) รายละเอียดด้านล่างเป็นผลการตรวจช่วงเตรียมฐานข้อมูลก่อนเปิดแอป
+
+
 ตรวจเอกสารทางการวันที่ 8 พฤศจิกายน 2026 (Asia/Bangkok) ต่อมาผู้ใช้ยืนยันการสมัครและสิทธิ์ GitHub ตามหน้าที่แสดง จึงสมัคร/ยืนยันอีเมล Aiven และสร้าง PostgreSQL service `heat-postgis-check` บนแผน **Free-1-1gb** แล้ว หน้า service เปลี่ยนเป็น Running ให้ PostgreSQL 18 (Free เลือกรุ่นเองไม่ได้), 1 CPU / RAM 1 GB / disk 1 GB, connection limit 20 ยังไม่ได้เปลี่ยนปลายทางของ HEAT หรือยืนยันว่าทั้งระบบรันฟรีผ่านแล้ว
 
 ## ตัวเลือกแรก: Aiven PostgreSQL + Hostless บัญชีเดิม

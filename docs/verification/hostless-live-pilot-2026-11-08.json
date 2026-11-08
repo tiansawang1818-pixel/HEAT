@@ -1,0 +1,98 @@
+{
+  "checked_at": "2026-11-08T13:30:43.557256+00:00",
+  "scope": "live_hostless_pilot_observation_not_production_release",
+  "origin": "https://heatshift.hostless.app",
+  "live_source_sha_at_observation": "5f24c4ab381e2b8b4361b98e9baf0a94d223b866",
+  "public_tls_verified": true,
+  "runtime": {
+    "checked_at": "2026-11-08T13:30:46.246330+00:00",
+    "scope": "runtime_resource_observation",
+    "mode": "combined",
+    "status": "observed",
+    "whole_stack_capacity_verified": false,
+    "components": {
+      "api": true,
+      "web": true,
+      "ingestion": true,
+      "dispatcher": true,
+      "beat": true
+    },
+    "memory_limit_bytes": 805306368,
+    "memory_used_bytes": 567877632,
+    "cpu_limit_cores": 0.3,
+    "oom_kill_count": 0
+  },
+  "ingestion": {
+    "queue": {
+      "queued": 0,
+      "running": 0,
+      "completed": 8,
+      "failed": 1
+    },
+    "coverage": {
+      "geographic_areas": 0,
+      "areas_with_indicators": 0,
+      "percent": 0.0
+    },
+    "source_checks": [
+      {
+        "source_name": "Bangkok district boundaries",
+        "status": "failed",
+        "checked_at": "2026-11-08T10:44:23.776378+00:00",
+        "completed_at": "2026-11-08T10:44:25.312363+00:00",
+        "discovered_count": 0,
+        "processed_count": 0
+      },
+      {
+        "source_name": "Google Dynamic World",
+        "status": "never_checked",
+        "checked_at": null,
+        "completed_at": null,
+        "discovered_count": 0,
+        "processed_count": 0
+      },
+      {
+        "source_name": "Landsat 8/9",
+        "status": "never_checked",
+        "checked_at": null,
+        "completed_at": null,
+        "discovered_count": 0,
+        "processed_count": 0
+      },
+      {
+        "source_name": "Open-Meteo",
+        "status": "success",
+        "checked_at": "2026-11-08T12:38:03.087219+00:00",
+        "completed_at": "2026-11-08T12:38:08.355856+00:00",
+        "discovered_count": 1,
+        "processed_count": 1
+      },
+      {
+        "source_name": "OpenStreetMap",
+        "status": "never_checked",
+        "checked_at": null,
+        "completed_at": null,
+        "discovered_count": 0,
+        "processed_count": 0
+      },
+      {
+        "source_name": "Sentinel-2",
+        "status": "never_checked",
+        "checked_at": null,
+        "completed_at": null,
+        "discovered_count": 0,
+        "processed_count": 0
+      },
+      {
+        "source_name": "WorldPop",
+        "status": "never_checked",
+        "checked_at": null,
+        "completed_at": null,
+        "discovered_count": 0,
+        "processed_count": 0
+      }
+    ]
+  },
+  "whole_stack_heavy_load_verified": false,
+  "production_release_ready": false
+}
