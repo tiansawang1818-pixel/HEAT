@@ -87,7 +87,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U heatshift -d heatshift_ci"
+          --health-cmd "pg_isready -h 127.0.0.1 -U heatshift -d heatshift_ci"
           --health-interval 5s --health-timeout 5s --health-retries 20
       redis:
         image: redis:7.4-alpine
@@ -137,7 +137,9 @@ jobs:
         run: |
           docker run -d --name heatshift-arm-postgres -e POSTGRES_DB=heatshift_ci -e POSTGRES_USER=heatshift -e POSTGRES_PASSWORD=isolated-arm-ci-only -p 127.0.0.1:5432:5432 heatshift-postgis:arm-ci
           docker run -d --name heatshift-arm-redis -p 127.0.0.1:6379:6379 redis:7.4-alpine
-          for attempt in $(seq 1 60); do docker exec heatshift-arm-postgres pg_isready -U heatshift -d heatshift_ci && break; sleep 1; done
+          # initdb's temporary server accepts Unix sockets before extensions finish.
+          # Only the final server listens on TCP, so do not admit that bootstrap server.
+          for attempt in $(seq 1 60); do docker exec heatshift-arm-postgres pg_isready -h 127.0.0.1 -U heatshift -d heatshift_ci && break; sleep 1; done
           docker exec heatshift-arm-postgres psql -U heatshift -d heatshift_ci -c 'SELECT PostGIS_Full_Version()'
       - name: Verify migrations, spatial queries, real queue and scheduler on ARM
         run: |
