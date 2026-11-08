@@ -15,7 +15,8 @@ def test_runtime_reports_limits_and_liveness_without_secrets_or_pids(monkeypatch
     report = runtime.runtime_status(tmp_path, process_file)
     assert report["status"] == "observed" and all(report["components"].values())
     assert report["cpu_limit_cores"] == 0.3 and report["memory_limit_bytes"] == 768 * 1024 ** 2
-    assert "private" not in json.dumps(report) and "101" not in json.dumps(report)
+    assert "private" not in json.dumps(report) and "pids" not in report
+    assert set(report["components"].values()) == {True}
     assert not report["whole_stack_capacity_verified"]
 
 
