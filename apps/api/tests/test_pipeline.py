@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from unittest.mock import Mock
 
 from sqlalchemy import select
 
@@ -19,7 +20,7 @@ from app.models.entities import (
     TemperatureObservation,
 )
 from app.services.connectors.base import AreaProcessingRecord, ConnectorError, SourceAsset, SourceConnector
-from app.services.connectors.earth_engine import LandsatConnector
+from app.services.connectors.earth_engine import LandsatConnector, SentinelConnector
 from app.services.connectors.open_meteo import OpenMeteoConnector
 from app.services.pipeline import run_monitor
 
@@ -44,6 +45,39 @@ def test_earth_engine_uses_scoped_adc_when_credential_file_is_configured(monkeyp
     monkeypatch.setattr(ee, "Initialize", lambda **kwargs: initialized.append(kwargs))
     assert LandsatConnector()._earth_engine() is ee
     assert initialized == [{"credentials": credentials, "project": "test-ee-project"}]
+
+
+@pytest.mark.parametrize("missing_stats", [False, True])
+def test_earth_engine_reduces_coverage_then_statistics_only_for_eligible_districts(monkeypatch, missing_stats):
+    ee, image, pixel_area = Mock(), Mock(), Mock()
+    ee.Feature.side_effect = lambda geometry, properties: properties
+    ee.FeatureCollection.side_effect = lambda features: features
+    ee.Image.pixelArea.return_value.updateMask.return_value = pixel_area
+    connector = SentinelConnector()
+    monkeypatch.setattr(connector, "_earth_engine", lambda: ee)
+    monkeypatch.setattr(connector, "_analysis", lambda *args: {"image": image, "mask": "clear", "reducer": "mean"})
+    asset = SourceAsset.with_checksum("test-scene", "1", datetime(2026, 1, 1, tzinfo=timezone.utc), EXTENT)
+    districts = [{"id": name, "geometry": EXTENT} for name in ("clear", "cloudy")]
+
+    def coverage_response():
+        assert not image.reduceRegions.called
+        return {"features": [{"properties": {"area_id": name, "coverage_fraction": fraction}}
+                             for name, fraction in (("clear", 0.2), ("cloudy", 0.01))]}
+
+    pixel_area.reduceRegions.return_value.map.return_value.getInfo.side_effect = coverage_response
+    image.reduceRegions.return_value.map.return_value.getInfo.return_value = {
+        "features": [] if missing_stats else [{"properties": {"area_id": "clear", "ndvi": 0.42}}],
+    }
+    if missing_stats:
+        with pytest.raises(ConnectorError, match="one row per requested district"):
+            connector.process(asset, districts)
+    else:
+        record, = connector.process(asset, districts)
+        assert record.area_id == "clear" and record.indicators == {"ndvi": 0.42}
+        assert record.coverage_fraction == 0.2 and record.quality_status == "limited_coverage"
+    assert pixel_area.reduceRegions.call_args.kwargs["collection"] == [{"area_id": "clear"}, {"area_id": "cloudy"}]
+    assert image.reduceRegions.call_args.kwargs["collection"] == [{"area_id": "clear"}]
+    assert image.reduceRegions.call_args.kwargs["scale"] == 10
 
 
 class StaticConnector(SourceConnector):

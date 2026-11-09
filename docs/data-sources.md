@@ -69,7 +69,7 @@ For the combined Hostless runtime, set `GEE_PROJECT` and inject `GEE_SERVICE_ACC
 - Landsat 8/9: ตัด cloud/cirrus/cloud shadow/snow ด้วย `QA_PIXEL` bits 1–4, ตัด saturated pixels ด้วย `QA_RADSAT`, ใช้ Collection 2 Level-2 scale/offset ของ `ST_B10`, แล้วบันทึก district mean, p90 และ valid-pixel coverage
 - Sentinel-2: ตัด SCL classes 3, 8, 9, 10, 11 แล้วคำนวณ mean NDVI พร้อม valid-pixel coverage
 - Dynamic World: เก็บ mean tree/built probability และ mean maximum-class probability เป็น confidence; ไม่แปลง argmax label ให้เป็นความจริงเด็ดขาด
-- Regional record จะถูกเขียนพร้อม source asset ID และ `processor_version=gee-zonal-v1` เฉพาะเมื่อทั้ง asset validation และ processed-value validation ผ่าน ระบบจะคำนวณ Heat Exposure Priority ใหม่และส่ง affected-layer event หลัง publication สำเร็จ
+- `gee-zonal-v2` คำนวณสัดส่วนพิกเซลที่ใช้ได้และค่าสถิติของเขตด้วย `reduceRegions` ตามลำดับ คำนวณค่าสถิติเฉพาะเขตที่ผ่านเกณฑ์ coverage และตรวจว่า Earth Engine คืนผลครบหนึ่งรายการต่อเขต Regional record จะถูกเขียนพร้อม source asset ID และ processor version หลังผ่านการตรวจสอบ จากนั้นจึงคำนวณ Heat Exposure Priority และส่ง affected-layer event
 - Dataset version ที่ publish แล้วจะมี `RasterAssetMetadata` แบบ virtual URI (`earthengine://...`) พร้อม band/recipe/checksum/footprint โดยไม่คัดลอก raster ขนาดใหญ่ลง relational database
 - ชั้น `temperature`, `ndvi`, `vegetation` และ `built` ใช้ provider-backed XYZ จาก source asset version เดียวกับที่ผ่าน validation เท่านั้น URL มี token อายุจำกัดจึง cache แบบ private และไม่ถูกเก็บถาวร หาก credential หรือ raster metadata ไม่พร้อม API จะตอบ `available=false` และ UI ใช้ district aggregate เป็น fallback โดยไม่สร้างภาพจำลอง
 

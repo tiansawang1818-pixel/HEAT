@@ -25,7 +25,7 @@ class EarthEngineConnector(SourceConnector):
     processing_recipe: Dict[str, Any] = {}
     analysis_scale_m: int = 30
     min_publishable_coverage: float = 0.05
-    processor_version = "gee-zonal-v1"
+    processor_version = "gee-zonal-v2"
     requires_area_processing = True
     produces_raster = True
 
@@ -209,47 +209,56 @@ class EarthEngineConnector(SourceConnector):
         data_image = analysis["image"]
         reducer = analysis["reducer"]
         mask = analysis["mask"]
-        features = [
-            ee.Feature(ee.Geometry(area["geometry"]), {"area_id": area["id"]})
+        features = {
+            area["id"]: ee.Feature(ee.Geometry(area["geometry"]), {"area_id": area["id"]})
             for area in areas
             if area.get("geometry")
-        ]
+        }
         if not features:
             raise ConnectorError("Geographic areas do not contain usable geometries")
-        pixel_area = ee.Image.pixelArea()
+        options = {"scale": self.analysis_scale_m, "maxPixelsPerRegion": 50_000_000, "tileScale": 4}
 
-        def aggregate(feature):
-            geometry = feature.geometry()
-            stats = data_image.reduceRegion(
-                reducer=reducer,
-                geometry=geometry,
-                scale=self.analysis_scale_m,
-                maxPixels=50_000_000,
-                tileScale=4,
-            )
-            valid_area = pixel_area.updateMask(mask).reduceRegion(
-                reducer=ee.Reducer.sum(),
-                geometry=geometry,
-                scale=self.analysis_scale_m,
-                maxPixels=50_000_000,
-                tileScale=4,
-            ).get("area")
-            coverage = ee.Number(ee.Algorithms.If(valid_area, valid_area, 0)).divide(geometry.area(maxError=1)).min(1)
-            return ee.Feature(None, stats.set("area_id", feature.get("area_id")).set("coverage_fraction", coverage))
+        def coverage_row(feature):
+            valid_area = feature.get("area")
+            coverage = ee.Number(ee.Algorithms.If(valid_area, valid_area, 0)).divide(
+                feature.geometry().area(maxError=1)
+            ).min(1)
+            return ee.Feature(None, {"area_id": feature.get("area_id"), "coverage_fraction": coverage})
 
         try:
-            response = ee.FeatureCollection(features).map(aggregate).getInfo()
+            # A reduceRegion mapped across districts starts many separate
+            # aggregations. Finish one collection reduction before sending the next.
+            coverage = ee.Image.pixelArea().updateMask(mask).reduceRegions(
+                collection=ee.FeatureCollection(list(features.values())), reducer=ee.Reducer.sum(), **options,
+            ).map(coverage_row).getInfo()
+            coverage_rows = self._regional_rows(coverage, features)
+            valid_coverage = {}
+            for area_id, row in coverage_rows.items():
+                fraction = self._safe_number(row.get("coverage_fraction"))
+                if fraction is None or not 0 <= fraction <= 1:
+                    raise ConnectorError("Earth Engine returned an invalid district coverage fraction")
+                if fraction >= self.min_publishable_coverage:
+                    valid_coverage[area_id] = fraction
+            if not valid_coverage:
+                return []
+            eligible = {area_id: features[area_id] for area_id in valid_coverage}
+            statistics = data_image.reduceRegions(
+                collection=ee.FeatureCollection(list(eligible.values())), reducer=reducer, **options,
+            ).map(lambda feature: ee.Feature(None, feature.toDictionary())).getInfo()
+            rows = self._regional_rows(statistics, eligible)
         except Exception as exc:
             raise ConnectorError("Earth Engine regional aggregation failed: %s" % exc) from exc
 
-        records: List[AreaProcessingRecord] = []
-        for feature in response.get("features", []):
-            properties = feature.get("properties", {})
-            coverage = self._safe_number(properties.get("coverage_fraction")) or 0.0
-            if coverage < self.min_publishable_coverage:
-                continue
-            records.append(self._record_from_properties(properties))
-        return records
+        return [self._record_from_properties({**row, "coverage_fraction": valid_coverage[area_id]})
+                for area_id, row in rows.items()]
+
+    @staticmethod
+    def _regional_rows(response: Dict[str, Any], expected: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+        rows = [feature["properties"] for feature in response.get("features", [])]
+        by_area = {row["area_id"]: row for row in rows}
+        if len(rows) != len(expected) or by_area.keys() != expected.keys():
+            raise ConnectorError("Earth Engine did not return exactly one row per requested district")
+        return by_area
 
     def validate_processed(
         self, asset: SourceAsset, records: Sequence[AreaProcessingRecord]
