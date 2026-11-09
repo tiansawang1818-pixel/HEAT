@@ -90,6 +90,12 @@ def _iso(value: Optional[datetime]) -> Optional[str]:
     return _aware(value).isoformat() if value else None
 
 
+def _ingestion_error_summary(value: Optional[str]) -> Optional[str]:
+    if value and "\n[SQL:" in value:
+        return "การบันทึกข้อมูลลงฐานข้อมูลไม่สำเร็จ"
+    return value
+
+
 def _parse_bbox(value: Optional[str]) -> Optional[tuple[float, float, float, float]]:
     if not value:
         return None
@@ -1848,7 +1854,7 @@ def ingestion_jobs(
                 "created_at": _iso(row.created_at),
                 "started_at": _iso(row.started_at),
                 "finished_at": _iso(row.finished_at),
-                "error_message": row.error_message,
+                "error_message": _ingestion_error_summary(row.error_message),
             }
             for row in rows
         ]
@@ -1881,7 +1887,7 @@ def ingestion_status(job_id: Optional[str] = None, db: Session = Depends(get_db)
                 "discovered_count": check.discovered_count if check else 0,
                 "processed_count": check.queued_count if check else 0,
                 "provider_quota": check.provider_quota if check and check.provider_quota else {"status": "not_reported"},
-                "error_message": check.error_message if check else None,
+                "error_message": _ingestion_error_summary(check.error_message) if check else None,
             }
         )
     area_count = int(db.scalar(select(func.count()).select_from(GeographicArea)) or 0)
@@ -1912,7 +1918,7 @@ def ingestion_status(job_id: Optional[str] = None, db: Session = Depends(get_db)
                 "requested_by": item.requested_by,
                 "created_at": _iso(item.created_at),
                 "finished_at": _iso(item.finished_at),
-                "error_message": item.error_message,
+                "error_message": _ingestion_error_summary(item.error_message),
             }
             for item in recent_jobs
         ],
@@ -1937,7 +1943,7 @@ def ingestion_status(job_id: Optional[str] = None, db: Session = Depends(get_db)
             "stage": job.stage,
             "progress": job.progress,
             "checkpoint": job.checkpoint,
-            "error_message": job.error_message,
+            "error_message": _ingestion_error_summary(job.error_message),
             "finished_at": _iso(job.finished_at),
         },
         "last_event": None

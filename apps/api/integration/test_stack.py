@@ -28,7 +28,7 @@ if os.environ.get("HEATSHIFT_RUN_STACK_TESTS") != "true":
 from app.core.config import settings
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
-from app.models.entities import AreaIndicator, DataSource, DatasetVersion, GeographicArea, PipelineEvent
+from app.models.entities import AreaIndicator, DataSource, DatasetVersion, DistrictBoundary, GeographicArea, PipelineEvent
 from app.services.checkpoints import SourceCheckpointStore, fingerprint
 from app.services.bootstrap import ensure_sources
 from app.services.geometry import to_db_geometry
@@ -114,6 +114,24 @@ def isolated_stack_guard():
 
 def _polygon(lon, lat):
     return {"type": "MultiPolygon", "coordinates": [[[[lon, lat], [lon + .01, lat], [lon + .01, lat + .01], [lon, lat + .01], [lon, lat]]]]}
+
+
+def test_first_real_boundary_publication_respects_postgis_foreign_keys(monkeypatch, isolated_history_database):
+    from app.services.connectors.catalogs import BangkokBoundaryConnector
+    from app.services.pipeline import run_monitor
+
+    def unreachable(*args, **kwargs):
+        raise httpx.ConnectTimeout("isolated test does not contact BMA")
+
+    monkeypatch.setattr(httpx, "get", unreachable)
+    with isolated_history_database() as db:
+        ensure_sources(db)
+        result = run_monitor(db, BangkokBoundaryConnector(), requested_by="ci-boundary-bootstrap")
+        assert result["status"] == "degraded" and result["processed"] == 1
+        assert db.scalar(select(func.count()).select_from(GeographicArea)) == 50
+        assert db.scalar(select(func.count()).select_from(DistrictBoundary)) == 50
+        assert db.scalar(select(func.count()).select_from(DistrictBoundary).where(
+            func.ST_IsValid(DistrictBoundary.geometry), func.ST_SRID(DistrictBoundary.geometry) == 4326)) == 50
 
 
 def test_real_postgis_migrations_and_redis_lock_ownership():

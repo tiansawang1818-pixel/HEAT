@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.models.entities import (
@@ -30,6 +31,7 @@ from app.services.connectors.base import (
     AreaProcessingRecord,
     BoundaryProcessingRecord,
     CandidateProcessingRecord,
+    ConnectorError,
     SourceAsset,
     SourceConnector,
 )
@@ -185,14 +187,22 @@ def _persist_boundary_records(
     version: DatasetVersion,
     records: Sequence[BoundaryProcessingRecord],
 ) -> None:
+    if not records:
+        return
     existing_areas = list(db.scalars(select(GeographicArea)).all())
+    by_id = {area.id: area for area in existing_areas}
     by_name: Dict[str, GeographicArea] = {}
     for area in existing_areas:
         by_name[_normalized_area_name(area.name_th)] = area
         by_name[_normalized_area_name(area.name_en)] = area
     boundary_time = version.observed_at or utcnow()
+    active_boundaries: Dict[str, List[DistrictBoundary]] = {}
+    for boundary in db.scalars(select(DistrictBoundary).where(DistrictBoundary.valid_to.is_(None))):
+        active_boundaries.setdefault(boundary.area_id, []).append(boundary)
+    new_boundaries = []
     for record in records:
-        area = db.get(GeographicArea, record.area_id)
+        area = by_id.get(record.area_id)
+        geometry = to_db_geometry(record.geometry)
         if area is None:
             area = by_name.get(_normalized_area_name(record.name_th)) or by_name.get(
                 _normalized_area_name(record.name_en)
@@ -202,33 +212,32 @@ def _persist_boundary_records(
                 id=record.area_id,
                 name_th=record.name_th,
                 name_en=record.name_en,
-                geometry=to_db_geometry(record.geometry),
+                geometry=geometry,
             )
             db.add(area)
         area.name_th = record.name_th
         area.name_en = record.name_en
         area.area_type = "district"
-        area.geometry = to_db_geometry(record.geometry)
+        area.geometry = geometry
         area.centroid = to_db_geometry(record.centroid)
         area.area_sq_km = record.area_sq_km
         area.source_name = "Bangkok Metropolitan Administration / data.go.th"
         area.source_version = "%s:%s" % (version.source_version, record.district_code)
         area.quality_status = "verified_official_boundary"
-        for previous in db.scalars(
-            select(DistrictBoundary).where(
-                DistrictBoundary.area_id == area.id,
-                DistrictBoundary.valid_to.is_(None),
-            )
-        ).all():
+        for previous in active_boundaries.get(area.id, []):
             previous.valid_to = boundary_time
-        db.add(
+        new_boundaries.append(
             DistrictBoundary(
                 area_id=area.id,
                 dataset_version_id=version.id,
-                geometry=to_db_geometry(record.geometry),
+                geometry=geometry,
                 valid_from=boundary_time,
             )
         )
+    # With autoflush disabled and no mapped relationship, Postgres needs the
+    # parent rows flushed first. Both sets of changes commit together below.
+    db.flush()
+    db.add_all(new_boundaries)
 
 
 def _persist_candidate_records(
@@ -494,6 +503,21 @@ def ingest_asset(db: Session, source: DataSource, connector: SourceConnector, as
         db.commit()
         return version
 
+    try:
+        return _publish_asset(db, source, connector, asset, job, version, records, boundary_records,
+                              candidate_records, processing_report)
+    except SQLAlchemyError as exc:
+        error = ConnectorError("Validated dataset publication failed (%s)" % type(exc).__name__)
+        _fail_processing(db, version.id, job.id, error)
+        raise error from exc
+
+
+def _publish_asset(
+    db: Session, source: DataSource, connector: SourceConnector, asset: SourceAsset,
+    job: IngestionJob, version: DatasetVersion, records: Sequence[AreaProcessingRecord],
+    boundary_records: Sequence[BoundaryProcessingRecord], candidate_records: Sequence[CandidateProcessingRecord],
+    processing_report: Dict[str, Any],
+) -> DatasetVersion:
     _persist_area_records(db, connector, version, records)
     _persist_boundary_records(db, version, boundary_records)
     _persist_candidate_records(db, connector, version, candidate_records)

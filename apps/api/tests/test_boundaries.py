@@ -8,11 +8,13 @@ import pytest
 import shapefile
 from pyproj import Transformer
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
 from app.models.entities import DatasetVersion, DistrictBoundary, GeographicArea, SourceCheck
 from app.services.connectors.base import ConnectorError, SourceAsset
 from app.services.connectors.catalogs import BANGKOK_EXTENT, BangkokBoundaryConnector
+from app.services import pipeline
 from app.services.pipeline import run_monitor
 
 
@@ -181,3 +183,23 @@ def test_corrupted_boundary_snapshot_is_never_published(db, monkeypatch, tmp_pat
         run_monitor(db, BangkokBoundaryConnector(), requested_by="test")
     assert db.scalar(select(func.count()).select_from(GeographicArea)) == 0
     assert db.scalar(select(DatasetVersion)).status == "failed"
+
+
+def test_publication_error_rolls_back_boundaries_and_allows_retry(db, monkeypatch):
+    def unreachable(*args, **kwargs):
+        raise httpx.ConnectTimeout("origin unreachable")
+
+    monkeypatch.setattr(httpx, "get", unreachable)
+    with monkeypatch.context() as failure:
+        def fail_after_boundary_writes(*args):
+            raise IntegrityError("INSERT", {"value": "private"}, RuntimeError("injected failure"))
+
+        failure.setattr(pipeline, "_persist_raster_metadata", fail_after_boundary_writes)
+        with pytest.raises(ConnectorError, match="publication failed \\(IntegrityError\\)"):
+            run_monitor(db, BangkokBoundaryConnector(), requested_by="test")
+    version = db.scalar(select(DatasetVersion))
+    assert version.status == "failed" and version.quality_status == "processing_error"
+    assert "private" not in db.scalar(select(SourceCheck)).error_message
+    assert db.scalar(select(func.count()).select_from(GeographicArea)) == 0
+    assert run_monitor(db, BangkokBoundaryConnector(), requested_by="test")["processed"] == 1
+    assert db.get(DatasetVersion, version.id).status == "published"

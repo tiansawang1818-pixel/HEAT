@@ -8,7 +8,7 @@ from app.core.config import Settings, settings
 
 
 def make_database_engine(config: Settings):
-    options = {"pool_pre_ping": True}
+    options = {"pool_pre_ping": True, "hide_parameters": True}
     if config.database_url.startswith("sqlite"):
         options["connect_args"] = {"check_same_thread": False}
         if config.database_url.endswith(":memory:"):
