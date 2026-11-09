@@ -84,6 +84,7 @@ import {
 } from "@/lib/api";
 import { defaultLayers, demoDatasets, demoFeatures, emptyHistory, isDemoFallbackEnabled } from "@/lib/demo-data";
 import {
+  boundaryQualityLabel,
   cn,
   formatBaht,
   formatNumber,
@@ -1250,7 +1251,7 @@ function AreaPanel({ area, loading, onOptimize }: { area: AreaProperties | null;
           <div className="reason-row" key={`${reason}-${index}`}><span>{String(index + 1).padStart(2, "0")}</span><p>{reason}</p></div>
         ))}
       </div>
-      <div className="source-note">ประชากร: ค่าประมาณจากแบบจำลอง · ปีอ้างอิง {area.population_reference_year || "ยังไม่ระบุ"}<br />คุณภาพขอบเขต: {area.quality_status || "ยังไม่ระบุ"}</div>
+      <div className="source-note">ประชากร: ค่าประมาณจากแบบจำลอง · ปีอ้างอิง {area.population_reference_year || "ยังไม่ระบุ"}<br />คุณภาพขอบเขต: {boundaryQualityLabel(area.quality_status)}</div>
       <Button className="w-full" variant="thermal" onClick={onOptimize} disabled={isDemo}><CircleDollarSign size={15} /> นำพื้นที่นี้ไปวิเคราะห์การลงทุน</Button>
     </>
   );

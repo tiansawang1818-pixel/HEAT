@@ -36,6 +36,18 @@ export const priorityComponentLabels: Record<string, string> = {
   historical_change: "การเปลี่ยนแปลงย้อนหลัง",
 };
 
+const boundaryQualityLabels: Record<string, string> = {
+  verified_official_boundary: "ขอบเขตทางการที่ตรวจสอบแล้ว",
+  verified: "ตรวจสอบแล้ว",
+  synthetic_demo: "ข้อมูลสาธิต ไม่ใช่ขอบเขตจริง",
+  pending: "รอตรวจสอบ",
+};
+
+export function boundaryQualityLabel(value?: string | null) {
+  if (!value) return "ยังไม่ระบุ";
+  return boundaryQualityLabels[value] ?? value;
+}
+
 export function formatPopulationReferenceYear(value?: string | null) {
   if (!value) return "ยังไม่มีข้อมูล";
   const year = new Date(value).getUTCFullYear();
