@@ -37,7 +37,7 @@ OVERTURE_RELEASE=
 
 Mount Google service-account JSON as a Docker/Kubernetes secret; do not copy it into the image or repository. Production should prefer workload identity where supported.
 
-For the combined Hostless runtime, set `GEE_PROJECT` and inject `GEE_SERVICE_ACCOUNT_JSON_BASE64` as a private environment secret if mounted credentials are unavailable. The runtime removes the encoded value from child environments and gives Google ADC the path to a mode-0600 file. Use a service account dedicated to this project with the [Earth Engine API permissions](https://developers.google.com/earth-engine/guides/access_control#set_earth_engine_service_usage).
+For the combined Hostless runtime, set `GEE_PROJECT` and inject `GEE_SERVICE_ACCOUNT_JSON_BASE64` as a write-only environment variable if mounted credentials are unavailable. The runtime removes the encoded value from child environments and gives Google ADC the path to a mode-0600 file. The connector scopes the credentials to Earth Engine before initialization. Use a service account dedicated to this project with the [Earth Engine API permissions](https://developers.google.com/earth-engine/guides/access_control#set_earth_engine_service_usage).
 
 ## Validation gates
 

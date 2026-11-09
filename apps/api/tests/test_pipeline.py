@@ -4,6 +4,7 @@ from sqlalchemy import select
 
 import pytest
 
+from app.core.config import settings
 from app.models.entities import (
     AreaIndicator,
     DataSource,
@@ -18,11 +19,31 @@ from app.models.entities import (
     TemperatureObservation,
 )
 from app.services.connectors.base import AreaProcessingRecord, ConnectorError, SourceAsset, SourceConnector
+from app.services.connectors.earth_engine import LandsatConnector
 from app.services.connectors.open_meteo import OpenMeteoConnector
 from app.services.pipeline import run_monitor
 
 
 EXTENT = {"type": "Point", "coordinates": [100.5, 13.7]}
+
+
+def test_earth_engine_uses_scoped_adc_when_credential_file_is_configured(monkeypatch):
+    import ee
+    import google.auth
+
+    credentials = object()
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", "/run/secrets/test-earth-engine.json")
+    monkeypatch.setattr(settings, "gee_project", "test-ee-project")
+
+    def get_credentials(*, scopes):
+        assert scopes == ["https://www.googleapis.com/auth/earthengine"]
+        return credentials, "test-ee-project"
+
+    initialized = []
+    monkeypatch.setattr(google.auth, "default", get_credentials)
+    monkeypatch.setattr(ee, "Initialize", lambda **kwargs: initialized.append(kwargs))
+    assert LandsatConnector()._earth_engine() is ee
+    assert initialized == [{"credentials": credentials, "project": "test-ee-project"}]
 
 
 class StaticConnector(SourceConnector):

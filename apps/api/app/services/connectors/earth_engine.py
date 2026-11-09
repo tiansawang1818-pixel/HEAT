@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence
@@ -122,7 +123,14 @@ class EarthEngineConnector(SourceConnector):
         try:
             import ee
 
-            if settings.gee_project:
+            if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+                import google.auth
+
+                # A service account obtained through ADC must be scoped before
+                # refresh. The SDK's persistent-login fallback may refresh it first.
+                credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/earthengine"])
+                ee.Initialize(credentials=credentials, project=settings.gee_project)
+            elif settings.gee_project:
                 ee.Initialize(project=settings.gee_project)
             else:
                 ee.Initialize()

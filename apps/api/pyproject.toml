@@ -18,6 +18,7 @@ dependencies = [
   "geoalchemy2>=0.15,<1",
   "shapely>=2.0,<3",
   "earthengine-api>=1.1,<2",
+  "google-auth>=2,<3",
   "pyshp>=2.3,<3",
   "pyproj>=3.6,<4",
   "alembic>=1.13,<2",
