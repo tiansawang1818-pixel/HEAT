@@ -29,7 +29,9 @@ class EarthEngineConnector(SourceConnector):
     # analysis pixels. The full boundaries are 3.4 MB of GeoJSON; serialising
     # them into each Earth Engine request exhausted the 768 MiB runtime.
     analysis_geometry_simplify_degrees: float = 0.00001
-    processor_version = "gee-zonal-v2"
+    # v3 pins reduceRegions output names; v2 rejected every scene because it
+    # read band names that single-band reduceRegions never returns.
+    processor_version = "gee-zonal-v3"
     requires_area_processing = True
     produces_raster = True
 

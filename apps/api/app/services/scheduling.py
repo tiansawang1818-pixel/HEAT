@@ -5,9 +5,11 @@ from typing import Callable, Optional
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
-from app.models.entities import DataSource, GeographicArea, IngestionJob, SourceCheck
+from app.models.entities import DataSource, DatasetVersion, GeographicArea, IngestionJob, SourceCheck
 from app.services.locks import MONITOR_LOCK_LEASE_SECONDS, distributed_lock
 from app.services.source_registry import SOURCE_KEYS
+
+UNSUCCESSFUL_RETRY_SECONDS = 3600
 
 
 def _aware(value):
@@ -53,7 +55,14 @@ def dispatch_due_sources(db: Session, enqueue: Callable, *, now: Optional[dateti
                 job = parent
             else:
                 check = db.scalar(select(SourceCheck).where(SourceCheck.source_id == source.id).order_by(desc(SourceCheck.checked_at)).limit(1))
-                if check and now < _aware(check.checked_at) + timedelta(seconds=source.check_interval_seconds):
+                interval = source.check_interval_seconds
+                if check and (check.status != "success" or not db.scalar(select(DatasetVersion.id).where(
+                    DatasetVersion.source_id == source.id, DatasetVersion.status == "published",
+                ).limit(1))):
+                    # A degraded check or a source with nothing published yet retries
+                    # hourly instead of waiting a full cadence (up to a week).
+                    interval = min(interval, UNSUCCESSFUL_RETRY_SECONDS)
+                if check and now < _aware(check.checked_at) + timedelta(seconds=interval):
                     continue
                 last_failed_dispatch = db.scalar(select(IngestionJob).where(
                     IngestionJob.source_id == source.id, IngestionJob.stage == "dispatch_failed",

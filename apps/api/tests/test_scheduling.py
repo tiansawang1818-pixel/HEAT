@@ -75,3 +75,30 @@ def test_queued_retry_is_not_replayed_before_retry_time_and_execution_lease(db):
     assert dispatch_due_sources(db, queue, now=now)["dispatched"] == []
     later = now + timedelta(minutes=5, seconds=MONITOR_LOCK_LEASE_SECONDS + 61)
     assert dispatch_due_sources(db, queue, now=later)["dispatched"][0]["job_id"] == job.id
+
+
+def _boundaries_only(db):
+    for source in db.scalars(select(DataSource)):
+        source.enabled = source.source_type == "boundary"
+    db.commit()
+    return db.scalar(select(DataSource).where(DataSource.source_type == "boundary"))
+
+
+def test_unsuccessful_or_never_published_sources_retry_hourly_not_weekly(db):
+    from app.models.entities import DatasetVersion
+
+    source = _boundaries_only(db)
+    now = datetime.now(timezone.utc)
+    check = SourceCheck(source_id=source.id, checked_at=now - timedelta(minutes=61), status="degraded")
+    db.add(check)
+    db.commit()
+    queue = _queue()
+    assert len(dispatch_due_sources(db, queue, now=now)["dispatched"]) == 1
+
+    # A successful check with a published version waits for the weekly cadence.
+    db.query(IngestionJob).delete()
+    check.status = "success"
+    db.add(DatasetVersion(source_id=source.id, source_asset_id="bma-snapshot", source_version="1",
+                          checksum="x", status="published"))
+    db.commit()
+    assert dispatch_due_sources(db, _queue(), now=now)["dispatched"] == []

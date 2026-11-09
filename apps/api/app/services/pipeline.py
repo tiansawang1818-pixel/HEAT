@@ -406,7 +406,12 @@ def ingest_asset(db: Session, source: DataSource, connector: SourceConnector, as
             DatasetVersion.source_asset_id == asset.source_asset_id,
         )
     )
-    if version and not (
+    retry_rejected = bool(
+        version and version.status == ProcessingStatus.failed.value and version.quality_status == "rejected"
+        and asset.metadata.get("processor_version")
+        and (version.metadata_json or {}).get("processor_version") != asset.metadata.get("processor_version")
+    )
+    if version and not retry_rejected and not (
         version.status == ProcessingStatus.failed.value and version.quality_status == "processing_error"
     ):
         job.status = "completed"
