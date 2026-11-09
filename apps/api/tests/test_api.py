@@ -1045,3 +1045,16 @@ def test_production_refuses_local_admin_mode_even_with_custom_key(client, monkey
         headers={"X-Admin-Key": "a-strong-but-shared-key"},
     )
     assert response.status_code == 503
+
+
+def test_sources_record_provider_licence_terms(db):
+    from app.models.entities import DataSource
+    from app.services.bootstrap import LICENSE_URLS, ensure_sources
+
+    landsat = db.query(DataSource).filter_by(dataset_id="LANDSAT/LC08_C02_T1_L2+LANDSAT/LC09_C02_T1_L2").one()
+    landsat.license_url = None
+    db.commit()
+    ensure_sources(db)
+    for dataset_id, url in LICENSE_URLS.items():
+        row = db.query(DataSource).filter_by(dataset_id=dataset_id).one()
+        assert row.license_url == url

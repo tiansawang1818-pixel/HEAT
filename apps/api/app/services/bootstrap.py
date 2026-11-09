@@ -19,11 +19,25 @@ SOURCE_DEFINITIONS = [
     ("Integration fixture", "Local test fixture", "local/integration-fixture", "test_fixture", 0, 86400),
 ]
 
+# Provider terms for sources whose ingested metadata carries no licence field.
+# Landsat: U.S. public domain; Sentinel-2: Copernicus Sentinel data terms;
+# Dynamic World: CC BY 4.0; Open-Meteo: CC BY 4.0 (free tier is non-commercial).
+LICENSE_URLS: Dict[str, str] = {
+    "LANDSAT/LC08_C02_T1_L2+LANDSAT/LC09_C02_T1_L2":
+        "https://developers.google.com/earth-engine/datasets/catalog/LANDSAT_LC09_C02_T1_L2#terms-of-use",
+    "COPERNICUS/S2_SR_HARMONIZED":
+        "https://developers.google.com/earth-engine/datasets/catalog/COPERNICUS_S2_SR_HARMONIZED#terms-of-use",
+    "GOOGLE/DYNAMICWORLD/V1":
+        "https://developers.google.com/earth-engine/datasets/catalog/GOOGLE_DYNAMICWORLD_V1#terms-of-use",
+    "open-meteo/weather-context": "https://open-meteo.com/en/license",
+}
+
 
 def ensure_sources(db: Session) -> None:
-    existing = {row.dataset_id for row in db.scalars(select(DataSource)).all()}
+    existing = {row.dataset_id: row for row in db.scalars(select(DataSource)).all()}
     for name, provider, dataset_id, source_type, interval, stale in SOURCE_DEFINITIONS:
-        if dataset_id not in existing:
+        row = existing.get(dataset_id)
+        if row is None:
             db.add(
                 DataSource(
                     name=name,
@@ -33,8 +47,11 @@ def ensure_sources(db: Session) -> None:
                     check_interval_seconds=interval,
                     stale_after_seconds=stale,
                     enabled=source_type != "test_fixture",
+                    license_url=LICENSE_URLS.get(dataset_id),
                 )
             )
+        elif not row.license_url and dataset_id in LICENSE_URLS:
+            row.license_url = LICENSE_URLS[dataset_id]
     db.commit()
 
 
