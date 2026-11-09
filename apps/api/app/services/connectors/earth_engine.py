@@ -25,6 +25,10 @@ class EarthEngineConnector(SourceConnector):
     processing_recipe: Dict[str, Any] = {}
     analysis_scale_m: int = 30
     min_publishable_coverage: float = 0.05
+    # About 1 m at Bangkok's latitude, an order of magnitude below the 10-30 m
+    # analysis pixels. The full boundaries are 3.4 MB of GeoJSON; serialising
+    # them into each Earth Engine request exhausted the 768 MiB runtime.
+    analysis_geometry_simplify_degrees: float = 0.00001
     processor_version = "gee-zonal-v2"
     requires_area_processing = True
     produces_raster = True
@@ -249,8 +253,11 @@ class EarthEngineConnector(SourceConnector):
         except Exception as exc:
             raise ConnectorError("Earth Engine regional aggregation failed: %s" % exc) from exc
 
-        return [self._record_from_properties({**row, "coverage_fraction": valid_coverage[area_id]})
-                for area_id, row in rows.items()]
+        records = [self._record_from_properties({**row, "coverage_fraction": valid_coverage[area_id]})
+                   for area_id, row in rows.items()]
+        for record in records:
+            record.metadata["boundary_simplify_degrees"] = self.analysis_geometry_simplify_degrees
+        return records
 
     @staticmethod
     def _regional_rows(response: Dict[str, Any], expected: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:

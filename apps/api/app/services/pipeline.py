@@ -1,3 +1,4 @@
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence
@@ -104,7 +105,19 @@ def _publish_fixture_indicators(db: Session, version: DatasetVersion, payload: D
         )
 
 
-def _area_inputs(db: Session) -> List[Dict[str, Any]]:
+def _area_inputs(db: Session, simplify_degrees: Optional[float] = None) -> List[Dict[str, Any]]:
+    """District geometries for aggregation.
+
+    Connectors that aggregate rasters far coarser than the boundary survey can
+    ask PostGIS for a topology-preserving simplification. This keeps the
+    request built for a remote provider small on the memory-limited runtime.
+    """
+    if simplify_degrees and db.get_bind().dialect.name == "postgresql":
+        geojson = func.ST_AsGeoJSON(func.ST_SimplifyPreserveTopology(GeographicArea.geometry, simplify_degrees), 7)
+        return [
+            {"id": area_id, "geometry": json.loads(value) if value else None}
+            for area_id, value in db.execute(select(GeographicArea.id, geojson)).all()
+        ]
     return [
         {"id": area.id, "geometry": to_geojson(area.geometry)}
         for area in db.scalars(select(GeographicArea)).all()
@@ -450,7 +463,7 @@ def ingest_asset(db: Session, source: DataSource, connector: SourceConnector, as
     job.progress = 0.55
     db.commit()
     try:
-        area_inputs = _area_inputs(db)
+        area_inputs = _area_inputs(db, getattr(connector, "analysis_geometry_simplify_degrees", None))
         records: List[AreaProcessingRecord] = []
         boundary_records: List[BoundaryProcessingRecord] = []
         candidate_records: List[CandidateProcessingRecord] = []
