@@ -8,12 +8,43 @@ import signal
 import ssl
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 
 PRIVATE_API_PORT = 18000
+
+
+def prepare_earth_engine_credentials(env, scratch):
+    encoded = env.pop("GEE_SERVICE_ACCOUNT_JSON_BASE64", "")
+    if not encoded:
+        return
+    project = env.get("GEE_PROJECT", "")
+    if not project or len(encoded) > 32_768 or env.get("GOOGLE_APPLICATION_CREDENTIALS"):
+        raise ValueError("Earth Engine requires a project and one credential source")
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+        key = json.loads(raw)
+        if (not isinstance(key, dict) or key.get("type") != "service_account"
+                or key.get("project_id") != project or key.get("token_uri") != "https://oauth2.googleapis.com/token"
+                or not str(key.get("client_email", "")).endswith(f"@{project}.iam.gserviceaccount.com")
+                or not str(key.get("private_key", "")).startswith("-----BEGIN PRIVATE KEY-----\n")):
+            raise ValueError
+    except (ValueError, TypeError):
+        raise ValueError("Invalid Earth Engine service account configuration") from None
+    scratch.mkdir(mode=0o700, parents=True, exist_ok=True)
+    key_path = scratch / "earthengine-key.json"
+    with tempfile.NamedTemporaryFile(dir=scratch, prefix="earthengine-", delete=False) as output:
+        temporary_path = Path(output.name)
+        try:
+            output.write(raw)
+            output.flush()
+            temporary_path.replace(key_path)
+        finally:
+            temporary_path.unlink(missing_ok=True)
+    env["GOOGLE_APPLICATION_CREDENTIALS"] = str(key_path)
 
 
 def prepare_environment(source, scratch):
@@ -68,6 +99,7 @@ def prepare_environment(source, scratch):
     if port == PRIVATE_API_PORT:
         raise ValueError("Assigned web port conflicts with the private API port")
     env["PORT"] = str(port)
+    prepare_earth_engine_credentials(env, scratch)
     return env
 
 

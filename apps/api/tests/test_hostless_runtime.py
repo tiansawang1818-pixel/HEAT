@@ -1,5 +1,6 @@
 import base64
 import importlib.util
+import json
 import os
 from pathlib import Path
 import sys
@@ -43,6 +44,26 @@ def test_hostless_assigned_port_8000_keeps_web_and_api_separate(tmp_path):
     assert prepared["PORT"] == "8000"
     assert api_port != prepared["PORT"]
     assert urlsplit(prepared["API_INTERNAL_URL"]).port == int(api_port)
+
+
+def test_earth_engine_secret_is_materialized_without_inheriting_encoded_key(tmp_path):
+    key = {
+        "type": "service_account", "project_id": "heatshift-test",
+        "client_email": "reader@heatshift-test.iam.gserviceaccount.com",
+        "token_uri": "https://oauth2.googleapis.com/token",
+        "private_key": "-----BEGIN PRIVATE KEY-----\nTEST_PLACEHOLDER",
+    }
+    encoded = base64.b64encode(json.dumps(key).encode()).decode()
+    env = {**managed_environment(), "GEE_PROJECT": "heatshift-test", "GEE_SERVICE_ACCOUNT_JSON_BASE64": encoded}
+    prepared = runtime.prepare_environment(env, tmp_path)
+    credential_file = Path(prepared["GOOGLE_APPLICATION_CREDENTIALS"])
+    assert "GEE_SERVICE_ACCOUNT_JSON_BASE64" not in prepared
+    assert json.loads(credential_file.read_text()) == key
+    assert credential_file.stat().st_mode & 0o777 == 0o600
+    with pytest.raises(ValueError, match="Invalid Earth Engine service account configuration"):
+        runtime.prepare_environment({**env, "GEE_PROJECT": "other-project"}, tmp_path)
+    with pytest.raises(ValueError, match="one credential source"):
+        runtime.prepare_environment({**env, "GOOGLE_APPLICATION_CREDENTIALS": "/secrets/other.json"}, tmp_path)
 
 
 @pytest.mark.parametrize("overrides", [

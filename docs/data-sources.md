@@ -10,7 +10,7 @@
 | WorldPop | population estimate | 30 d | release/version + reference year/checksum | ไม่ใช่ real-time; verify license and product metadata |
 | Open-Meteo | observation/model/forecast context | 1 h | reference/model/run time | Usually no key; respect fair-use/rate limit and preserve model metadata |
 | OSM / Overture | roads, buildings, public spaces | 7 d | replication sequence/release ID | Prefer approved extracts/incremental diffs; Overpass is not bulk production pipeline |
-| Bangkok district boundaries | BMA / data.go.th official 50-district Shapefile | 7 d | CKAN resource ID + resource modification time + SHA-256 | Provider metadata currently does not declare a licence; preserve attribution and review reuse terms before public redistribution |
+| Bangkok district boundaries | BMA / data.go.th official 50-district Shapefile | 7 d | CKAN resource ID + resource modification time + SHA-256 | The BMA origin catalog does not declare a license. The bundled initial snapshot comes from the data.go.th Creative Commons Attribution entry. |
 
 ## Required environment
 
@@ -37,19 +37,21 @@ OVERTURE_RELEASE=
 
 Mount Google service-account JSON as a Docker/Kubernetes secret; do not copy it into the image or repository. Production should prefer workload identity where supported.
 
+For the combined Hostless runtime, set `GEE_PROJECT` and inject `GEE_SERVICE_ACCOUNT_JSON_BASE64` as a private environment secret if mounted credentials are unavailable. The runtime removes the encoded value from child environments and gives Google ADC the path to a mode-0600 file. Use a service account dedicated to this project with the [Earth Engine API permissions](https://developers.google.com/earth-engine/guides/access_control#set_earth_engine_service_usage).
+
 ## Validation gates
 
 ### Bangkok administrative boundaries
 
 - ตรวจ CKAN metadata ของชุด `e537025b-1cf6-4c5b-8e46-c2e976f13283` และ resource ID ที่ตรึงไว้ก่อนดาวน์โหลด
-- ใช้ CKAN API ของกรุงเทพมหานครโดยตรง; การตรวจจาก Hostless วันที่ 8 พฤศจิกายน 2026 พบ national catalog `data.go.th/api/3/action/package_show` ตอบ 403 แต่ origin catalog ของ BMA ตอบ 200 สำหรับ dataset/resource เดียวกัน ไม่มีการเพิ่ม API key หรือข้ามการยืนยันตัวตน
+- ตรวจ CKAN API ของกรุงเทพมหานครทุก 7 วัน เมื่อยังไม่มีขอบเขตที่เผยแพร่และเชื่อมต่อแค็ตตาล็อกไม่ได้ ระบบสามารถตรวจและเผยแพร่สำเนาจาก [ชุดข้อมูล 50 เขตของกรุงเทพมหานคร](https://data.go.th/th/dataset/district) ที่ระบุ Creative Commons Attribution ดูข้อมูลกำกับใน `data/bootstrap/bma/manifest.json`
 - รับเฉพาะ HTTPS จาก `data.bangkok.go.th`, จำกัดขนาด ZIP/member และอ่าน archive ในหน่วยความจำโดยไม่ extract path ลง filesystem
 - ต้นทางระบุ format ว่า `shapfile`; เก็บค่านี้ตามจริง และรับ alias ของ shapefile เฉพาะ URL `.zip` บน host ที่อนุญาต จากนั้นตรวจ ZIP และสมาชิก `.shp/.shx/.dbf/.prj` จริงเหมือนเดิม
 - อ่าน Shapefile encoding CP874, แปลง `EPSG:32647` เป็น `EPSG:4326`, repair geometry และตรวจว่าครบ 50 district codes/ชื่อไม่ซ้ำ
 - คำนวณ SHA-256 จาก ZIP จริง เก็บ `DistrictBoundary` ทุกเวอร์ชัน และปิด `valid_to` ของขอบเขตก่อนหน้าแทนการลบประวัติ
 - เมื่อมี demo area ชื่อเดียวกัน ระบบอัปเกรด record เดิมเป็น official boundary เพื่อไม่สร้างเขตซ้ำใน local database
 
-ข้อมูลต้นทางระบุวันที่ resource ล่าสุดปี 2021 และ metadata package ปรับปรุงปี 2025 ระบบจะแสดง freshness ตามวันที่ resource จริง ไม่ใช้วันที่ ingest แทน และจะแสดงคำเตือนว่า provider metadata ไม่ได้ระบุ licence
+ไฟล์สำเนาระบุวันที่เผยแพร่ resource ปี 2020 ส่วนไฟล์ที่ตรวจจากแค็ตตาล็อก กทม. ระบุปี 2021 และมี SHA-256 ตรงกัน ระบบเก็บวันที่ตามรายการที่ใช้จริง เมื่อเผยแพร่สำเนาจะระบุว่าการตรวจต้นทางยังไม่สำเร็จ การตรวจครั้งถัดไปยังเรียกต้นทางตามกำหนดและคงขอบเขตที่เผยแพร่ไว้หากต้นทางยังใช้ไม่ได้
 
 ### Satellite-derived layers
 

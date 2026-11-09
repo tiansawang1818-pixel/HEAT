@@ -619,12 +619,13 @@ def run_monitor(db: Session, connector: SourceConnector, requested_by: str = "sc
                 jobs.append(job.id)
             check.queued_count = len(jobs)
             check.provider_quota = connector.quota_status()
-            check.status = "success"
+            check.error_message = connector.monitor_warning()
+            check.status = "degraded" if check.error_message else "success"
             check.completed_at = utcnow()
             db.commit()
             connector.checkpoint_store.clear()
             return {
-                "status": "success",
+                "status": check.status,
                 "source": source.name,
                 "discovered": len(assets),
                 "processed": len(processed),

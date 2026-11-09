@@ -192,6 +192,8 @@ def _format_source_status(source: DataSource, latest_any: Optional[DatasetVersio
         status, reason = "error", "เวอร์ชันล่าสุดไม่ผ่านการตรวจสอบ; ระบบยังคงใช้เวอร์ชันก่อนหน้า"
     elif check and check.status == "failed" and (not latest or not latest.published_at or _aware(check.checked_at) > _aware(latest.published_at)):
         status, reason = "error", "ตรวจสอบผู้ให้บริการครั้งล่าสุดไม่สำเร็จ; ยังคงใช้ข้อมูลที่เผยแพร่ก่อนหน้าเมื่อมี"
+    elif check and check.status == "degraded" and latest:
+        status, reason = "stale", "ยังตรวจสอบต้นทาง กทม. ไม่ได้ ระบบแสดงสำเนาขอบเขตจากแค็ตตาล็อกข้อมูลเปิดของรัฐที่ผ่านการตรวจสอบ"
     elif latest and latest.observed_at:
         age = (now - _aware(latest.observed_at)).total_seconds()
         if age > source.stale_after_seconds:
@@ -1890,7 +1892,7 @@ def ingestion_status(job_id: Optional[str] = None, db: Session = Depends(get_db)
             "discovered_assets_latest_checks": sum(item["discovered_count"] for item in source_checks),
             "processed_assets_latest_checks": sum(item["processed_count"] for item in source_checks),
             "failed_jobs_total": counts["failed"],
-            "sources_with_errors": sum(1 for item in source_checks if item["status"] == "failed"),
+            "sources_with_errors": sum(1 for item in source_checks if item["status"] in {"failed", "degraded"}),
         },
         "coverage": {
             "geographic_areas": area_count,

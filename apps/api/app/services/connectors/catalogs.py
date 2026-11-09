@@ -2,6 +2,7 @@ import hashlib
 import io
 import json
 import math
+import re
 import zipfile
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -35,6 +36,18 @@ class BangkokBoundaryConnector(SourceConnector):
     requires_boundary_processing = True
     processor_version = "bma-shapefile-v1"
     expected_area_count = 50
+    snapshot_catalog = "https://data.go.th/api/3/action/package_show"
+    snapshot_dataset = "663ed528-97d7-4dd2-a463-be865e6fda28"
+    snapshot_resource = "22667479-6786-495a-8606-c9b1dc433af2"
+    snapshot_landing_page = "https://data.go.th/en/dataset/district"
+
+    def __init__(self) -> None:
+        self._used_snapshot = False
+
+    def monitor_warning(self) -> Optional[str]:
+        if self._used_snapshot:
+            return "เชื่อมต่อแค็ตตาล็อก กทม. ไม่สำเร็จ จึงตรวจสอบสำเนาจากแค็ตตาล็อกข้อมูลเปิดของรัฐ"
+        return None
 
     @staticmethod
     def _parse_time(value: str) -> datetime:
@@ -42,6 +55,7 @@ class BangkokBoundaryConnector(SourceConnector):
         return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
     def discover(self, latest_asset_id: Optional[str] = None, checkpoint: Optional[Dict[str, Any]] = None) -> List[SourceAsset]:
+        self._used_snapshot = False
         try:
             response = httpx.get(
                 settings.bma_boundary_catalog_url,
@@ -50,16 +64,54 @@ class BangkokBoundaryConnector(SourceConnector):
             )
             response.raise_for_status()
             body = response.json()
+        except httpx.TransportError as exc:
+            # The snapshot is a first-publication fallback. A later outage must
+            # preserve the currently published geometry, regardless of version.
+            if not latest_asset_id and (settings.bma_boundary_snapshot_dir / "manifest.json").is_file():
+                return self._discover_snapshot()
+            raise ConnectorError("BMA boundary catalog request failed: %s" % exc) from exc
         except (httpx.HTTPError, ValueError) as exc:
             raise ConnectorError("BMA boundary catalog request failed: %s" % exc) from exc
+        return self._catalog_asset(body, settings.bma_boundary_dataset_id, settings.bma_boundary_resource_id,
+                                   latest_asset_id=latest_asset_id)
+
+    def _discover_snapshot(self) -> List[SourceAsset]:
+        try:
+            with (settings.bma_boundary_snapshot_dir / "manifest.json").open("rb") as manifest_file:
+                raw = manifest_file.read(65_537)
+            if len(raw) > 65_536:
+                raise ValueError("manifest exceeds the size limit")
+            manifest = json.loads(raw)
+            checksum = manifest["archive_sha256"]
+            retrieved_at = self._parse_time(manifest["retrieved_at"])
+            if (manifest["schema_version"] != 1 or manifest["catalog_url"] != self.snapshot_catalog
+                    or not re.fullmatch(r"[0-9a-f]{64}", checksum)
+                    or manifest["catalog"]["result"]["license_title"] != "Creative Commons Attributions"):
+                raise ValueError("manifest provenance is invalid")
+        except (KeyError, OSError, TypeError, ValueError) as exc:
+            raise ConnectorError("BMA boundary snapshot manifest is invalid") from exc
+        assets = self._catalog_asset(manifest["catalog"], self.snapshot_dataset, self.snapshot_resource, snapshot={
+            "snapshot_retrieved_at": retrieved_at.isoformat(),
+            "snapshot_archive_sha256": checksum,
+            "source_landing_page": self.snapshot_landing_page,
+        })
+        self._used_snapshot = True
+        return assets
+
+    def _catalog_asset(
+        self, body: Dict[str, Any], dataset_id: str, resource_id: str,
+        latest_asset_id: Optional[str] = None, snapshot: Optional[Dict[str, Any]] = None,
+    ) -> List[SourceAsset]:
         if not body.get("success") or not isinstance(body.get("result"), dict):
             raise ConnectorError("BMA boundary catalog response is incomplete")
         package = body["result"]
+        if package.get("id") != dataset_id:
+            raise ConnectorError("BMA boundary catalog returned a different dataset")
         resource = next(
             (
                 item
                 for item in package.get("resources", [])
-                if item.get("id") == settings.bma_boundary_resource_id
+                if item.get("id") == resource_id
             ),
             None,
         )
@@ -89,9 +141,10 @@ class BangkokBoundaryConnector(SourceConnector):
                     "resource_last_modified_at": last_modified,
                     "license": package.get("license_title") or "License not specified",
                     "publisher": "Bangkok Metropolitan Administration",
-                    "catalog_url": settings.bma_boundary_catalog_url,
+                    "catalog_url": self.snapshot_catalog if snapshot else settings.bma_boundary_catalog_url,
                     "processor_version": self.processor_version,
                     "data_class": "official_administrative_boundary",
+                    **(snapshot or {}),
                 },
             )
         ]
@@ -101,17 +154,21 @@ class BangkokBoundaryConnector(SourceConnector):
         errors = list(report["errors"])
         resource_url = str(asset.metadata.get("resource_url") or "")
         parsed = urlparse(resource_url)
-        if parsed.scheme != "https" or parsed.hostname != "data.bangkok.go.th":
-            errors.append("BMA boundary resource URL must use the approved data.bangkok.go.th HTTPS host")
+        expected_host = "data.go.th" if "snapshot_archive_sha256" in asset.metadata else "data.bangkok.go.th"
+        if parsed.scheme != "https" or parsed.hostname != expected_host:
+            errors.append("BMA boundary resource URL must use the approved %s HTTPS host" % expected_host)
         resource_format = str(asset.metadata.get("resource_format", "")).strip().upper()
         # The BMA catalog labels this ZIP as "shapfile". Preserve that original
         # metadata, but still require the archive suffix and validate its bytes.
         if resource_format not in {"ZIP", "SHP", "SHAPEFILE", "SHAPFILE"} or not parsed.path.lower().endswith(".zip"):
             errors.append("BMA boundary resource must be the configured ZIP shapefile")
+        warnings = list(report["warnings"])
+        if asset.metadata.get("license") == "License not specified":
+            warnings.append("Provider metadata does not specify a data license")
         return {
             "passed": not errors,
             "errors": errors,
-            "warnings": [*report["warnings"], "Provider metadata does not specify a data license"],
+            "warnings": warnings,
             "metrics": {
                 "resource_id": asset.metadata.get("resource_id"),
                 "resource_last_modified_at": asset.metadata.get("resource_last_modified_at"),
@@ -129,7 +186,19 @@ class BangkokBoundaryConnector(SourceConnector):
             raise ConnectorError("BMA boundary ZIP member exceeds the configured size limit")
         return archive.read(info)
 
-    def process_boundaries(self, asset: SourceAsset) -> List[BoundaryProcessingRecord]:
+    def _archive_bytes(self, asset: SourceAsset) -> bytes:
+        snapshot_hash = asset.metadata.get("snapshot_archive_sha256")
+        if snapshot_hash is not None:
+            if not re.fullmatch(r"[0-9a-f]{64}", snapshot_hash):
+                raise ConnectorError("BMA boundary snapshot checksum is invalid")
+            try:
+                with (settings.bma_boundary_snapshot_dir / (snapshot_hash + ".zip")).open("rb") as snapshot_file:
+                    payload = snapshot_file.read(settings.bma_boundary_max_download_bytes + 1)
+            except OSError as exc:
+                raise ConnectorError("BMA boundary snapshot could not be read") from exc
+            if len(payload) > settings.bma_boundary_max_download_bytes or hashlib.sha256(payload).hexdigest() != snapshot_hash:
+                raise ConnectorError("BMA boundary snapshot archive does not match its checksum or size limit")
+            return payload
         try:
             response = httpx.get(
                 asset.metadata["resource_url"],
@@ -141,13 +210,17 @@ class BangkokBoundaryConnector(SourceConnector):
             raise ConnectorError("BMA boundary download failed: %s" % exc) from exc
         if len(response.content) > settings.bma_boundary_max_download_bytes:
             raise ConnectorError("BMA boundary download exceeds the configured size limit")
-        checksum = hashlib.sha256(response.content).hexdigest()
+        return response.content
+
+    def process_boundaries(self, asset: SourceAsset) -> List[BoundaryProcessingRecord]:
+        payload = self._archive_bytes(asset)
+        checksum = hashlib.sha256(payload).hexdigest()
         try:
-            archive = zipfile.ZipFile(io.BytesIO(response.content))
-            shp = self._zip_member(archive, ".shp")
-            shx = self._zip_member(archive, ".shx")
-            dbf = self._zip_member(archive, ".dbf")
-            prj = self._zip_member(archive, ".prj").decode("utf-8")
+            with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+                shp = self._zip_member(archive, ".shp")
+                shx = self._zip_member(archive, ".shx")
+                dbf = self._zip_member(archive, ".dbf")
+                prj = self._zip_member(archive, ".prj").decode("utf-8")
         except (zipfile.BadZipFile, UnicodeDecodeError) as exc:
             raise ConnectorError("BMA boundary ZIP is invalid: %s" % exc) from exc
 
@@ -164,7 +237,10 @@ class BangkokBoundaryConnector(SourceConnector):
                 dbf=io.BytesIO(dbf),
                 encoding="cp874",
             )
-            transformer = Transformer.from_crs(CRS.from_wkt(prj), CRS.from_epsg(4326), always_xy=True)
+            source_crs = CRS.from_wkt(prj)
+            if source_crs.to_epsg() != 32647:
+                raise ValueError("Expected the original EPSG:32647 district geometry")
+            transformer = Transformer.from_crs(source_crs, CRS.from_epsg(4326), always_xy=True)
         except Exception as exc:
             raise ConnectorError("BMA boundary shapefile initialization failed: %s" % exc) from exc
 

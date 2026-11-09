@@ -93,6 +93,7 @@ export function HeatMap({
   const readyCallbackRef = useRef(onMapReady);
   const viewportCallbackRef = useRef(onViewportChange);
   const initialViewportRef = useRef(viewport);
+  const hasOfficialBoundaries = data.features.some((feature) => feature.properties.boundary_quality_status === "verified_official_boundary");
 
   useEffect(() => {
     readyCallbackRef.current = onMapReady;
@@ -245,7 +246,16 @@ export function HeatMap({
   return (
     <div className="absolute inset-0">
       <div ref={containerRef} className="h-full w-full" aria-label={mapLabel} />
-      {!compact && (
+      {hasOfficialBoundaries ? (
+        <a
+          className="absolute bottom-7 right-1 z-10 rounded bg-ink/90 px-2 py-1 text-[10px] text-slate-200 underline"
+          href="https://data.go.th/th/dataset/district"
+          target="_blank"
+          rel="noreferrer"
+        >
+          ขอบเขตเขต · กรุงเทพมหานคร
+        </a>
+      ) : !compact && (
         <div className="pointer-events-none absolute bottom-7 left-1/2 z-10 -translate-x-1/2 rounded-full border border-white/10 bg-ink/85 px-3 py-1.5 font-mono text-[9px] uppercase tracking-[.16em] text-slate-400 backdrop-blur">
           MapLibre GL · deck.gl · WGS84
         </div>

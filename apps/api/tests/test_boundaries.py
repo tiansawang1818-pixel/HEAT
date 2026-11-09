@@ -1,4 +1,5 @@
 import io
+import shutil
 import zipfile
 from datetime import datetime, timezone
 
@@ -8,8 +9,9 @@ import shapefile
 from pyproj import Transformer
 from sqlalchemy import func, select
 
-from app.models.entities import DatasetVersion, DistrictBoundary, GeographicArea
-from app.services.connectors.base import SourceAsset
+from app.core.config import settings
+from app.models.entities import DatasetVersion, DistrictBoundary, GeographicArea, SourceCheck
+from app.services.connectors.base import ConnectorError, SourceAsset
 from app.services.connectors.catalogs import BANGKOK_EXTENT, BangkokBoundaryConnector
 from app.services.pipeline import run_monitor
 
@@ -140,3 +142,42 @@ def test_boundary_format_alias_still_requires_approved_zip_resource(metadata):
     asset = SourceAsset.with_checksum("isolated-test-resource", "test-version", datetime.now(timezone.utc),
                                       BANGKOK_EXTENT, metadata=metadata)
     assert BangkokBoundaryConnector().validate(asset)["passed"] is False
+
+
+def test_bundled_official_boundaries_publish_only_as_bootstrap_when_origin_unreachable(db, monkeypatch):
+    def unreachable(*args, **kwargs):
+        raise httpx.ConnectTimeout("origin unreachable")
+
+    monkeypatch.setattr(httpx, "get", unreachable)
+    connector = BangkokBoundaryConnector()
+    result = run_monitor(db, connector, requested_by="test")
+    version = db.scalar(select(DatasetVersion))
+    assert result["status"] == "degraded" and result["processed"] == 1
+    assert version.status == "published"
+    assert version.observed_at.date().isoformat() == "2020-08-11"
+    assert version.metadata_json["license"] == "Creative Commons Attributions"
+    assert version.checksum == version.metadata_json["snapshot_archive_sha256"]
+    assert db.scalar(select(func.count()).select_from(GeographicArea)) == 50
+    assert db.scalar(select(SourceCheck)).status == "degraded"
+
+    with pytest.raises(ConnectorError, match="origin unreachable"):
+        run_monitor(db, connector, requested_by="test")
+    assert db.scalar(select(func.count()).select_from(DatasetVersion)) == 1
+    assert db.get(DatasetVersion, version.id).status == "published"
+
+
+def test_corrupted_boundary_snapshot_is_never_published(db, monkeypatch, tmp_path):
+    original = settings.bma_boundary_snapshot_dir
+    shutil.copyfile(original / "manifest.json", tmp_path / "manifest.json")
+    archive = next(original.glob("*.zip"))
+    (tmp_path / archive.name).write_bytes(b"invalid archive")
+    monkeypatch.setattr(settings, "bma_boundary_snapshot_dir", tmp_path)
+
+    def unreachable(*args, **kwargs):
+        raise httpx.ConnectError("origin unreachable")
+
+    monkeypatch.setattr(httpx, "get", unreachable)
+    with pytest.raises(ConnectorError, match="does not match its checksum"):
+        run_monitor(db, BangkokBoundaryConnector(), requested_by="test")
+    assert db.scalar(select(func.count()).select_from(GeographicArea)) == 0
+    assert db.scalar(select(DatasetVersion)).status == "failed"

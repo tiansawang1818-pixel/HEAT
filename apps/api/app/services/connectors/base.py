@@ -142,6 +142,10 @@ class SourceConnector(ABC):
         """Return provider quota metadata captured during the latest request."""
         return {}
 
+    def monitor_warning(self) -> Optional[str]:
+        """Report an upstream check that completed using a degraded input path."""
+        return None
+
     def raster_metadata(self, asset: SourceAsset) -> Optional[Dict[str, Any]]:
         return None
 

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "retrieved_at": "2026-11-09T02:50:22.632432+00:00",
+  "catalog_url": "https://data.go.th/api/3/action/package_show",
+  "archive_sha256": "f44bfc78a89e59912f285a0fddb1b073ae1e82a01a4e202196e841bbe3ce54f5",
+  "catalog": {
+    "success": true,
+    "result": {
+      "id": "663ed528-97d7-4dd2-a463-be865e6fda28",
+      "title": "50 เขตของกรุงเทพมหานคร",
+      "metadata_modified": "2021-10-31T05:59:02.972658",
+      "license_title": "Creative Commons Attributions",
+      "resources": [
+        {
+          "id": "22667479-6786-495a-8606-c9b1dc433af2",
+          "url": "https://data.go.th/dataset/663ed528-97d7-4dd2-a463-be865e6fda28/resource/22667479-6786-495a-8606-c9b1dc433af2/download/district.zip",
+          "format": "ZIP",
+          "name": "50 เขตของกรุงเทพมหานคร",
+          "last_modified": "2020-08-11T04:08:20.551351",
+          "created": "2020-08-11T04:08:20.669741"
+        }
+      ]
+    }
+  }
+}
