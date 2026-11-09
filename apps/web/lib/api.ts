@@ -346,10 +346,29 @@ export async function runOptimization(input: {
   return normalizeOptimizationResult(raw, input.strategy);
 }
 
+export async function runPlanningEstimate(input: {
+  budget_thb: number;
+  strategy: string;
+  intervention_types: string[];
+}): Promise<OptimizationResult> {
+  const objectiveMap: Record<string, string> = { equity: "priority", cost_effective: "cost_effectiveness" };
+  const raw = await request<Record<string, unknown>>("/api/optimization/estimate", {
+    method: "POST",
+    body: JSON.stringify({
+      budget_thb: input.budget_thb,
+      objective: objectiveMap[input.strategy] || input.strategy,
+      enabled_types: input.intervention_types,
+    }),
+  });
+  return normalizeOptimizationResult(raw, input.strategy);
+}
+
 function normalizeOptimizationResult(raw: Record<string, unknown>, strategyFallback?: string): OptimizationResult {
   const selected = Array.isArray(raw.selected) ? raw.selected as Array<Record<string, unknown>> : [];
+  const planning = raw.mode === "planning_estimate";
   return {
-    run_id: String(raw.run_id),
+    mode: planning ? "planning_estimate" : "decision",
+    run_id: raw.run_id ? String(raw.run_id) : "planning-estimate",
     strategy: String(raw.objective || strategyFallback || "balanced"),
     budget_thb: Number(raw.budget_thb || 0),
     total_cost_thb: Number(raw.allocated_thb || 0),

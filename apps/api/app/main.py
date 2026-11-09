@@ -29,6 +29,7 @@ def _rate_limit_rule(method: str, path: str):
         return None
     exact = {
         "/api/optimization/run": ("optimization", settings.rate_limit_optimization_per_minute, False),
+        "/api/optimization/estimate": ("optimization", settings.rate_limit_optimization_per_minute, False),
         "/api/scenarios/compare": ("scenario", settings.rate_limit_scenario_per_minute, False),
         "/api/forecast/run": ("forecast", settings.rate_limit_forecast_per_minute, False),
         "/api/assistant/query": ("assistant", settings.rate_limit_assistant_per_minute, False),

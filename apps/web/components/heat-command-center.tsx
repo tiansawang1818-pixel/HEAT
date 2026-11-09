@@ -77,6 +77,7 @@ import {
   loadOptimizationRun,
   runForecastScenario,
   runOptimization,
+  runPlanningEstimate,
   searchAreaDirectory,
   saveScenario,
   streamUrl,
@@ -288,7 +289,7 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
   }, []);
 
   const reloadOptimizationStatus = useCallback(async () => {
-    if (optimization?.run_id) {
+    if (optimization?.run_id && optimization.mode !== "planning_estimate") {
       try {
         const latest = await loadOptimizationRun(optimization.run_id);
         setOptimization({ ...latest, strategy: optimization.strategy });
@@ -558,11 +559,14 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
     return "unavailable" as const;
   }, [data.datasets]);
 
-  async function handleOptimize(compare = false) {
+  async function handleOptimize(compare = false, planning = false) {
     setOptimizing(true);
     setActionError(null);
     try {
-      if (compare) {
+      if (planning) {
+        setOptimization(await runPlanningEstimate({ budget_thb: budget, strategy, intervention_types: interventions }));
+        setBottomOpen(true);
+      } else if (compare) {
         const results = await compareScenarios({ budget_thb: budget, intervention_types: interventions });
         setScenarioResults(results);
         setActiveScenarioId(results.at(-1)?.run_id || null);
@@ -613,7 +617,7 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
   }
 
   async function handleExportReport() {
-    if (!optimization?.run_id) return;
+    if (!optimization?.run_id || optimization.mode === "planning_estimate") return;
     setExportingReport(true);
     setActionError(null);
     try {
@@ -942,6 +946,7 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
                 }}
                 onRun={() => void handleOptimize(false)}
                 onCompare={() => void handleOptimize(true)}
+                onEstimate={() => void handleOptimize(false, true)}
                 onExport={() => void handleExportReport()}
                 loading={optimizing}
                 exporting={exportingReport}
@@ -1266,6 +1271,7 @@ interface OptimizerPanelProps {
   setInterventions: (value: string[]) => void;
   onRun: () => void;
   onCompare: () => void;
+  onEstimate: () => void;
   onExport: () => void;
   loading: boolean;
   exporting: boolean;
@@ -1317,8 +1323,12 @@ function OptimizerPanel(props: OptimizerPanelProps) {
         {props.loading ? <RefreshCw className="animate-spin" size={15} /> : <Sparkles size={15} />} {props.loading ? "กำลังแก้ปัญหา…" : "คำนวณพอร์ตที่เหมาะสม"}
       </Button>
       <Button className="mt-2 w-full" variant="outline" disabled={props.loading || props.disabled} onClick={props.onCompare}><FlaskConical size={15} /> เทียบ 3 ยุทธศาสตร์</Button>
+      <Button className="mt-2 w-full" variant="outline" disabled={props.loading || props.disabled || !props.interventions.length} onClick={props.onEstimate}><MapIcon size={15} /> ประมาณการเบื้องต้น (ยังไม่สำรวจ)</Button>
       {props.result && (
         <>
+          {props.result.mode === "planning_estimate" && (
+            <div className="inline-warning"><strong>ประมาณการเบื้องต้นเพื่อวางแผนเท่านั้น</strong> จุดเหล่านี้ยังไม่ผ่านการสำรวจพื้นที่ สิทธิ์ในที่ดิน หรือการตรวจแบบ ห้ามใช้ตัดสินใจลงทุน</div>
+          )}
           <Card className="result-card">
             <div><span>ใช้งบ</span><strong>{formatBaht(props.result.total_cost_thb)}</strong></div>
             <div><span>ผลรวมประมาณการ (ยังไม่หักซ้ำ)</span><strong>{formatNumber(props.result.estimated_beneficiaries)}</strong></div>
@@ -1326,10 +1336,10 @@ function OptimizerPanel(props: OptimizerPanelProps) {
             {props.result.is_outdated && <p className="inline-warning">มีชุดข้อมูลใหม่กว่า กรุณาคำนวณอีกครั้ง</p>}
             {props.result.limitations?.map((item, index) => <p className="readiness-scope" key={index}>{item}</p>)}
           </Card>
-          <Button className="mt-2 w-full" variant="outline" disabled={props.exporting} onClick={props.onExport}>
+          {props.result.mode !== "planning_estimate" && <Button className="mt-2 w-full" variant="outline" disabled={props.exporting} onClick={props.onExport}>
             {props.exporting ? <RefreshCw className="animate-spin" size={15} /> : <Download size={15} />}
             {props.exporting ? "กำลังสร้างรายงาน…" : "ส่งออกรายงานการตัดสินใจ"}
-          </Button>
+          </Button>}
         </>
       )}
       {!!props.scenarios.length && (

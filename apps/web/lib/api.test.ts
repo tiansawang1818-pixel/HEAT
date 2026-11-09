@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { askAssistant, compareScenarios, loadAreaDetail, loadDashboardData, loadDatasetVersions, loadLayerFeatures, loadOptimizationRun, loadProductionReadiness, loadPublishedDataReadiness, loadRasterTileDescriptor, runForecastScenario, saveScenario, searchAreaDirectory } from "./api";
+import { askAssistant, compareScenarios, loadAreaDetail, loadDashboardData, loadDatasetVersions, loadLayerFeatures, loadOptimizationRun, loadProductionReadiness, loadPublishedDataReadiness, loadRasterTileDescriptor, runForecastScenario, runPlanningEstimate, saveScenario, searchAreaDirectory } from "./api";
 import { formatBaht, formatNumber, freshnessLabel } from "./utils";
 
 afterEach(() => {
@@ -53,6 +53,16 @@ describe("Thai presentation helpers", () => {
       summary: { ready: 0, warning: 0, blocked: 1 }, limitations_th: "unit test", external_verification_required_th: [],
     })));
     await expect(loadPublishedDataReadiness()).rejects.toThrow("รูปแบบผลตรวจข้อมูล");
+  });
+
+  it("marks planning estimates so they are never treated as recorded decisions", async () => {
+    const fetchMock = vi.fn(async (_url: string) => Response.json({ run_id: null, mode: "planning_estimate", allocated_thb: 1600,
+      selected: [{ id: "osm-1", estimated_cost_thb: 800, estimated_beneficiaries: null }], limitations: ["ห้ามใช้ตัดสินใจลงทุน"] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await runPlanningEstimate({ budget_thb: 100000, strategy: "balanced", intervention_types: ["tree_planting"] });
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/api/optimization/estimate");
+    expect(result).toMatchObject({ mode: "planning_estimate", run_id: "planning-estimate", total_cost_thb: 1600 });
+    expect(result.allocations[0].cost_thb).toBe(800);
   });
 
   it("formats a million-baht budget compactly", () => {

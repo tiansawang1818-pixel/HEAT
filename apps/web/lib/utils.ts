@@ -311,6 +311,8 @@ export interface OptimizationResult {
   is_demo?: boolean;
   status?: string;
   limitations?: string[];
+  /** "planning_estimate" results price unverified sites and are never decisions. */
+  mode?: "decision" | "planning_estimate";
 }
 
 export interface SavedScenarioRecord {

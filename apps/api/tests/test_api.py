@@ -1079,3 +1079,46 @@ def test_map_features_cache_refreshes_after_pipeline_event(client, db):
     db.commit()
     again = client.get("/api/map/features?layer=temperature")
     assert again.status_code == 200
+
+
+def test_planning_estimate_prices_unverified_candidates_without_recording_a_decision(client, db):
+    from sqlalchemy import func
+    from app.models.entities import OptimizationRun
+
+    area = GeographicArea(id="estimate-area", name_th="พื้นที่ประมาณการ", name_en="Estimate area",
+                          geometry={"type": "Point", "coordinates": [100.55, 13.75]}, source_name="test")
+    unverified = [
+        CandidateIntervention(
+            id="estimate-%d" % index, area_id=area.id, name_th="จุดคัดกรอง %d" % index,
+            intervention_type=kind, geometry={"type": "Point", "coordinates": [100.55, 13.75]},
+            estimated_cost_thb=None, estimated_beneficiaries=None, priority_score=score, benefit_score=None,
+            feasibility_status="insufficient_evidence", evidence={"screening_only": True},
+        )
+        for index, (kind, score) in enumerate([
+            ("tree_planting", 90), ("tree_planting", 40), ("public_shade_structure", 80),
+        ])
+    ]
+    db.add_all([area, *unverified])
+    db.commit()
+
+    empty = client.post("/api/optimization/estimate", json={"budget_thb": 1_000_000}).json()
+    assert empty["status"] == "no_approved_costs" and empty["selected"] == []
+
+    created = client.post("/api/cost-assumptions", headers={"X-Admin-Key": "test-admin-key"}, json={
+        "intervention_type": "tree_planting", "version": "taling-chan-2567", "unit_cost_thb": 800,
+        "cost_basis": "fixed_per_site", "evidence_url": "https://example.org/taling-chan-2567",
+        "evidence_title": "ราคากลางเขตตลิ่งชัน",
+    })
+    assert created.status_code == 201
+
+    result = client.post("/api/optimization/estimate", json={"budget_thb": 100_000}).json()
+    assert result["mode"] == "planning_estimate" and result["run_id"] is None
+    assert result["priced_types"] == ["tree_planting"] and result["candidates_considered"] == 2
+    assert {item["id"] for item in result["selected"]} == {"estimate-0", "estimate-1"}
+    assert all(item["estimated_cost_thb"] == 800 for item in result["selected"])
+    assert result["selected"][0]["cost_source"]["version"] == "taling-chan-2567"
+    assert result["allocated_thb"] == 1_600
+    assert any("ห้ามใช้ตัดสินใจลงทุน" in line for line in result["limitations"])
+    assert db.scalar(select(func.count()).select_from(OptimizationRun)) == 0
+    # The evidence-gated optimizer still sees nothing to fund.
+    assert client.post("/api/optimization/run", json={"budget_thb": 100_000}).json()["selected"] == []

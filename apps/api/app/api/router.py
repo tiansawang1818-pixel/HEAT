@@ -1345,6 +1345,99 @@ def optimization_run(request: OptimizationRequest, db: Session = Depends(get_db)
     }
 
 
+PLANNING_ESTIMATE_LIMITATIONS = [
+    "ประมาณการเบื้องต้นเพื่อวางแผนเท่านั้น จุดเหล่านี้ยังไม่ผ่านการสำรวจพื้นที่ ยืนยันสิทธิ์ในที่ดิน หรือการตรวจแบบ ห้ามใช้ตัดสินใจลงทุน",
+    "ต้นทุนต่อจุดมาจากสมมติฐานราคาที่ผู้ดูแลอนุมัติแล้วของแต่ละประเภทโครงการ ไม่ใช่ราคาของจุดนั้นจริง",
+    "ผลนี้ไม่ถูกบันทึกเป็นการตัดสินใจและไม่นับในการตรวจความพร้อมข้อมูล",
+    "จุดที่ยังไม่มีประมาณการผู้รับประโยชน์ถูกนับผู้รับประโยชน์เป็นศูนย์ในการจัดลำดับ",
+    "ไม่ตีความคะแนนความร้อนเป็นฐานะทางเศรษฐกิจ",
+]
+
+
+def _approved_cost_assumptions(db: Session) -> Dict[str, CostAssumption]:
+    """Latest effective approved fixed-per-site assumption for each intervention type."""
+    now = datetime.now(timezone.utc)
+    latest: Dict[str, CostAssumption] = {}
+    for row in db.scalars(select(CostAssumption).order_by(desc(CostAssumption.effective_from))).all():
+        terms = row.assumptions or {}
+        unit_cost = terms.get("unit_cost_thb")
+        if (row.intervention_type in latest or terms.get("status") != "approved"
+                or terms.get("cost_basis") != "fixed_per_site"
+                or not isinstance(unit_cost, (int, float)) or unit_cost <= 0
+                or (_aware(row.effective_from) and _aware(row.effective_from) > now)):
+            continue
+        latest[row.intervention_type] = row
+    return latest
+
+
+@router.post("/optimization/estimate")
+def optimization_estimate(request: OptimizationRequest, db: Session = Depends(get_db)) -> Dict[str, Any]:
+    """Screening portfolio over unverified candidates priced by approved type-level costs.
+
+    Nothing is persisted and evidence-gated decisions are untouched: this answers
+    "what could this budget cover" before any site has been surveyed.
+    """
+    assumptions = _approved_cost_assumptions(db)
+    query = select(CandidateIntervention).where(
+        CandidateIntervention.active.is_(True),
+        CandidateIntervention.intervention_type.in_(list(assumptions) or [""]),
+    )
+    if request.candidate_ids is not None:
+        query = query.where(CandidateIntervention.id.in_(request.candidate_ids))
+    rows = list(db.scalars(query).all())
+    weights = _objective_weights(request.objective, request.weights)
+    candidates = [
+        Candidate(
+            id=row.id,
+            cost_thb=math.ceil(float(assumptions[row.intervention_type].assumptions["unit_cost_thb"])),
+            beneficiaries=float(row.estimated_beneficiaries or 0),
+            priority_score=float(row.priority_score or 0),
+            benefit_score=float(row.benefit_score or 0),
+            intervention_type=row.intervention_type,
+            beneficiaries_available=row.estimated_beneficiaries is not None,
+        )
+        for row in rows
+    ]
+    portfolio = optimize_portfolio(candidates, request.budget_thb, weights, request.enabled_types)
+    by_id = {row.id: row for row in rows}
+    selected = []
+    for candidate_id in portfolio.selected_ids:
+        row = by_id[candidate_id]
+        assumption = assumptions[row.intervention_type]
+        selected.append({
+            "id": row.id,
+            "area_id": row.area_id,
+            "name_th": row.name_th,
+            "intervention_type": row.intervention_type,
+            "geometry": to_geojson(row.geometry),
+            "estimated_cost_thb": math.ceil(float(assumption.assumptions["unit_cost_thb"])),
+            "estimated_beneficiaries": row.estimated_beneficiaries,
+            "priority_score": row.priority_score,
+            "feasibility_status": row.feasibility_status,
+            "objective_contribution": portfolio.contributions[row.id],
+            "cost_source": {"cost_assumption_id": assumption.id, "version": assumption.version,
+                            "evidence_url": assumption.evidence_url},
+        })
+    return {
+        "run_id": None,
+        "mode": "planning_estimate",
+        "status": "completed" if assumptions else "no_approved_costs",
+        "budget_thb": request.budget_thb,
+        "allocated_thb": portfolio.allocated_thb,
+        "unallocated_thb": request.budget_thb - portfolio.allocated_thb,
+        "estimated_beneficiaries": portfolio.beneficiaries,
+        "objective": request.objective,
+        "objective_value": portfolio.objective_value,
+        "solver": portfolio.solver,
+        "priced_types": sorted(assumptions),
+        "candidates_considered": len(candidates),
+        "selected": selected,
+        "limitations": PLANNING_ESTIMATE_LIMITATIONS + (
+            [] if assumptions else ["ยังไม่มีสมมติฐานราคาที่อนุมัติแล้ว จึงยังประมาณการไม่ได้"]
+        ),
+    }
+
+
 @router.get("/optimization/runs/{run_id}")
 def optimization_run_detail(run_id: str, db: Session = Depends(get_db)) -> Dict[str, Any]:
     run = db.get(OptimizationRun, run_id)
