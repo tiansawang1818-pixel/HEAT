@@ -106,12 +106,18 @@ def prepare_environment(source, scratch):
 def runtime_commands(root):
     api = root / "apps" / "api"
     celery = [sys.executable, "-m", "celery", "-A", "app.worker.celery_app"]
-    worker = ["worker", "--loglevel=INFO", "--pool=prefork", "--concurrency=1", "--without-gossip", "--without-mingle"]
+    worker = ["worker", "--loglevel=INFO", "--concurrency=1", "--without-gossip", "--without-mingle"]
+    # 768 MiB holds six Python processes plus Node. Ingestion keeps a prefork
+    # child so hard time limits still apply, and replaces it after any task
+    # that leaves it above 200 MB. The dispatcher only runs a short bounded
+    # dispatch task, so it runs in-process instead of forking a second copy.
+    ingestion = worker + ["--pool=prefork", "--max-memory-per-child=200000"]
+    dispatcher = worker + ["--pool=solo"]
     return {
         "api": ([sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", str(PRIVATE_API_PORT)], api),
         "web": (["node", "server.js"], root / "apps" / "web"),
-        "ingestion": (celery + worker + ["-Q", "celery", "--hostname=ingestion@%h"], api),
-        "dispatcher": (celery + worker + ["-Q", "control", "--hostname=dispatcher@%h"], api),
+        "ingestion": (celery + ingestion + ["-Q", "celery", "--hostname=ingestion@%h"], api),
+        "dispatcher": (celery + dispatcher + ["-Q", "control", "--hostname=dispatcher@%h"], api),
         "beat": (celery + ["beat", "--loglevel=INFO", "--schedule=/tmp/heatshift/celerybeat-schedule"], api),
     }
 

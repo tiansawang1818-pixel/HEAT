@@ -111,3 +111,10 @@ def test_shutdown_event_reaps_children(tmp_path):
     commands = {"waiting": ([sys.executable, "-c", "import time; time.sleep(30)"], tmp_path)}
     assert runtime.supervise(commands, dict(os.environ), stop, grace_seconds=1, on_started=started) == 0
     assert all(child.poll() is not None for child in children.values())
+
+
+def test_dispatcher_runs_in_process_and_ingestion_recycles_large_children(tmp_path):
+    commands = runtime.runtime_commands(tmp_path)
+    assert "--pool=solo" in commands["dispatcher"][0]
+    ingestion = commands["ingestion"][0]
+    assert "--pool=prefork" in ingestion and "--max-memory-per-child=200000" in ingestion
