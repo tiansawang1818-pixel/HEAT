@@ -1,5 +1,5 @@
 import { defaultLayers, demoDatasets, demoFeatures, isDemoFallbackEnabled } from "@/lib/demo-data";
-import { isSyntheticQuality } from "@/lib/utils";
+import { isSyntheticQuality, priorityComponentLabels } from "@/lib/utils";
 import type {
   AreaProperties,
   AdminSessionStatus,
@@ -287,7 +287,7 @@ export async function loadAreaDetail(areaId: string, datasetVersionId?: string):
     .filter(([key]) => ["lst_c_mean", "surface_temperature_c", "temperature", "ndvi", "tree_cover_fraction", "tree_coverage_pct", "built_fraction", "built_up_pct"].includes(key))
     .map(([, item]) => item.observed_at).filter(Boolean) as string[];
   const explanations = priority?.components
-    ? Object.entries(priority.components).filter(([, item]) => item != null).map(([key, item]) => `${key}: ${Number(item).toLocaleString("th-TH", { maximumFractionDigits: 2 })}`)
+    ? Object.entries(priority.components).filter(([, item]) => item != null).map(([key, item]) => `${priorityComponentLabels[key] ?? key}: ${Number(item).toLocaleString("th-TH", { maximumFractionDigits: 2 })}`)
     : [];
   return {
     id: String(raw.id || areaId),
@@ -304,7 +304,7 @@ export async function loadAreaDetail(areaId: string, datasetVersionId?: string):
     built_up_pct: value("built_fraction", "built_up_pct"),
     quality_status: synthetic ? "synthetic_demo" : boundaryQuality,
     observation_date: observed.sort().at(-1) || null,
-    priority_explanation: explanations.length ? explanations : priority?.missing_inputs?.map((item) => `ยังขาดข้อมูล: ${item}`),
+    priority_explanation: explanations.length ? explanations : priority?.missing_inputs?.map((item) => `ยังขาดข้อมูล: ${priorityComponentLabels[item] ?? item}`),
   };
 }
 

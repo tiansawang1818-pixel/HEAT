@@ -91,6 +91,7 @@ import {
   freshnessLabel,
   isSyntheticQuality,
   populationColorScale,
+  priorityComponentLabels,
   type AreaProperties,
   type AdminSessionStatus,
   type AreaDirectoryItem,
@@ -1042,13 +1043,6 @@ function asUtcWeatherTime(value: string) {
   return /(?:Z|[+-]\d\d:\d\d)$/.test(value) ? value : `${value}Z`;
 }
 
-const priorityComponentLabels: Record<string, string> = {
-  temperature_anomaly: "ความร้อนผิดปกติ",
-  population_exposure: "ประชากรสัมผัส",
-  vegetation_deficit: "การขาดพืชพรรณ",
-  built_intensity: "ความหนาแน่นสิ่งปลูกสร้าง",
-  historical_change: "การเปลี่ยนแปลงย้อนหลัง",
-};
 
 function InsightsOverlay({ rankings, loading, onSelectArea }: {
   rankings: PriorityRankingResult | null;
@@ -1441,11 +1435,11 @@ function HistoryChart({ history, loading, areaName }: { history: HistoryPoint[];
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={history} margin={{ top: 8, right: 10, bottom: 0, left: -20 }}>
               <CartesianGrid stroke="rgba(255,255,255,.06)" vertical={false} />
-              <XAxis dataKey="date" tick={{ fill: "#78909d", fontSize: 9 }} tickLine={false} axisLine={false} />
+              <XAxis dataKey="date" tickFormatter={(value) => formatThaiDate(String(value))} minTickGap={24} tick={{ fill: "#78909d", fontSize: 9 }} tickLine={false} axisLine={false} />
               <YAxis tick={{ fill: "#78909d", fontSize: 9 }} tickLine={false} axisLine={false} />
-              <Tooltip contentStyle={{ background: "#0d1922", border: "1px solid rgba(255,255,255,.12)", borderRadius: 8, fontSize: 11 }} />
-              <Line type="monotone" dataKey="temperature_c" stroke="#ff5a36" strokeWidth={2} dot={false} connectNulls />
-              <Line type="monotone" dataKey="priority_score" stroke="#4eeaff" strokeWidth={2} dot={false} connectNulls />
+              <Tooltip labelFormatter={(value) => formatThaiDate(String(value), true)} contentStyle={{ background: "#0d1922", border: "1px solid rgba(255,255,255,.12)", borderRadius: 8, fontSize: 11 }} />
+              <Line type="monotone" dataKey="temperature_c" name="อุณหภูมิพื้นผิว (°C)" stroke="#ff5a36" strokeWidth={2} dot={false} connectNulls />
+              <Line type="monotone" dataKey="priority_score" name="คะแนนลำดับความสำคัญ" stroke="#4eeaff" strokeWidth={2} dot={false} connectNulls />
             </LineChart>
           </ResponsiveContainer>
         ) : <div className="chart-empty"><History /> ยังไม่มีประวัติที่ผ่านการตรวจสอบสำหรับพื้นที่นี้</div>}

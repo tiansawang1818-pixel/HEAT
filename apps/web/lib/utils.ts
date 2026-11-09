@@ -28,6 +28,14 @@ export function formatThaiDate(value?: string | null, withTime = false) {
   }).format(date);
 }
 
+export const priorityComponentLabels: Record<string, string> = {
+  temperature_anomaly: "ความร้อนผิดปกติ",
+  population_exposure: "ประชากรสัมผัส",
+  vegetation_deficit: "การขาดพืชพรรณ",
+  built_intensity: "ความหนาแน่นสิ่งปลูกสร้าง",
+  historical_change: "การเปลี่ยนแปลงย้อนหลัง",
+};
+
 export function formatPopulationReferenceYear(value?: string | null) {
   if (!value) return "ยังไม่มีข้อมูล";
   const year = new Date(value).getUTCFullYear();

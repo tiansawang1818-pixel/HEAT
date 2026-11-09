@@ -1709,6 +1709,38 @@ def _budget_from_question(question: str) -> Optional[int]:
     return int(round(value))
 
 
+_THAI_MONTHS = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."]
+_THAI_STATUS = {
+    "up_to_date": "เป็นปัจจุบัน",
+    "updating": "กำลังอัปเดต",
+    "stale": "ข้อมูลเก่า",
+    "unavailable": "ไม่พร้อมใช้งาน",
+    "error": "เกิดข้อผิดพลาด",
+}
+_THAI_COMPONENTS = {
+    "temperature_anomaly": "ความร้อนผิดปกติ",
+    "population_exposure": "ประชากรสัมผัส",
+    "vegetation_deficit": "การขาดพืชพรรณ",
+    "built_intensity": "ความหนาแน่นสิ่งปลูกสร้าง",
+    "historical_change": "การเปลี่ยนแปลงย้อนหลัง",
+}
+
+
+def _thai_datetime(value: Any) -> str:
+    """Bangkok-time Thai date for assistant prose, e.g. 9 พ.ย. 2569 22:00 น."""
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return value
+    if not isinstance(value, datetime):
+        return "ไม่ทราบเวลา"
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    local = value.astimezone(timezone(timedelta(hours=7)))
+    return "%d %s %d %02d:%02d น." % (local.day, _THAI_MONTHS[local.month - 1], local.year + 543, local.hour, local.minute)
+
+
 @router.post("/assistant/query")
 def assistant_query(request: AssistantQuery, db: Session = Depends(get_db)) -> Dict[str, Any]:
     question = request.question.lower()
@@ -1768,8 +1800,9 @@ def assistant_query(request: AssistantQuery, db: Session = Depends(get_db)) -> D
             answer = "ขณะนี้ยังไม่มีข้อมูลที่ผ่านการตรวจสอบและเผยแพร่ จึงไม่ควรระบุวันที่สังเกตการณ์"
         else:
             latest = max(observed, key=lambda item: item["last_source_observation"])
-            answer = "ข้อมูลที่มีเวลาสังเกตการณ์ล่าสุดมาจาก %s เมื่อ %s สถานะ %s" % (
-                latest["source_name"], latest["last_source_observation"], latest["status"]
+            answer = "ข้อมูลที่มีเวลาสังเกตการณ์ล่าสุดมาจาก %s เมื่อ %s สถานะ%s" % (
+                latest["source_name"], _thai_datetime(latest["last_source_observation"]),
+                _THAI_STATUS.get(latest["status"], latest["status"]),
             )
             grounding.append({"type": "dataset", "id": latest["id"], "layer_version": latest["layer_version"]})
     elif any(token in question for token in ["ทำไม", "คะแนน", "พื้นที่นี้"]):
@@ -1781,7 +1814,10 @@ def assistant_query(request: AssistantQuery, db: Session = Depends(get_db)) -> D
             if not area or not score:
                 answer = "พื้นที่ที่เลือกยังไม่มีคะแนน Heat Exposure Priority ที่ผ่านการคำนวณ"
             else:
-                component_text = ", ".join("%s=%s" % (key, value) for key, value in score.components.items() if value is not None)
+                component_text = ", ".join(
+                    "%s %s" % (_THAI_COMPONENTS.get(key, key), f"{value:,.2f}" if isinstance(value, (int, float)) else value)
+                    for key, value in score.components.items() if value is not None
+                )
                 answer = "%s มีคะแนน Heat Exposure Priority %.1f จากองค์ประกอบ %s ไม่ใช่ข้อสรุปเรื่องรายได้หรือความเหลื่อมล้ำทางเศรษฐกิจ" % (
                     area.name_th, score.score, component_text or "ข้อมูลที่มีอยู่"
                 )
@@ -1798,7 +1834,7 @@ def assistant_query(request: AssistantQuery, db: Session = Depends(get_db)) -> D
         else:
             score, area = top
             answer = "จากคะแนนที่มีอยู่ %s มี Heat Exposure Priority สูงสุดที่ %.1f (คำนวณเมื่อ %s)" % (
-                area.name_th, score.score, _iso(score.calculated_at)
+                area.name_th, score.score, _thai_datetime(score.calculated_at)
             )
             grounding.append({"type": "priority_score", "id": score.id, "area_id": area.id})
     return {

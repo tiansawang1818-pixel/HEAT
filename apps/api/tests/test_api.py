@@ -1058,3 +1058,12 @@ def test_sources_record_provider_licence_terms(db):
     for dataset_id, url in LICENSE_URLS.items():
         row = db.query(DataSource).filter_by(dataset_id=dataset_id).one()
         assert row.license_url == url
+
+
+def test_assistant_dates_are_thai_bangkok_time():
+    from datetime import datetime, timezone
+    from app.api.router import _thai_datetime
+
+    assert _thai_datetime("2026-11-09T15:00:00+00:00") == "9 พ.ย. 2569 22:00 น."
+    assert _thai_datetime(datetime(2026, 12, 31, 18, 30, tzinfo=timezone.utc)) == "1 ม.ค. 2570 01:30 น."
+    assert _thai_datetime(None) == "ไม่ทราบเวลา"
