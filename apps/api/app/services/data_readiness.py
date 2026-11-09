@@ -42,8 +42,17 @@ def published_data_readiness(db):
         versions[source.dataset_id] = version
         last_check = db.scalar(select(SourceCheck).where(SourceCheck.source_id == source.id).order_by(desc(SourceCheck.checked_at)).limit(1))
         checked = bool(last_check and last_check.status == "success" and (now - _aware(last_check.checked_at)).total_seconds() <= max(120, 2 * source.check_interval_seconds))
-        add("check." + SOURCE_KEYS[source.dataset_id], checked, "การตรวจล่าสุด: " + source.name,
-            "ตรวจแหล่งข้อมูลสำเร็จภายในรอบที่กำหนด" if checked else "ต้องยืนยันการตรวจ provider ล่าสุดและ scheduler บนระบบนี้")
+        if not checked and source.source_type == "boundary" and version.status == "published":
+            # District boundaries change rarely. When the provider cannot be
+            # reached, the last validated official geometry stays published, so
+            # the failed check is a warning rather than a data blocker.
+            add("check." + SOURCE_KEYS[source.dataset_id], False, "การตรวจล่าสุด: " + source.name,
+                "ต่อแหล่งข้อมูลจากเซิร์ฟเวอร์นี้ไม่สำเร็จ"
+                + (" (%s)" % last_check.error_message[:120] if last_check and last_check.error_message else "")
+                + " ยังใช้ขอบเขตทางการที่ผ่านการตรวจล่าสุด ระบบลองใหม่ทุกชั่วโมง", warning=True)
+        else:
+            add("check." + SOURCE_KEYS[source.dataset_id], checked, "การตรวจล่าสุด: " + source.name,
+                "ตรวจแหล่งข้อมูลสำเร็จภายในรอบที่กำหนด" if checked else "ต้องยืนยันการตรวจ provider ล่าสุดและ scheduler บนระบบนี้")
         if not version.observed_at:
             add("date." + SOURCE_KEYS[source.dataset_id], False, "วันที่ต้นทาง: " + source.name, "ไม่พบวันที่ต้นทางที่ตรวจสอบได้")
         elif (now - _aware(version.observed_at)).total_seconds() > source.stale_after_seconds:

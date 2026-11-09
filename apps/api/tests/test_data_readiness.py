@@ -95,3 +95,23 @@ def test_missing_site_evidence_warns_without_blocking_published_data(db):
     investment = next(c for c in report["checks"] if c["code"] == "investment.evidence")
     assert investment["status"] == "warning" and "ประมาณการเบื้องต้น" in investment["detail_th"]
     assert report["data_ready"] is True and report["investment_decisions_ready"] is False
+
+
+def test_unreachable_boundary_provider_warns_while_validated_boundaries_stay_published(db):
+    from app.models.entities import DataSource, SourceCheck
+
+    _recorded_pilot(db)
+    boundary = db.scalar(select(DataSource).where(DataSource.source_type == "boundary"))
+    db.add(SourceCheck(source_id=boundary.id, checked_at=datetime.now(timezone.utc), status="failed",
+                       error_message="BMA boundary catalog request failed: [Errno 104] Connection reset by peer"))
+    db.commit()
+    report = published_data_readiness(db)
+    check = next(c for c in report["checks"] if c["code"] == "check.bma-boundaries")
+    assert check["status"] == "warning" and "Connection reset" in check["detail_th"]
+    assert report["data_ready"] is True
+
+    # Other sources keep blocking when their latest provider check fails.
+    weather = db.scalar(select(DataSource).where(DataSource.source_type == "weather"))
+    db.add(SourceCheck(source_id=weather.id, checked_at=datetime.now(timezone.utc), status="failed"))
+    db.commit()
+    assert published_data_readiness(db)["data_ready"] is False
