@@ -100,7 +100,12 @@ def published_data_readiness(db):
                 and evidence.get("approved_by") and evidence.get("feasibility_evidence")
                 and all(feasibility.get(key) is True for key in ("site_survey_completed", "land_control_verified", "design_accessibility_reviewed"))):
             eligible += 1
-    add("investment.evidence", eligible > 0, "โครงการพร้อมหลักฐาน", f"มี {eligible} โครงการในพื้นที่นำร่องที่มีหลักฐานต้นทุนและความเหมาะสมที่ผู้ดูแลบันทึกแล้ว")
+    # Recorded site evidence gates investment decisions, not published data:
+    # without it the optimizer still funds nothing, so this stays a warning.
+    add("investment.evidence", eligible > 0, "โครงการพร้อมหลักฐาน",
+        f"มี {eligible} โครงการในพื้นที่นำร่องที่มีหลักฐานต้นทุนและความเหมาะสมที่ผู้ดูแลบันทึกแล้ว"
+        + ("" if eligible else " ข้อมูลพร้อมใช้ แต่การตัดสินใจลงทุนจริงยังต้องมีหลักฐานรายจุด ระหว่างนี้ใช้ได้เฉพาะประมาณการเบื้องต้น"),
+        warning=eligible == 0)
     latest_model = db.scalar(select(ForecastRun).order_by(desc(ForecastRun.created_at)).limit(1))
     current_model = bool(latest_model and latest_model.results.get("status") == "completed" and latest_model.metrics.get("validation_passed"))
     if current_model:
@@ -108,6 +113,7 @@ def published_data_readiness(db):
         current_model = expected_history["observation_count"] > 0 and (latest_model.training_versions.get("history") or {}).get("fingerprint") == expected_history["fingerprint"]
     return {
         "scope": "published_data_and_recorded_decision_evidence", "data_ready": all(c["status"] != "blocked" for c in checks),
+        "investment_decisions_ready": eligible > 0,
         "generated_at": now.isoformat(), "checks": checks,
         "summary": {status: sum(c["status"] == status for c in checks) for status in ("ready", "warning", "blocked")},
         "coverage": {"official_areas": official_count, "complete_pilot_areas": len(complete_areas), "evidence_backed_candidates": eligible},

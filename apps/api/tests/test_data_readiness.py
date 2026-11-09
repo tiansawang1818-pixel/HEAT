@@ -84,3 +84,14 @@ def test_new_history_marks_a_previously_validated_scenario_as_outdated(db):
     db.commit()
     assert published_data_readiness(db)["future_scenarios_available"] is False
     assert db.get(ForecastRun, run.id).training_versions == inputs
+
+
+def test_missing_site_evidence_warns_without_blocking_published_data(db):
+    _, candidate = _recorded_pilot(db)
+    assert published_data_readiness(db)["investment_decisions_ready"] is True
+    candidate.feasibility_constraints = {"site_survey_completed": False}
+    db.commit()
+    report = published_data_readiness(db)
+    investment = next(c for c in report["checks"] if c["code"] == "investment.evidence")
+    assert investment["status"] == "warning" and "ประมาณการเบื้องต้น" in investment["detail_th"]
+    assert report["data_ready"] is True and report["investment_decisions_ready"] is False

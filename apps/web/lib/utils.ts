@@ -5,6 +5,8 @@ import type { Geometry } from "geojson";
 export interface PublishedDataReadiness {
   scope: "published_data_and_recorded_decision_evidence";
   data_ready: boolean;
+  /** False until at least one site has recorded field evidence; data can be ready without it. */
+  investment_decisions_ready?: boolean;
   generated_at: string;
   checks: { code: string; status: "ready" | "warning" | "blocked"; label_th: string; detail_th: string }[];
   summary: { ready: number; warning: number; blocked: number };
