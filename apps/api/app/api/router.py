@@ -3,6 +3,7 @@ import html
 import json
 import math
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -696,6 +697,31 @@ def map_tile_descriptor(
     return descriptor
 
 
+# Map payloads change only through publications and admin approvals, each of
+# which writes a PipelineEvent (possibly from the worker process). Keying a
+# short in-process cache on the newest event replaces several round trips to
+# the remote database with one, without serving data older than a publication.
+_MAP_FEATURE_CACHE: Dict[str, tuple] = {}
+_MAP_FEATURE_CACHE_SECONDS = 60
+_MAP_FEATURE_CACHE_ENTRIES = 32
+
+
+def _cached_map_features(key: str) -> Optional[tuple]:
+    entry = _MAP_FEATURE_CACHE.get(key)
+    if entry and entry[0] > time.monotonic():
+        return entry
+    return None
+
+
+def _store_map_features(key: str, body: bytes, etag: str) -> None:
+    now = time.monotonic()
+    for stale in [k for k, v in _MAP_FEATURE_CACHE.items() if v[0] <= now]:
+        _MAP_FEATURE_CACHE.pop(stale, None)
+    if len(_MAP_FEATURE_CACHE) >= _MAP_FEATURE_CACHE_ENTRIES:
+        _MAP_FEATURE_CACHE.pop(min(_MAP_FEATURE_CACHE, key=lambda k: _MAP_FEATURE_CACHE[k][0]), None)
+    _MAP_FEATURE_CACHE[key] = (now + _MAP_FEATURE_CACHE_SECONDS, body, etag)
+
+
 @router.get("/map/features")
 def map_features(
     request: Request,
@@ -710,6 +736,17 @@ def map_features(
     known = {item[0]: item for item in LAYER_DEFINITIONS}
     if layer not in known:
         raise HTTPException(status_code=400, detail="Unknown layer")
+    cache_headers = {"Cache-Control": "private, max-age=60, stale-while-revalidate=120", "Vary": "Accept-Encoding"}
+    generation = db.execute(select(func.count(PipelineEvent.id), func.max(PipelineEvent.created_at))).one()
+    cache_key = "|".join(str(item) for item in (
+        layer, bbox, limit, layer_version, refresh_version, dataset_version_id, generation[0], generation[1],
+    ))
+    cached = _cached_map_features(cache_key)
+    if cached:
+        _, body, etag = cached
+        if request.headers.get("If-None-Match") == etag:
+            return Response(status_code=304, headers={**cache_headers, "ETag": etag})
+        return Response(content=body, media_type="application/json", headers={**cache_headers, "ETag": etag})
     parsed_bbox = _parse_bbox(bbox)
     snapshot = published_version(db, LAYER_DATASETS[layer], dataset_version_id) if layer in LAYER_DATASETS else None
     if dataset_version_id and not snapshot:
@@ -834,11 +871,8 @@ def map_features(
         payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str
     ).encode("utf-8")
     etag = '"%s"' % hashlib.sha256(body).hexdigest()
-    cache_headers = {
-        "ETag": etag,
-        "Cache-Control": "private, max-age=60, stale-while-revalidate=120",
-        "Vary": "Accept-Encoding",
-    }
+    _store_map_features(cache_key, body, etag)
+    cache_headers = {**cache_headers, "ETag": etag}
     if request.headers.get("If-None-Match") == etag:
         return Response(status_code=304, headers=cache_headers)
     return Response(content=body, media_type="application/json", headers=cache_headers)

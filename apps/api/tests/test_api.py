@@ -1067,3 +1067,15 @@ def test_assistant_dates_are_thai_bangkok_time():
     assert _thai_datetime("2026-11-09T15:00:00+00:00") == "9 พ.ย. 2569 22:00 น."
     assert _thai_datetime(datetime(2026, 12, 31, 18, 30, tzinfo=timezone.utc)) == "1 ม.ค. 2570 01:30 น."
     assert _thai_datetime(None) == "ไม่ทราบเวลา"
+
+
+def test_map_features_cache_refreshes_after_pipeline_event(client, db):
+    from app.models.entities import PipelineEvent
+
+    first = client.get("/api/map/features?layer=temperature")
+    assert first.status_code == 200
+    assert client.get("/api/map/features?layer=temperature", headers={"If-None-Match": first.headers["ETag"]}).status_code == 304
+    db.add(PipelineEvent(event_type="layer.published", layer_key="temperature", layer_version=1, payload={}))
+    db.commit()
+    again = client.get("/api/map/features?layer=temperature")
+    assert again.status_code == 200

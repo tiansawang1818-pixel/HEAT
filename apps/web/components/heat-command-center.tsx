@@ -65,6 +65,7 @@ import {
   loadDatasetVersions,
   loadEvidencePendingCandidates,
   loadIngestionStatus,
+  cityExtentBbox,
   loadLayerFeatures,
   loadMapObservations,
   loadRasterTileDescriptor,
@@ -325,7 +326,11 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
   const selectedSnapshotId = snapshotChoice?.layer === activeLayer ? snapshotChoice.id : "";
   const selectedSnapshot = layerObservations?.items.find((item) => item.id === selectedSnapshotId) || (snapshotChoice?.layer === activeLayer ? snapshotChoice.observation : undefined);
   const activeSnapshotId = selectedSnapshotId || layerObservations?.items[0]?.id;
-  const viewportBoundsKey = mainViewport.bounds?.map((value) => value.toFixed(4)).join(",") || "default";
+  // Only point layers need viewport filtering; district layers load the whole city once.
+  const viewportFiltered = activeLayer === "candidates";
+  const viewportBoundsKey = viewportFiltered
+    ? mainViewport.bounds?.map((value) => value.toFixed(4)).join(",") || "default"
+    : "city";
 
   useEffect(() => {
     let cancelled = false;
@@ -343,7 +348,7 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
     if (data.isDemo) return;
     const controller = new AbortController();
     const timer = setTimeout(() => {
-      void loadLayerFeatures(activeLayer, mainViewport.bounds, controller.signal, activeLayerVersion, dataRevision, activeSnapshotId)
+      void loadLayerFeatures(activeLayer, viewportFiltered ? mainViewport.bounds : cityExtentBbox, controller.signal, activeLayerVersion, dataRevision, activeSnapshotId)
         .then((features) => {
           setData((current) => ({ ...current, features }));
           mapNeedsRetry.current = false;

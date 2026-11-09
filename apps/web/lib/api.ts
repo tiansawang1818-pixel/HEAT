@@ -38,6 +38,9 @@ export async function loadPublishedDataReadiness(signal?: AbortSignal): Promise<
   return value;
 }
 const defaultViewportBbox: [number, number, number, number] = [100.36, 13.59, 100.66, 13.91];
+// Whole Bangkok extent. District layers hold only 50 polygons, so they are
+// fetched once for the city instead of again on every pan or zoom.
+export const cityExtentBbox: [number, number, number, number] = [100.32, 13.49, 100.94, 13.96];
 
 function endpoint(path: string) {
   return `${configuredBase}${path}`;
