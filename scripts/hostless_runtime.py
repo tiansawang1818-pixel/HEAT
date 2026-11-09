@@ -103,6 +103,13 @@ def prepare_environment(source, scratch):
     return env
 
 
+# The managed role allows 10 connections. Each process has its own pool:
+# API 4 + ingestion child 2 + dispatcher 2 = 8, leaving room for migrations.
+# The API serves every browser at ~0.5-1 s per remote query, so two
+# connections queued past the 10 s pool timeout during restarts (HTTP 500).
+PROCESS_ENV = {"api": {"DATABASE_POOL_SIZE": "4"}}
+
+
 def runtime_commands(root):
     api = root / "apps" / "api"
     celery = [sys.executable, "-m", "celery", "-A", "app.worker.celery_app"]
@@ -146,7 +153,8 @@ def supervise(commands, env, stop=None, *, grace_seconds=25, on_started=None):
     children = {}
     try:
         for name, (command, cwd) in commands.items():
-            children[name] = subprocess.Popen(command, cwd=cwd, env=env, start_new_session=True)
+            children[name] = subprocess.Popen(command, cwd=cwd, env={**env, **PROCESS_ENV.get(name, {})},
+                                              start_new_session=True)
         if on_started:
             on_started(children)
         while not stop.wait(0.2):

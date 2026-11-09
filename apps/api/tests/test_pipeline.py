@@ -478,3 +478,27 @@ def test_rejected_scene_is_reprocessed_once_after_a_processor_change(db):
     assert Rejecting.calls == 1  # new processor: re-validated once
     ingest_asset(db, source, Rejecting(), asset("gee-zonal-v3"), job())
     assert Rejecting.calls == 1  # rejected again under v3: not retried again
+
+
+def test_monitor_dispatches_scenes_rejected_by_an_older_processor(db):
+    from app.models.entities import DataSource, DatasetVersion
+
+    source = db.scalar(select(DataSource).where(DataSource.dataset_id == "GOOGLE/DYNAMICWORLD/V1"))
+    db.add(DatasetVersion(source_id=source.id, source_asset_id="dw-scene", source_version="1", checksum="old",
+                          status="failed", quality_status="rejected", metadata_json={"processor_version": "gee-zonal-v2"}))
+    db.commit()
+
+    class Rediscovering(SourceConnector):
+        source_name, dataset_id, layer_key = "Google Dynamic World", "GOOGLE/DYNAMICWORLD/V1", "landcover"
+        validated = 0
+        def discover(self, latest_asset_id=None, checkpoint=None):
+            return [SourceAsset.with_checksum("dw-scene", "1", datetime(2026, 11, 8, tzinfo=timezone.utc), EXTENT,
+                                              metadata={"processor_version": "gee-zonal-v3"})]
+        def validate(self, asset):
+            Rediscovering.validated += 1
+            return {"passed": False, "errors": ["still unusable"], "metrics": {}}
+
+    first = run_monitor(db, Rediscovering(), requested_by="test")
+    assert Rediscovering.validated == 1 and first["processed"] == 1
+    run_monitor(db, Rediscovering(), requested_by="test")
+    assert Rediscovering.validated == 1  # rejected again under v3: not retried a second time

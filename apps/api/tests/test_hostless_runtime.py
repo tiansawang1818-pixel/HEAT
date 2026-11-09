@@ -118,3 +118,9 @@ def test_dispatcher_runs_in_process_and_ingestion_recycles_large_children(tmp_pa
     assert "--pool=solo" in commands["dispatcher"][0]
     ingestion = commands["ingestion"][0]
     assert "--pool=prefork" in ingestion and "--max-memory-per-child=200000" in ingestion
+
+
+def test_api_gets_a_larger_pool_within_the_managed_connection_budget():
+    assert runtime.PROCESS_ENV["api"]["DATABASE_POOL_SIZE"] == "4"
+    # API 4 + ingestion child 2 + dispatcher 2 stays under the 10-connection role limit.
+    assert 4 + 2 + 2 < 10

@@ -399,6 +399,18 @@ def _fail_processing(db: Session, version_id: str, job_id: str, exc: Exception) 
     db.commit()
 
 
+def _reprocessable(version: Optional[DatasetVersion], asset: SourceAsset) -> bool:
+    """An existing version is retried after a processing error, or once after a
+    processor change when an older processor rejected it."""
+    if version is None or version.status != ProcessingStatus.failed.value:
+        return False
+    if version.quality_status == "processing_error":
+        return True
+    processor = asset.metadata.get("processor_version")
+    return bool(version.quality_status == "rejected" and processor
+                and (version.metadata_json or {}).get("processor_version") != processor)
+
+
 def ingest_asset(db: Session, source: DataSource, connector: SourceConnector, asset: SourceAsset, job: IngestionJob) -> DatasetVersion:
     version = db.scalar(
         select(DatasetVersion).where(
@@ -406,14 +418,7 @@ def ingest_asset(db: Session, source: DataSource, connector: SourceConnector, as
             DatasetVersion.source_asset_id == asset.source_asset_id,
         )
     )
-    retry_rejected = bool(
-        version and version.status == ProcessingStatus.failed.value and version.quality_status == "rejected"
-        and asset.metadata.get("processor_version")
-        and (version.metadata_json or {}).get("processor_version") != asset.metadata.get("processor_version")
-    )
-    if version and not retry_rejected and not (
-        version.status == ProcessingStatus.failed.value and version.quality_status == "processing_error"
-    ):
+    if version and not _reprocessable(version, asset):
         job.status = "completed"
         job.stage = "skipped"
         job.progress = 1.0
@@ -641,8 +646,7 @@ def run_monitor(db: Session, connector: SourceConnector, requested_by: str = "sc
                         DatasetVersion.source_asset_id == asset.source_asset_id,
                     )
                 )
-                retryable = duplicate and duplicate.status == ProcessingStatus.failed.value and duplicate.quality_status == "processing_error"
-                if duplicate and not retryable:
+                if duplicate and not _reprocessable(duplicate, asset):
                     continue
                 job = IngestionJob(
                     source_id=source.id,
