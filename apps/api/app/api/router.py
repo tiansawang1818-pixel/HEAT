@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 from app.api.deps import require_admin
 from app.api.backfills import router as backfill_router
@@ -146,8 +146,11 @@ def _viewport_rows(
     bbox: Optional[tuple[float, float, float, float]],
     limit: int,
     *filters: Any,
+    defer_geometry: bool = False,
 ) -> List[Any]:
     query = select(entity)
+    if defer_geometry and settings.database_url.startswith("postgresql"):
+        query = query.options(defer(entity.geometry))
     if filters:
         query = query.where(*filters)
     if bbox and settings.database_url.startswith("postgresql"):
@@ -162,6 +165,27 @@ def _viewport_rows(
     if bbox and not settings.database_url.startswith("postgresql"):
         rows = [row for row in rows if _geometry_intersects_bbox(row.geometry, bbox)][:limit]
     return rows
+
+
+# About 5 m at Bangkok's latitude: below the map's district-scale display
+# resolution, and far smaller than the full-detail boundary payload.
+MAP_DISPLAY_SIMPLIFY_DEGREES = 0.00005
+
+
+def _display_geometries(db: Session, entity: Any, ids: List[str]) -> Dict[str, Optional[Dict[str, Any]]]:
+    """Return simplified display GeoJSON rendered by PostGIS, keyed by row id.
+
+    Analysis always uses the stored geometry; only the map payload is simplified.
+    """
+    if not ids or not settings.database_url.startswith("postgresql"):
+        return {}
+    geojson = func.ST_AsGeoJSON(
+        func.ST_SimplifyPreserveTopology(entity.geometry, MAP_DISPLAY_SIMPLIFY_DEGREES), 6
+    )
+    return {
+        row_id: json.loads(value) if value else None
+        for row_id, value in db.execute(select(entity.id, geojson).where(entity.id.in_(ids))).all()
+    }
 
 
 def _latest_source_rows(db: Session, model: Any, source_ids: List[str], order_column: Any, *filters: Any) -> Dict[str, Any]:
@@ -675,7 +699,6 @@ def map_tile_descriptor(
 @router.get("/map/features")
 def map_features(
     request: Request,
-    response: Response,
     layer: str = Query(default="priority"),
     bbox: Optional[str] = None,
     limit: int = Query(default=500, ge=1, le=5000),
@@ -683,7 +706,7 @@ def map_features(
     refresh_version: Optional[int] = Query(default=None, ge=0),
     dataset_version_id: Optional[str] = Query(default=None, max_length=64),
     db: Session = Depends(get_db),
-) -> Dict[str, Any]:
+) -> Response:
     known = {item[0]: item for item in LAYER_DEFINITIONS}
     if layer not in known:
         raise HTTPException(status_code=400, detail="Unknown layer")
@@ -699,13 +722,15 @@ def map_features(
             parsed_bbox,
             limit,
             CandidateIntervention.active.is_(True),
+            defer_geometry=True,
         )
+        display = _display_geometries(db, CandidateIntervention, [row.id for row in rows])
         for row in rows:
             features.append(
                 {
                     "type": "Feature",
                     "id": row.id,
-                    "geometry": to_geojson(row.geometry),
+                    "geometry": display[row.id] if row.id in display else to_geojson(row.geometry),
                     "properties": {
                         "area_id": row.area_id,
                         "name_th": row.name_th,
@@ -718,8 +743,9 @@ def map_features(
             )
     else:
         indicator_key = known[layer][2]
-        areas_rows = _viewport_rows(db, GeographicArea, parsed_bbox, limit)
+        areas_rows = _viewport_rows(db, GeographicArea, parsed_bbox, limit, defer_geometry=True)
         area_ids = [area.id for area in areas_rows]
+        display = _display_geometries(db, GeographicArea, area_ids)
         score_by_area: Dict[str, PriorityScore] = {}
         observation_by_area: Dict[str, AreaIndicator] = {}
         forecast = None
@@ -771,7 +797,7 @@ def map_features(
                 {
                     "type": "Feature",
                     "id": area.id,
-                    "geometry": to_geojson(area.geometry),
+                    "geometry": display[area.id] if area.id in display else to_geojson(area.geometry),
                     "properties": {
                         "area_id": area.id,
                         "name_th": area.name_th,
@@ -799,9 +825,15 @@ def map_features(
             "spatial_filter": "postgis_st_intersects" if parsed_bbox and settings.database_url.startswith("postgresql") else "application_bounds_fallback",
         },
     }
-    etag = '"%s"' % hashlib.sha256(
-        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
+    # Every value is already loaded. Return the pooled connection before the
+    # CPU-bound encoding so other requests are not queued behind this one.
+    db.close()
+    # Encode once: the same bytes are the body and the ETag input, which skips
+    # FastAPI's per-coordinate jsonable_encoder walk.
+    body = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str
+    ).encode("utf-8")
+    etag = '"%s"' % hashlib.sha256(body).hexdigest()
     cache_headers = {
         "ETag": etag,
         "Cache-Control": "private, max-age=60, stale-while-revalidate=120",
@@ -809,9 +841,7 @@ def map_features(
     }
     if request.headers.get("If-None-Match") == etag:
         return Response(status_code=304, headers=cache_headers)
-    for key, value in cache_headers.items():
-        response.headers[key] = value
-    return payload
+    return Response(content=body, media_type="application/json", headers=cache_headers)
 
 
 @router.get("/candidates")
