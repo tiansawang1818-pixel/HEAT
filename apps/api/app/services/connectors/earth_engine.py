@@ -212,6 +212,10 @@ class EarthEngineConnector(SourceConnector):
         analysis = self._analysis(ee, image)
         data_image = analysis["image"]
         reducer = analysis["reducer"]
+        if analysis.get("outputs"):
+            # reduceRegions names a single-band result after the reducer
+            # output ("mean", "p90"), not the band. Pin the property names.
+            reducer = reducer.setOutputs(analysis["outputs"])
         mask = analysis["mask"]
         features = {
             area["id"]: ee.Feature(ee.Geometry(area["geometry"]), {"area_id": area["id"]})
@@ -233,7 +237,8 @@ class EarthEngineConnector(SourceConnector):
             # A reduceRegion mapped across districts starts many separate
             # aggregations. Finish one collection reduction before sending the next.
             coverage = ee.Image.pixelArea().updateMask(mask).reduceRegions(
-                collection=ee.FeatureCollection(list(features.values())), reducer=ee.Reducer.sum(), **options,
+                collection=ee.FeatureCollection(list(features.values())),
+                reducer=ee.Reducer.sum().setOutputs(["area"]), **options,
             ).map(coverage_row).getInfo()
             coverage_rows = self._regional_rows(coverage, features)
             valid_coverage = {}
@@ -322,6 +327,7 @@ class LandsatConnector(EarthEngineConnector):
             "image": temperature,
             "mask": mask,
             "reducer": ee.Reducer.mean().combine(ee.Reducer.percentile([90]), sharedInputs=True),
+            "outputs": ["lst_c_mean", "lst_c_p90"],
         }
 
     def _record_from_properties(self, properties: Dict[str, Any]) -> AreaProcessingRecord:
@@ -369,7 +375,7 @@ class SentinelConnector(EarthEngineConnector):
         scl = image.select("SCL")
         mask = scl.neq(3).And(scl.neq(8)).And(scl.neq(9)).And(scl.neq(10)).And(scl.neq(11))
         ndvi = image.normalizedDifference(["B8", "B4"]).rename("ndvi").updateMask(mask)
-        return {"image": ndvi, "mask": mask, "reducer": ee.Reducer.mean()}
+        return {"image": ndvi, "mask": mask, "reducer": ee.Reducer.mean(), "outputs": ["ndvi"]}
 
     def _record_from_properties(self, properties: Dict[str, Any]) -> AreaProcessingRecord:
         ndvi = self._safe_number(properties.get("ndvi"))

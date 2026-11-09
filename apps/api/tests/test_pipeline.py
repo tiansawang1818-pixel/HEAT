@@ -418,3 +418,28 @@ def test_priority_recalculation_excludes_synthetic_inputs_from_real_observations
     score = db.scalar(select(PriorityScore).where(PriorityScore.area_id == "area-a"))
     assert score.components["population_exposure"] is None
     assert "population_exposure" in score.missing_inputs
+
+
+def test_single_band_reductions_pin_property_names(monkeypatch):
+    """reduceRegions names single-band outputs after the reducer, not the band."""
+    from app.services.connectors.earth_engine import LandsatConnector
+
+    ee, image = Mock(), Mock()
+    ee.Feature.side_effect = lambda geometry, properties: properties
+    ee.FeatureCollection.side_effect = lambda features: features
+    pixel_area = ee.Image.pixelArea.return_value.updateMask.return_value
+    pixel_area.reduceRegions.return_value.map.return_value.getInfo.return_value = {
+        "features": [{"properties": {"area_id": "a", "coverage_fraction": 0.9}}]}
+    image.reduceRegions.return_value.map.return_value.getInfo.return_value = {
+        "features": [{"properties": {"area_id": "a", "lst_c_mean": 36.0, "lst_c_p90": 39.0}}]}
+    reducer = Mock()
+    for connector, outputs in ((SentinelConnector(), ["ndvi"]), (LandsatConnector(), ["lst_c_mean", "lst_c_p90"])):
+        monkeypatch.setattr(connector, "_earth_engine", lambda: ee)
+        analysis = {"image": image, "mask": "m", "reducer": reducer, "outputs": outputs}
+        monkeypatch.setattr(connector, "_analysis", lambda *args, a=analysis: a)
+        asset = SourceAsset.with_checksum("scene", "1", datetime(2026, 1, 1, tzinfo=timezone.utc), EXTENT)
+        connector.process(asset, [{"id": "a", "geometry": EXTENT}])
+        reducer.setOutputs.assert_called_with(outputs)
+        assert image.reduceRegions.call_args.kwargs["reducer"] is reducer.setOutputs.return_value
+    ee.Reducer.sum.return_value.setOutputs.assert_called_with(["area"])
+    assert pixel_area.reduceRegions.call_args.kwargs["reducer"] is ee.Reducer.sum.return_value.setOutputs.return_value
