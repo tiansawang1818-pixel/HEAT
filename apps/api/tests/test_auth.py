@@ -48,6 +48,14 @@ def test_oidc_verifier_checks_signature_issuer_audience_and_expiry(monkeypatch):
     with pytest.raises(OIDCVerificationError):
         verifier.verify(wrong_audience)
 
+    def signed(iss):
+        return jwt.encode({"iss": iss, "aud": "heatshift-api", "sub": "admin-123", "exp": now + timedelta(minutes=5)},
+                          private_key, algorithm="RS256")
+    # Auth0 issues "https://tenant/"; the configured issuer may omit the slash.
+    assert verifier.verify(signed("https://identity.example.org/"))["sub"] == "admin-123"
+    with pytest.raises(OIDCVerificationError):
+        verifier.verify(signed("https://identity.example.org.evil/"))
+
 
 def test_oidc_verifier_refuses_non_https_configuration_in_production(monkeypatch):
     monkeypatch.setattr(settings, "environment", "production")

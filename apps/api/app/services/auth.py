@@ -59,14 +59,17 @@ class OIDCVerifier:
                 self._signing_key(token, jwks_url),
                 algorithms=algorithms,
                 audience=audience,
-                issuer=issuer,
                 leeway=max(0, settings.oidc_clock_skew_seconds),
-                options={"require": ["exp", "sub"]},
+                options={"require": ["exp", "sub", "iss"]},
             )
         except jwt.PyJWTError as exc:
             raise OIDCVerificationError("OIDC bearer token validation failed") from exc
         if not isinstance(claims, dict):
             raise OIDCVerificationError("OIDC token claims are invalid")
+        # Providers differ on the trailing slash (Auth0 issues "https://tenant/"),
+        # so compare issuers with it removed; anything else must match exactly.
+        if not isinstance(claims.get("iss"), str) or claims["iss"].rstrip("/") != issuer:
+            raise OIDCVerificationError("OIDC bearer token validation failed")
         return claims
 
 
