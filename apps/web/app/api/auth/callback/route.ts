@@ -23,8 +23,13 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     // Name the failing step without echoing tokens, codes or secrets.
     const reason = error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 300) : "unknown error";
-    const cause = error instanceof Error && error.cause && typeof error.cause === "object" && "error" in error.cause
-      ? ` (provider: ${String((error.cause as { error?: unknown }).error).slice(0, 80)})` : "";
+    // Provider error codes and descriptions carry no secrets; they name the misconfiguration.
+    const detail = error as { error?: unknown; error_description?: unknown; cause?: { error?: unknown; error_description?: unknown } };
+    const code = detail.error ?? detail.cause?.error;
+    const description = detail.error_description ?? detail.cause?.error_description
+      ?? request.nextUrl.searchParams.get("error_description");
+    const cause = code || description
+      ? ` (provider: ${String(code ?? request.nextUrl.searchParams.get("error") ?? "").slice(0, 80)} ${String(description ?? "").slice(0, 200)})` : "";
     console.warn(`SSO callback failed: ${reason}${cause}`);
     response = NextResponse.json(
       { detail: "เข้าสู่ระบบไม่สำเร็จหรือบัญชีนี้ไม่มีสิทธิ์ผู้ดูแล กรุณาเริ่มเข้าสู่ระบบใหม่" },
