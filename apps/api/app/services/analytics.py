@@ -150,6 +150,11 @@ def recalculate_priority_scores(db: Session) -> int:
     return updated
 
 
+def scores_need_method_refresh(db: Session) -> bool:
+    latest = db.scalar(select(PriorityScore).order_by(desc(PriorityScore.calculated_at)).limit(1))
+    return latest is not None and "_area_observations" not in (latest.input_versions or {})
+
+
 def refresh_scores_from_older_method(db: Session) -> int:
     """Recalculate once when the newest scores predate per-district inputs.
 
@@ -157,8 +162,7 @@ def refresh_scores_from_older_method(db: Session) -> int:
     change reach the map within the next hourly run instead of waiting for
     the next clear satellite scene.
     """
-    latest = db.scalar(select(PriorityScore).order_by(desc(PriorityScore.calculated_at)).limit(1))
-    if latest is None or "_area_observations" in (latest.input_versions or {}):
+    if not scores_need_method_refresh(db):
         return 0
     updated = recalculate_priority_scores(db)
     db.commit()

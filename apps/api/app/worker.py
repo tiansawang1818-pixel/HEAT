@@ -13,7 +13,7 @@ from app.core.redis_tls import celery_redis_tls_settings
 from app.db.session import SessionLocal
 from app.models.entities import IngestionJob
 from app.celery_config import make_celery
-from app.services.analytics import refresh_scores_from_older_method
+from app.services.analytics import refresh_scores_from_older_method, scores_need_method_refresh
 from app.services.bootstrap import ensure_sources
 from app.services.connectors import FixtureConnector
 from app.services.connectors.base import ConnectorError, ProviderRateLimitError
@@ -48,7 +48,22 @@ def dispatch_ingestion():
         if result["status"] == "completed":
             with redis.Redis.from_url(settings.redis_url, socket_connect_timeout=1, socket_timeout=1) as client:
                 client.set("heatshift:dispatcher:last_tick", str(time.time()), ex=300)
+                # Beat restarts with every deploy, so an hourly task may not run for
+                # a while; hand a pending score-method refresh to the ingestion
+                # worker at most once per 15 minutes instead.
+                if scores_need_method_refresh(db) and client.set("heatshift:priority-refresh:queued", "1", nx=True, ex=900):
+                    refresh_priority_scores.delay()
+                    result["priority_refresh"] = "queued"
         return result
+
+
+@celery_app.task(name="app.worker.refresh_priority_scores", soft_time_limit=540, time_limit=600)
+def refresh_priority_scores():
+    with distributed_lock("priority-refresh") as acquired:
+        if not acquired:
+            return {"status": "locked"}
+        with SessionLocal() as db:
+            return {"status": "completed", "updated": refresh_scores_from_older_method(db)}
 
 
 @celery_app.task(name="app.worker.run_historical_step")
