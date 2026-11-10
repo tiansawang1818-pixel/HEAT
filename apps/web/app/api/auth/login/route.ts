@@ -14,6 +14,8 @@ export async function GET() {
       redirect_uri: settings.redirectUri, scope: process.env.OIDC_SCOPES || "openid profile email",
       state, nonce, code_challenge: await oidc.calculatePKCECodeChallenge(verifier), code_challenge_method: "S256",
       ...(process.env.OIDC_RESOURCE ? { resource: process.env.OIDC_RESOURCE } : {}),
+      // Auth0 issues a verifiable JWT access token only when the API audience is requested.
+      ...(process.env.OIDC_AUDIENCE ? { audience: process.env.OIDC_AUDIENCE } : {}),
     });
     const response = NextResponse.redirect(target);
     response.cookies.set(loginCookieName, sealAuthValue({ verifier, state, nonce, expiresAt: Date.now() + 300_000 }), { ...authCookieOptions, maxAge: 300 });

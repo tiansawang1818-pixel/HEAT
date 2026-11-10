@@ -10,6 +10,10 @@ from app.services.auth import OIDCVerificationError, oidc_verifier
 
 
 def _claim(claims: Dict[str, Any], path: str) -> Any:
+    # Namespaced claims such as Auth0's "https://example.org/roles" contain
+    # dots, so an exact key wins before the path is treated as nested.
+    if path in claims:
+        return claims[path]
     value: Any = claims
     for segment in path.split("."):
         if not isinstance(value, dict):

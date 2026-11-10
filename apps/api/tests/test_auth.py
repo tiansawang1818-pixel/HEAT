@@ -57,3 +57,11 @@ def test_oidc_verifier_refuses_non_https_configuration_in_production(monkeypatch
 
     with pytest.raises(OIDCVerificationError, match="HTTPS"):
         OIDCVerifier().verify("header.payload.signature")
+
+
+def test_namespaced_roles_claim_with_dots_is_read_as_one_key(monkeypatch):
+    from app.api import deps
+    monkeypatch.setattr(deps.settings, "oidc_roles_claim", "https://heatshift.hostless.app/roles")
+    assert deps._roles({"https://heatshift.hostless.app/roles": ["heatshift.admin"]}) == ["heatshift.admin"]
+    monkeypatch.setattr(deps.settings, "oidc_roles_claim", "realm_access.roles")
+    assert deps._roles({"realm_access": {"roles": ["heatshift.admin"]}}) == ["heatshift.admin"]
