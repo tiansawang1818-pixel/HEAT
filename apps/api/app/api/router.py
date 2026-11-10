@@ -173,16 +173,19 @@ def _viewport_rows(
 MAP_DISPLAY_SIMPLIFY_DEGREES = 0.00005
 
 
-def _display_geometries(db: Session, entity: Any, ids: List[str]) -> Dict[str, Optional[Dict[str, Any]]]:
+def _display_geometries(db: Session, entity: Any, ids: List[str], multi: bool = False) -> Dict[str, Optional[Dict[str, Any]]]:
     """Return simplified display GeoJSON rendered by PostGIS, keyed by row id.
 
     Analysis always uses the stored geometry; only the map payload is simplified.
     """
     if not ids or not settings.database_url.startswith("postgresql"):
         return {}
-    geojson = func.ST_AsGeoJSON(
-        func.ST_SimplifyPreserveTopology(entity.geometry, MAP_DISPLAY_SIMPLIFY_DEGREES), 6
-    )
+    simplified = func.ST_SimplifyPreserveTopology(entity.geometry, MAP_DISPLAY_SIMPLIFY_DEGREES)
+    if multi:
+        # GEOS returns a single-part MultiPolygon as Polygon; keep the API's
+        # MultiPolygon contract for district boundaries.
+        simplified = func.ST_Multi(simplified)
+    geojson = func.ST_AsGeoJSON(simplified, 6)
     return {
         row_id: json.loads(value) if value else None
         for row_id, value in db.execute(select(entity.id, geojson).where(entity.id.in_(ids))).all()
@@ -824,7 +827,7 @@ def map_features(
         indicator_key = known[layer][2]
         areas_rows = _viewport_rows(db, GeographicArea, parsed_bbox, limit, defer_geometry=True)
         area_ids = [area.id for area in areas_rows]
-        display = _display_geometries(db, GeographicArea, area_ids)
+        display = _display_geometries(db, GeographicArea, area_ids, multi=True)
         score_by_area: Dict[str, PriorityScore] = {}
         observation_by_area: Dict[str, AreaIndicator] = {}
         forecast = None
