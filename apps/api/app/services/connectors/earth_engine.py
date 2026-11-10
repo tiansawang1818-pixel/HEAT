@@ -22,6 +22,7 @@ class EarthEngineConnector(SourceConnector):
     cloud_property: Optional[str] = None
     max_cloud_percent: float = 65.0
     lookback_days: int = 45
+    discovery_limit: int = 25
     processing_recipe: Dict[str, Any] = {}
     analysis_scale_m: int = 30
     min_publishable_coverage: float = 0.05
@@ -157,7 +158,7 @@ class EarthEngineConnector(SourceConnector):
         if self.cloud_property:
             collection = collection.filter(ee.Filter.lte(self.cloud_property, self.max_cloud_percent))
         try:
-            raw = collection.sort("system:time_start", False).limit(25).getInfo()
+            raw = collection.sort("system:time_start", False).limit(self.discovery_limit).getInfo()
         except Exception as exc:
             raise ConnectorError("Google Earth Engine catalogue query failed: %s" % exc) from exc
         assets: List[SourceAsset] = []
@@ -407,7 +408,12 @@ class DynamicWorldConnector(EarthEngineConnector):
     collection_id = "GOOGLE/DYNAMICWORLD/V1"
     layer_key = "landcover"
     required_bands = ["trees", "built", "label"]
-    lookback_days = 20
+    # Land cover changes over seasons, not days, while monsoon cloud leaves
+    # most single granules with only a few clear districts. Look back a full
+    # quarter (about four granules per pass over Bangkok) so every district
+    # can draw on its latest clear observation.
+    lookback_days = 90
+    discovery_limit = 100
     analysis_scale_m = 10
     probability_bands = ["water", "trees", "grass", "flooded_vegetation", "crops", "shrub_and_scrub", "built", "bare", "snow_and_ice"]
     processing_recipe = {

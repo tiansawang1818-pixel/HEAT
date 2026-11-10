@@ -216,12 +216,28 @@ def _source_status(db: Session, source: DataSource) -> Dict[str, Any]:
     return _source_statuses(db, [source])[0]
 
 
+def _cloud_obscured(source: DataSource, version: DatasetVersion) -> bool:
+    """A satellite scene rejected only because no district had clear pixels."""
+    return (source.source_type in {"satellite", "land_cover"} and version.quality_status == "rejected"
+            and (version.quality_summary or {}).get("processed_areas") == 0)
+
+
+def _freshness_status(source: DataSource, latest: DatasetVersion, now: datetime) -> tuple:
+    if latest.observed_at and (now - _aware(latest.observed_at)).total_seconds() > source.stale_after_seconds:
+        return "stale", "อายุข้อมูลเกินเกณฑ์ %s ชั่วโมง" % round(source.stale_after_seconds / 3600)
+    return "up_to_date", "เป็นเวอร์ชันล่าสุดที่ตรวจสอบและเผยแพร่แล้ว"
+
+
 def _format_source_status(source: DataSource, latest_any: Optional[DatasetVersion], latest: Optional[DatasetVersion],
                           check: Optional[SourceCheck], now: datetime) -> Dict[str, Any]:
     reason = "ยังไม่มีข้อมูลที่ผ่านการตรวจสอบ"
     status = "unavailable"
     if latest_any and latest_any.status in {"staged", "validating", "processing", "publishing"}:
         status, reason = "updating", "กำลังตรวจสอบและประมวลผลเวอร์ชันใหม่"
+    elif latest_any and latest_any.status == "failed" and _cloud_obscured(source, latest_any) and latest:
+        status, reason = _freshness_status(source, latest, now)
+        if status == "up_to_date":
+            reason = "ภาพล่าสุดถูกเมฆบังทุกเขต ระบบใช้ภาพที่ชัดก่อนหน้า"
     elif latest_any and latest_any.status == "failed" and (not latest or _aware(latest_any.discovered_at) > _aware(latest.published_at)):
         status, reason = "error", "เวอร์ชันล่าสุดไม่ผ่านการตรวจสอบ; ระบบยังคงใช้เวอร์ชันก่อนหน้า"
     elif check and check.status == "failed" and (not latest or not latest.published_at or _aware(check.checked_at) > _aware(latest.published_at)):
@@ -229,11 +245,7 @@ def _format_source_status(source: DataSource, latest_any: Optional[DatasetVersio
     elif check and check.status == "degraded" and latest:
         status, reason = "stale", "ยังตรวจสอบต้นทาง กทม. ไม่ได้ ระบบแสดงสำเนาขอบเขตจากแค็ตตาล็อกข้อมูลเปิดของรัฐที่ผ่านการตรวจสอบ"
     elif latest and latest.observed_at:
-        age = (now - _aware(latest.observed_at)).total_seconds()
-        if age > source.stale_after_seconds:
-            status, reason = "stale", "อายุข้อมูลเกินเกณฑ์ %s ชั่วโมง" % round(source.stale_after_seconds / 3600)
-        else:
-            status, reason = "up_to_date", "เป็นเวอร์ชันล่าสุดที่ตรวจสอบและเผยแพร่แล้ว"
+        status, reason = _freshness_status(source, latest, now)
     elif check and check.status == "failed":
         status, reason = "error", check.error_message or "เชื่อมต่อผู้ให้บริการไม่สำเร็จ"
     next_check = _aware(check.checked_at) + timedelta(seconds=source.check_interval_seconds) if check and source.check_interval_seconds else None
