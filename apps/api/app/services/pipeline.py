@@ -685,5 +685,11 @@ def run_monitor(db: Session, connector: SourceConnector, requested_by: str = "sc
             check.error_message = str(exc)
             check.completed_at = utcnow()
             db.commit()
-            logger.exception("Source monitor failed for %s", source.name)
+            if isinstance(exc, ConnectorError):
+                # An expected provider failure (unreachable catalog, rejected
+                # request) is recorded on the source check and retried; a
+                # one-line warning avoids paging on every retry.
+                logger.warning("Source monitor could not complete for %s: %s", source.name, exc)
+            else:
+                logger.exception("Source monitor failed for %s", source.name)
             raise

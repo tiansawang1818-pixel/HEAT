@@ -502,3 +502,26 @@ def test_monitor_dispatches_scenes_rejected_by_an_older_processor(db):
     assert Rediscovering.validated == 1 and first["processed"] == 1
     run_monitor(db, Rediscovering(), requested_by="test")
     assert Rediscovering.validated == 1  # rejected again under v3: not retried a second time
+
+
+def test_expected_provider_failures_log_one_warning_without_a_traceback(db, caplog):
+    import logging
+
+    class Unreachable(SourceConnector):
+        source_name, dataset_id, layer_key = "Open-Meteo", "open-meteo/weather-context", "weather"
+        def discover(self, latest_asset_id=None, checkpoint=None):
+            raise ConnectorError("catalog request failed: [Errno 104] Connection reset by peer")
+
+    pipeline_logger = logging.getLogger("app.services.pipeline")
+    was_disabled, pipeline_logger.disabled = pipeline_logger.disabled, False  # the API's dictConfig disables it in tests
+    pipeline_logger.addHandler(caplog.handler)
+    try:
+        with caplog.at_level(logging.WARNING, logger="app.services.pipeline"):
+            with pytest.raises(ConnectorError):
+                run_monitor(db, Unreachable(), requested_by="test")
+    finally:
+        pipeline_logger.removeHandler(caplog.handler)
+        pipeline_logger.disabled = was_disabled
+    records = [r for r in caplog.records if r.name == "app.services.pipeline"]
+    assert records and all(r.levelno == logging.WARNING and r.exc_info is None for r in records)
+    assert "Connection reset" in records[0].getMessage()
