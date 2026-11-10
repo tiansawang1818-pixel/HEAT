@@ -134,7 +134,9 @@ def runtime_commands(root):
         "web": (["node", "server.js"], root / "apps" / "web"),
         "ingestion": (celery + ingestion + ["-Q", "celery", "--hostname=ingestion@%h"], api),
         "dispatcher": (celery + dispatcher + ["-Q", "control", "--hostname=dispatcher@%h"], api),
-        "beat": (celery + ["beat", "--loglevel=INFO", "--schedule=/tmp/heatshift/celerybeat-schedule"], api),
+        # Beat only publishes task names; app.celery_config avoids importing the task code.
+        "beat": ([sys.executable, "-m", "celery", "-A", "app.celery_config.beat_app", "beat", "--loglevel=INFO",
+                  "--schedule=/tmp/heatshift/celerybeat-schedule"], api),
     }
 
 

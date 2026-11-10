@@ -191,7 +191,7 @@ services:
 
   beat:
     <<: *api-base
-    command: ["celery", "-A", "app.worker.celery_app", "beat", "--loglevel=INFO", "--schedule=/tmp/celerybeat-schedule"]
+    command: ["celery", "-A", "app.celery_config.beat_app", "beat", "--loglevel=INFO", "--schedule=/tmp/celerybeat-schedule"]
     depends_on:
       migrate:
         condition: service_completed_successfully
