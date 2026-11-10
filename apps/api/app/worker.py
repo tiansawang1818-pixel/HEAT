@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.core.redis_tls import celery_redis_tls_settings
 from app.db.session import SessionLocal
 from app.models.entities import IngestionJob
+from app.services.analytics import refresh_scores_from_older_method
 from app.services.bootstrap import ensure_sources
 from app.services.connectors import FixtureConnector
 from app.services.connectors.base import ConnectorError, ProviderRateLimitError
@@ -75,6 +76,7 @@ def run_historical_step(job_id: str, generation: int):
 @celery_app.task(name="app.worker.update_forecast_models", soft_time_limit=540, time_limit=600)
 def update_forecast_models():
     with SessionLocal() as db:
+        refresh_scores_from_older_method(db)
         return update_scheduled_forecasts(db)
 
 

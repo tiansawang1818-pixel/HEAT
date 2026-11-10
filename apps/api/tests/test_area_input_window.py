@@ -45,3 +45,26 @@ def test_each_district_uses_its_latest_clear_scene_within_the_freshness_window(d
     assert "temperature_anomaly" not in east.missing_inputs and "temperature_anomaly" not in west.missing_inputs
     north = latest("north")
     assert north is None or "temperature_anomaly" in north.missing_inputs  # only an expired scene covers it
+
+
+def test_scores_from_the_older_method_are_recalculated_once(db):
+    from app.services.analytics import refresh_scores_from_older_method
+
+    now = datetime.now(timezone.utc)
+    source = db.scalar(select(DataSource).where(DataSource.dataset_id == LANDSAT))
+    db.add(GeographicArea(id="legacy", name_th="legacy", name_en="legacy", geometry=POLYGON, source_name="test"))
+    version = DatasetVersion(source_id=source.id, source_asset_id="scene", source_version="1", checksum="c",
+                             status="published", observed_at=now - timedelta(days=3))
+    db.add(version)
+    db.flush()
+    db.add(AreaIndicator(area_id="legacy", dataset_version_id=version.id, indicator_key="lst_c_mean",
+                         value=35.0, observed_at=version.observed_at, quality_status="valid"))
+    db.add(PriorityScore(area_id="legacy", score=50, components={}, weights={}, missing_inputs=[],
+                         input_versions={"old": True}, formula_version="priority-v1",
+                         calculated_at=now - timedelta(hours=1)))
+    db.commit()
+
+    assert refresh_scores_from_older_method(db) == 1
+    newest = db.scalar(select(PriorityScore).order_by(desc(PriorityScore.calculated_at)))
+    assert newest.input_versions["_area_observations"]["lst_c_mean"]["version_id"] == version.id
+    assert refresh_scores_from_older_method(db) == 0  # already on the per-district method
