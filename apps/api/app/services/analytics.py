@@ -2,7 +2,7 @@ from datetime import timezone
 from typing import Any, Dict, Optional
 
 from sqlalchemy import desc, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 from app.models.entities import (
     AreaIndicator,
@@ -132,14 +132,20 @@ def recalculate_priority_scores(db: Session) -> int:
             formula_version=result.formula_version,
         )
         db.add(score)
+        # Candidates mirror their district's score and dataset-level versions.
+        # Skip the geometry and rewrite only rows whose values change: a
+        # recalculation used to rewrite every candidate's JSON (1,482 rows),
+        # which dominated load on the 1 GB managed database.
         for candidate in db.scalars(
-            select(CandidateIntervention).where(
-                CandidateIntervention.area_id == area.id,
-                CandidateIntervention.active.is_(True),
-            )
+            select(CandidateIntervention)
+            .options(defer(CandidateIntervention.geometry))
+            .where(CandidateIntervention.area_id == area.id, CandidateIntervention.active.is_(True))
         ).all():
-            candidate.priority_score = result.score
-            candidate.dataset_versions = {**(candidate.dataset_versions or {}), **input_versions}
+            versions = {**(candidate.dataset_versions or {}), **input_versions}
+            if candidate.priority_score != result.score:
+                candidate.priority_score = result.score
+            if versions != (candidate.dataset_versions or {}):
+                candidate.dataset_versions = versions
         updated += 1
     return updated
 

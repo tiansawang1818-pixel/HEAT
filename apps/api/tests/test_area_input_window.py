@@ -68,3 +68,35 @@ def test_scores_from_the_older_method_are_recalculated_once(db):
     newest = db.scalar(select(PriorityScore).order_by(desc(PriorityScore.calculated_at)))
     assert newest.input_versions["_area_observations"]["lst_c_mean"]["version_id"] == version.id
     assert refresh_scores_from_older_method(db) == 0  # already on the per-district method
+
+
+def test_recalculation_does_not_rewrite_unchanged_candidates(db):
+    from sqlalchemy import event
+    from app.db.session import engine
+    from app.models.entities import CandidateIntervention
+
+    now = datetime.now(timezone.utc)
+    source = db.scalar(select(DataSource).where(DataSource.dataset_id == LANDSAT))
+    db.add(GeographicArea(id="steady", name_th="steady", name_en="steady", geometry=POLYGON, source_name="test"))
+    version = DatasetVersion(source_id=source.id, source_asset_id="s", source_version="1", checksum="c",
+                             status="published", observed_at=now - timedelta(days=2))
+    db.add(version)
+    db.flush()
+    db.add(AreaIndicator(area_id="steady", dataset_version_id=version.id, indicator_key="lst_c_mean",
+                         value=35.0, observed_at=version.observed_at, quality_status="valid"))
+    db.add(CandidateIntervention(id="steady-site", area_id="steady", name_th="จุด", intervention_type="tree_planting",
+                                 geometry={"type": "Point", "coordinates": [100.505, 13.705]}, priority_score=0,
+                                 feasibility_status="insufficient_evidence", evidence={}))
+    db.commit()
+    recalculate_priority_scores(db)
+    db.commit()
+
+    updates = []
+    listener = lambda conn, cursor, statement, *args: updates.append(statement) if statement.startswith("UPDATE candidate_interventions") else None
+    event.listen(engine, "before_cursor_execute", listener)
+    try:
+        recalculate_priority_scores(db)
+        db.commit()
+    finally:
+        event.remove(engine, "before_cursor_execute", listener)
+    assert updates == []
