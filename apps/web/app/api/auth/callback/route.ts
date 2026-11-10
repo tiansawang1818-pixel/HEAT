@@ -20,8 +20,16 @@ export async function GET(request: NextRequest) {
     await deleteAdminSession(request);
     response = NextResponse.redirect(new URL("/observatory", settings.origin));
     response.cookies.set(sessionCookieName, session.id, { ...authCookieOptions, maxAge: session.ttl });
-  } catch {
-    response = NextResponse.json({ detail: "เข้าสู่ระบบไม่สำเร็จหรือบัญชีนี้ไม่มีสิทธิ์ผู้ดูแล กรุณาเริ่มเข้าสู่ระบบใหม่" }, { status: 401 });
+  } catch (error) {
+    // Name the failing step without echoing tokens, codes or secrets.
+    const reason = error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 300) : "unknown error";
+    const cause = error instanceof Error && error.cause && typeof error.cause === "object" && "error" in error.cause
+      ? ` (provider: ${String((error.cause as { error?: unknown }).error).slice(0, 80)})` : "";
+    console.warn(`SSO callback failed: ${reason}${cause}`);
+    response = NextResponse.json(
+      { detail: "เข้าสู่ระบบไม่สำเร็จหรือบัญชีนี้ไม่มีสิทธิ์ผู้ดูแล กรุณาเริ่มเข้าสู่ระบบใหม่" },
+      { status: 401, headers: { "Content-Type": "application/json; charset=utf-8" } },
+    );
   }
   response.cookies.set(loginCookieName, "", { ...authCookieOptions, maxAge: 0 });
   response.headers.set("Cache-Control", "no-store");

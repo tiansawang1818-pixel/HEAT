@@ -25,6 +25,6 @@ export async function GET() {
     // Name the failing step without echoing configuration values or secrets.
     const reason = error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 300) : "unknown error";
     console.warn(`SSO login unavailable: ${reason}`);
-    return NextResponse.json({ detail: "ยังเชื่อมต่อ SSO ไม่สำเร็จ กรุณาตรวจการตั้งค่ากับผู้ดูแลระบบ" }, { status: 503, headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json({ detail: "ยังเชื่อมต่อ SSO ไม่สำเร็จ กรุณาตรวจการตั้งค่ากับผู้ดูแลระบบ" }, { status: 503, headers: { "Cache-Control": "no-store", "Content-Type": "application/json; charset=utf-8" } });
   }
 }
