@@ -107,7 +107,16 @@ def prepare_environment(source, scratch):
 # API 4 + ingestion child 2 + dispatcher 2 = 8, leaving room for migrations.
 # The API serves every browser at ~0.5-1 s per remote query, so two
 # connections queued past the 10 s pool timeout during restarts (HTTP 500).
-PROCESS_ENV = {"api": {"DATABASE_POOL_SIZE": "4"}}
+# glibc gives each thread its own malloc arena; two arenas bound the
+# fragmentation of the threaded API and Celery workers. Node's heap is capped
+# so the web server collects garbage before it grows into the shared budget.
+PROCESS_ENV = {
+    "api": {"DATABASE_POOL_SIZE": "4", "MALLOC_ARENA_MAX": "2"},
+    "ingestion": {"MALLOC_ARENA_MAX": "2"},
+    "dispatcher": {"MALLOC_ARENA_MAX": "2"},
+    "beat": {"MALLOC_ARENA_MAX": "2"},
+    "web": {"NODE_OPTIONS": "--max-old-space-size=256"},
+}
 
 
 def runtime_commands(root):

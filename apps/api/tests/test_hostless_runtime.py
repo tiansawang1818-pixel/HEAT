@@ -124,3 +124,9 @@ def test_api_gets_a_larger_pool_within_the_managed_connection_budget():
     assert runtime.PROCESS_ENV["api"]["DATABASE_POOL_SIZE"] == "4"
     # API 4 + ingestion child 2 + dispatcher 2 stays under the 10-connection role limit.
     assert 4 + 2 + 2 < 10
+
+
+def test_python_processes_limit_malloc_arenas_and_web_caps_its_heap():
+    for name in ("api", "ingestion", "dispatcher", "beat"):
+        assert runtime.PROCESS_ENV[name]["MALLOC_ARENA_MAX"] == "2"
+    assert runtime.PROCESS_ENV["web"]["NODE_OPTIONS"] == "--max-old-space-size=256"
