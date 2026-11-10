@@ -1,3 +1,4 @@
+import logging
 import random
 import time
 import redis
@@ -18,6 +19,8 @@ from app.services.bootstrap import ensure_sources
 from app.services.connectors import FixtureConnector
 from app.services.connectors.base import ConnectorError, ProviderRateLimitError
 from app.services.pipeline import run_monitor
+
+logger = logging.getLogger(__name__)
 from app.services.locks import MONITOR_HARD_TIME_LIMIT_SECONDS, MONITOR_SOFT_TIME_LIMIT_SECONDS
 from app.services.locks import LockBackendUnavailable, distributed_lock
 from app.services.source_registry import CONNECTOR_TYPES
@@ -41,6 +44,16 @@ def connector_for(source: str, fixture_path: Optional[str] = None):
 
 @celery_app.task(name="app.worker.dispatch_ingestion", soft_time_limit=45, time_limit=60)
 def dispatch_ingestion():
+    try:
+        return _dispatch_ingestion()
+    except (LockBackendUnavailable, redis.RedisError, TimeoutError) as exc:
+        # Beat sends this every minute, so a brief Redis stall is retried on
+        # the next tick; record it without paging as an application error.
+        logger.warning("Dispatcher tick skipped, Redis unavailable: %s", exc)
+        return {"status": "skipped", "reason": "redis_unavailable"}
+
+
+def _dispatch_ingestion():
     with SessionLocal() as db:
         ensure_sources(db)
         result = dispatch_due_sources(db, lambda job_id, source: run_manual_ingestion.delay(job_id, source))
@@ -146,6 +159,12 @@ def _execute_queued_ingestion(self, job_id: str, source: str, fixture_path: Opti
                 raise self.retry(exc=exc, countdown=countdown)
             job.status, job.stage, job.finished_at, job.error_message = "failed", "failed", datetime.now(timezone.utc), str(exc)
             db.commit()
+            if isinstance(exc, ConnectorError):
+                # The provider stayed unreachable through every retry. The job
+                # and source check record it and the scheduler tries again, so
+                # this is an expected outcome, not an application error.
+                logger.warning("Ingestion job %s for %s gave up after retries: %s", job_id, source, exc)
+                return {"status": "failed", "job_id": job_id, "error": str(exc)}
         raise
     finally:
         db.close()

@@ -72,10 +72,18 @@ def test_manual_worker_marks_terminal_failure_after_retry_budget(db, monkeypatch
     monkeypatch.setattr(worker, "run_monitor", MagicMock(side_effect=ConnectorError("provider offline")))
     retry = MagicMock()
     monkeypatch.setattr(worker.run_manual_ingestion, "retry", retry)
-    with pytest.raises(ConnectorError, match="provider offline"):
-        _run(worker.run_manual_ingestion, job_id, retries=5)
+    # An unreachable provider is an expected outcome: recorded, not raised as an app error.
+    result = _run(worker.run_manual_ingestion, job_id, retries=5)
+    assert result == {"status": "failed", "job_id": job_id, "error": "provider offline"}
     failed = db.get(IngestionJob, job_id)
     assert failed.status == "failed"
     assert failed.attempts == 6
     assert failed.finished_at is not None
     retry.assert_not_called()
+
+
+def test_dispatcher_skips_tick_quietly_when_redis_stalls(monkeypatch):
+    def stalled():
+        raise TimeoutError("Timeout reading from socket")
+    monkeypatch.setattr(worker, "_dispatch_ingestion", stalled)
+    assert worker.dispatch_ingestion.run() == {"status": "skipped", "reason": "redis_unavailable"}
