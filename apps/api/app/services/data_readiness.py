@@ -8,7 +8,7 @@ from app.models.entities import (
     ForecastRun, GeographicArea, PopulationEstimate, PriorityScore, RasterAssetMetadata, SourceCheck, ValidationReport,
 )
 from app.services.source_registry import SOURCE_KEYS
-from app.services.versions import INDICATOR_DATASETS, LAYER_DATASETS, published_version
+from app.services.versions import INDICATOR_DATASETS, LAYER_DATASETS, indicator_version_pool, published_version
 from app.services.forecast_workflow import forecast_inputs
 
 
@@ -68,14 +68,15 @@ def published_data_readiness(db):
     coverage = []
     for indicator in ("lst_c_mean", "ndvi", "tree_cover_fraction", "built_fraction", "population_density"):
         version = versions.get(INDICATOR_DATASETS[indicator])
+        pool = indicator_version_pool(db, INDICATOR_DATASETS[indicator], now) if version else ["missing"]
         rows = db.scalars(select(AreaIndicator.area_id).where(
             AreaIndicator.indicator_key == indicator,
-            AreaIndicator.dataset_version_id == (version.id if version else "missing"),
+            AreaIndicator.dataset_version_id.in_(pool),
             AreaIndicator.value.is_not(None), AreaIndicator.quality_status.notin_(["synthetic_demo", "demo_only", "test_only", "rejected", "invalid"]),
         )).all()
         coverage.append(set(rows))
     complete_areas = set.intersection(*coverage) & official_ids if coverage else set()
-    add("coverage.pilot", bool(complete_areas), "พื้นที่นำร่องที่มีข้อมูลครบ", f"มี {len(complete_areas)} พื้นที่ที่อุณหภูมิ NDVI พืชพรรณ สิ่งปลูกสร้าง และประชากรอ้างอิงเวอร์ชันปัจจุบันร่วมกัน")
+    add("coverage.pilot", bool(complete_areas), "พื้นที่นำร่องที่มีข้อมูลครบ", f"มี {len(complete_areas)} พื้นที่ที่มีอุณหภูมิ NDVI พืชพรรณ สิ่งปลูกสร้าง และประชากรจากภาพที่ใช้ได้ล่าสุดของพื้นที่นั้นภายในเกณฑ์อายุข้อมูล")
     population = versions.get(INDICATOR_DATASETS["population_density"])
     population_count = db.scalar(select(func.count()).select_from(PopulationEstimate).where(
         PopulationEstimate.dataset_version_id == (population.id if population else "missing"),

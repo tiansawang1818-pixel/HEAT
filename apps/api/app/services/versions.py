@@ -1,4 +1,5 @@
-from typing import Any, Dict, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
@@ -45,3 +46,25 @@ def current_versions(db: Session) -> Dict[str, Any]:
                 "layer_version": latest.layer_version,
             }
     return result
+
+
+def indicator_version_pool(db: Session, dataset_id: str, now: Optional[datetime] = None) -> List[str]:
+    """Published versions whose values may stand for a district today.
+
+    A scene covers only part of Bangkok and clouds remove more, so each
+    district uses its most recent clear value among versions observed within
+    the source's freshness window. The newest version is always included so a
+    stale source behaves as before instead of disappearing.
+    """
+    now = now or datetime.now(timezone.utc)
+    source = db.scalar(select(DataSource).where(DataSource.dataset_id == dataset_id))
+    latest = published_version(db, dataset_id)
+    if source is None or latest is None:
+        return []
+    cutoff = now - timedelta(seconds=source.stale_after_seconds)
+    ids = set(db.scalars(select(DatasetVersion.id).where(
+        DatasetVersion.source_id == source.id, DatasetVersion.status == "published",
+        DatasetVersion.observed_at >= cutoff,
+    )).all())
+    ids.add(latest.id)
+    return sorted(ids)
