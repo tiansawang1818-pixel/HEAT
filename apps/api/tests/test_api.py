@@ -337,6 +337,7 @@ def test_layer_freshness_uses_observation_age_and_failed_checks_preserve_map(cli
     layer = next(item for item in client.get("/api/map/layers").json()["items"] if item["id"] == "temperature")
     assert layer["status"] == "stale"
     check.status = "failed"
+    check.completed_at = now + timedelta(seconds=1)  # a finishing check always records its completion
     db.commit()
     layer = next(item for item in client.get("/api/map/layers").json()["items"] if item["id"] == "temperature")
     assert layer["status"] == "error"
@@ -1122,3 +1123,21 @@ def test_planning_estimate_prices_unverified_candidates_without_recording_a_deci
     assert db.scalar(select(func.count()).select_from(OptimizationRun)) == 0
     # The evidence-gated optimizer still sees nothing to fund.
     assert client.post("/api/optimization/run", json={"budget_thb": 100_000}).json()["selected"] == []
+
+
+def test_dashboard_reads_are_reused_until_the_data_generation_moves(client, db):
+    from app.models.entities import PipelineEvent
+
+    first = client.get("/api/datasets/status")
+    assert first.status_code == 200 and first.headers["content-type"].startswith("application/json")
+    assert client.get("/api/datasets/status").content == first.content
+    source = db.scalar(select(DataSource).where(DataSource.source_type == "weather"))
+    source.name = "Open-Meteo renamed"
+    db.commit()
+    # Without a new event, check or job the cached body is reused for a short time.
+    assert b"renamed" not in client.get("/api/datasets/status").content
+    db.add(PipelineEvent(event_type="layer.published", layer_key="weather", layer_version=1, payload={}))
+    db.commit()
+    assert b"renamed" in client.get("/api/datasets/status").content
+    assert client.get("/api/map/layers").status_code == 200
+    assert client.get("/api/weather/context").status_code == 200

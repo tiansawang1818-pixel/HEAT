@@ -308,8 +308,42 @@ def datasets(db: Session = Depends(get_db)) -> Dict[str, Any]:
     return {"items": _source_statuses(db, sources), "count": len(sources)}
 
 
+# Dashboard reads (dataset status, layer list, weather) each run several
+# queries against a database ~0.5-1 s away. One round trip reads a
+# generation stamp that moves with every publication, source check and job;
+# while it is unchanged the encoded response is reused for a short time.
+_RESPONSE_CACHE: Dict[str, tuple] = {}
+_RESPONSE_CACHE_SECONDS = 30
+
+
+def _dashboard_generation(db: Session) -> tuple:
+    return tuple(db.execute(select(
+        select(func.count(PipelineEvent.id)).scalar_subquery(),
+        select(func.max(PipelineEvent.created_at)).scalar_subquery(),
+        select(func.max(SourceCheck.checked_at)).scalar_subquery(),
+        select(func.max(SourceCheck.completed_at)).scalar_subquery(),
+        select(func.max(IngestionJob.created_at)).scalar_subquery(),
+        select(func.max(IngestionJob.finished_at)).scalar_subquery(),
+    )).one())
+
+
+def _cached_dashboard_response(db: Session, name: str, build) -> Response:
+    key = "%s|%s" % (name, _dashboard_generation(db))
+    entry = _RESPONSE_CACHE.get(name)
+    if entry and entry[0] == key and entry[1] > time.monotonic():
+        body = entry[2]
+    else:
+        body = json.dumps(build(), ensure_ascii=False, separators=(",", ":"), default=str).encode("utf-8")
+        _RESPONSE_CACHE[name] = (key, time.monotonic() + _RESPONSE_CACHE_SECONDS, body)
+    return Response(content=body, media_type="application/json", headers={"Cache-Control": "no-cache"})
+
+
 @router.get("/datasets/status")
-def dataset_status(db: Session = Depends(get_db)) -> Dict[str, Any]:
+def dataset_status(db: Session = Depends(get_db)) -> Response:
+    return _cached_dashboard_response(db, "datasets/status", lambda: _dataset_status(db))
+
+
+def _dataset_status(db: Session) -> Dict[str, Any]:
     sources = db.scalars(select(DataSource).where(DataSource.source_type != "test_fixture").order_by(DataSource.name)).all()
     items = _source_statuses(db, sources)
     return {
@@ -319,7 +353,11 @@ def dataset_status(db: Session = Depends(get_db)) -> Dict[str, Any]:
 
 
 @router.get("/weather/context")
-def weather_context(db: Session = Depends(get_db)) -> Dict[str, Any]:
+def weather_context(db: Session = Depends(get_db)) -> Response:
+    return _cached_dashboard_response(db, "weather/context", lambda: _weather_context(db))
+
+
+def _weather_context(db: Session) -> Dict[str, Any]:
     """Return only the latest validated Open-Meteo context.
 
     Values are model estimates and forecasts, not satellite land-surface
@@ -605,7 +643,11 @@ LAYER_DEFINITIONS = [
 
 
 @router.get("/map/layers")
-def map_layers(db: Session = Depends(get_db)) -> Dict[str, Any]:
+def map_layers(db: Session = Depends(get_db)) -> Response:
+    return _cached_dashboard_response(db, "map/layers", lambda: _map_layers(db))
+
+
+def _map_layers(db: Session) -> Dict[str, Any]:
     versions = {item["dataset_id"]: item for item in datasets(db)["items"]}
     source_ids = {
         "temperature": ["LANDSAT/LC08_C02_T1_L2+LANDSAT/LC09_C02_T1_L2"],
