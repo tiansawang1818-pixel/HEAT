@@ -13,6 +13,7 @@ def test_bounded_pool_times_out_then_reuses_returned_connection(monkeypatch, tmp
     # Exercise the actual configured pool without starting a local DB server.
     # The CI integration suite covers the same factory on real PostgreSQL.
     def isolated_engine(url, **options):
+        options.pop("connect_args", None)  # PostgreSQL session options do not apply to SQLite
         return real_create_engine("sqlite+pysqlite:///" + str(tmp_path / "bounded.db"), **options)
 
     monkeypatch.setattr(session, "create_engine", isolated_engine)
@@ -136,3 +137,12 @@ def test_sse_waiting_for_pool_leaves_event_loop_free_to_release_other_request(tm
         asyncio.run(scenario())
     finally:
         engine.dispose()
+
+
+def test_postgres_connections_cap_work_mem(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(session, "create_engine", lambda url, **options: captured.update(options))
+    session.make_database_engine(Settings(_env_file=None, database_url="postgresql+psycopg://uncontacted.example/test"))
+    assert captured["connect_args"] == {"options": "-c work_mem=4MB"}
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, database_work_mem="4MB; DROP")
