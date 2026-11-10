@@ -21,7 +21,10 @@ export async function GET() {
     response.cookies.set(loginCookieName, sealAuthValue({ verifier, state, nonce, expiresAt: Date.now() + 300_000 }), { ...authCookieOptions, maxAge: 300 });
     response.headers.set("Cache-Control", "no-store");
     return response;
-  } catch {
+  } catch (error) {
+    // Name the failing step without echoing configuration values or secrets.
+    const reason = error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 300) : "unknown error";
+    console.warn(`SSO login unavailable: ${reason}`);
     return NextResponse.json({ detail: "ยังเชื่อมต่อ SSO ไม่สำเร็จ กรุณาตรวจการตั้งค่ากับผู้ดูแลระบบ" }, { status: 503, headers: { "Cache-Control": "no-store" } });
   }
 }
