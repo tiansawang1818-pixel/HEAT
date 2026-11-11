@@ -31,7 +31,7 @@ def _versions(db):
 
 def test_latest_and_historical_raster_vector_and_lineage_use_the_same_observation(client, db, monkeypatch):
     source, (new, old) = _versions(db)
-    monkeypatch.setattr(earth_engine_tiles, "_render_url", lambda spec, version: "https://earthengine.googleapis.com/%s/{z}/{x}/{y}" % version.id)
+    monkeypatch.setattr(earth_engine_tiles, "_render_url", lambda spec, version, composite=None: "https://earthengine.googleapis.com/%s/{z}/{x}/{y}" % version.id)
     versions = client.get("/api/map/observations?layer=temperature").json()
     assert versions["supports_snapshots"] is True
     assert [item["id"] for item in versions["items"]] == [new.id, old.id]
