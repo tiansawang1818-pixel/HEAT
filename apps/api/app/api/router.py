@@ -1116,9 +1116,12 @@ def candidate_approve(
     candidate.estimated_beneficiaries = request.estimated_beneficiaries
     candidate.benefit_score = request.benefit_score
     candidate.feasibility_status = "eligible"
+    desk_review = request.evidence_method == "desk_review"
     candidate.feasibility_constraints = {
         **(candidate.feasibility_constraints or {}),
-        "site_survey_completed": True,
+        "evidence_method": request.evidence_method,
+        "site_survey_completed": not desk_review,
+        "remote_site_review": desk_review,
         "land_control_verified": True,
         "design_accessibility_reviewed": True,
         "feasibility_evidence_url": str(request.feasibility_evidence_url),
@@ -1130,6 +1133,7 @@ def candidate_approve(
         "cost_evidence": assumption.evidence_url,
         "cost_assumption_version": assumption.version,
         "feasibility_evidence": str(request.feasibility_evidence_url),
+        "evidence_method": request.evidence_method,
         "benefit_evidence": str(request.benefit_evidence_url) if request.benefit_evidence_url else None,
         "approved_at": now.isoformat(),
         "approved_by": admin_actor,
@@ -1138,7 +1142,8 @@ def candidate_approve(
         **(candidate.uncertainty or {}),
         "cost": "approved versioned fixed-per-site assumption; site-specific variance is not quantified",
         "benefit": "evidence supplied" if request.benefit_evidence_url else "not estimated",
-        "feasibility": "administrator-confirmed site evidence supplied",
+        "feasibility": ("administrator desk review of remote evidence; confirm on site before construction"
+                        if desk_review else "administrator-confirmed field survey evidence supplied"),
     }
     candidate.dataset_versions = {
         **(candidate.dataset_versions or {}),
@@ -1424,8 +1429,11 @@ def optimization_run(request: OptimizationRequest, db: Session = Depends(get_db)
         "selected": selected,
         "input_versions": versions,
         "limitations": ["ผลประโยชน์เป็นค่าประมาณตามหลักฐานใน candidate แต่ละรายการ", "ไม่ตีความคะแนนความร้อนเป็นฐานะทางเศรษฐกิจ",
-                         "ต้นทุนที่มีเศษบาทกันงบโดยปัดขึ้นเป็นบาทเต็ม", *portfolio.limitations],
+                         "ต้นทุนที่มีเศษบาทกันงบโดยปัดขึ้นเป็นบาทเต็ม", *portfolio.limitations,
+                         *(["จุดที่ตรวจจากระยะไกลใช้วางแผนและจัดลำดับงบได้ แต่ต้องยืนยันหน้างานก่อนเริ่มก่อสร้าง"]
+                           if any((item.get("evidence") or {}).get("evidence_method") == "desk_review" for item in selected) else [])],
         "eligible_candidates": len(rows),
+        "desk_reviewed_selected": sum(1 for item in selected if (item.get("evidence") or {}).get("evidence_method") == "desk_review"),
         "empty_reason": None if selected else (
             "ยังไม่มีจุดที่ผู้ดูแลอนุมัติหลักฐานรายจุด (สำรวจพื้นที่ สิทธิ์ในที่ดิน และตรวจแบบ) จึงยังไม่มีจุดให้จัดสรรงบจริง "
             "ใช้ \"ประมาณการเบื้องต้น\" เพื่อดูการจัดสรรตามราคาที่อนุมัติแล้ว" if not rows else

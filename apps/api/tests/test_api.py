@@ -1178,3 +1178,32 @@ def test_empty_decision_run_explains_missing_site_evidence(client, monkeypatch):
                                                       "enabled_types": ["tree_planting"]}).json()
     assert body["selected"] == [] and body["eligible_candidates"] == 0
     assert "ประมาณการเบื้องต้น" in body["empty_reason"]
+
+
+def test_desk_review_approval_counts_for_planning_with_onsite_caveat(client, db):
+    area = GeographicArea(id="desk-area", name_th="พื้นที่ตรวจระยะไกล", name_en="Desk review area",
+                          geometry={"type": "Point", "coordinates": [100.55, 13.75]}, source_name="test")
+    candidate = CandidateIntervention(
+        id="desk-candidate", area_id=area.id, name_th="สวนสาธารณะของ กทม.", intervention_type="tree_planting",
+        geometry={"type": "Point", "coordinates": [100.55, 13.75]}, priority_score=70,
+        feasibility_status="insufficient_evidence", evidence={"source_dataset_id": "osm/bangkok"}, uncertainty={})
+    db.add_all([area, candidate])
+    db.commit()
+    headers = {"X-Admin-Key": "test-admin-key", "X-Admin-Actor": "desk-reviewer"}
+    assumption = client.post("/api/cost-assumptions", headers=headers, json={
+        "intervention_type": "tree_planting", "version": "desk-2026.1", "unit_cost_thb": 8000,
+        "cost_basis": "fixed_per_site", "evidence_url": "https://example.org/tree-price",
+        "evidence_title": "ราคากลางปลูกต้นไม้"}).json()
+    approved = client.post("/api/candidates/desk-candidate/approve", headers=headers, json={
+        "cost_assumption_id": assumption["id"], "evidence_method": "desk_review",
+        "confirm_site_feasibility": True, "confirm_land_control": True, "confirm_design_accessibility_review": True,
+        "feasibility_evidence_url": "https://www.openstreetmap.org/way/1056673011",
+        "feasibility_notes": "ภาพดาวเทียมมีพื้นที่ว่าง OSM ระบุผู้ดูแล กทม. เข้าถึงจากถนนสาธารณะ"})
+    assert approved.status_code == 200
+    constraints = approved.json()["feasibility_constraints"]
+    assert constraints["evidence_method"] == "desk_review"
+    assert constraints["remote_site_review"] is True and constraints["site_survey_completed"] is False
+
+    run = client.post("/api/optimization/run", json={"budget_thb": 100_000, "candidate_ids": ["desk-candidate"]}).json()
+    assert run["selected"][0]["id"] == "desk-candidate" and run["desk_reviewed_selected"] == 1
+    assert any("ยืนยันหน้างาน" in item for item in run["limitations"])

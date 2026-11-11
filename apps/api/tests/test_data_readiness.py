@@ -52,7 +52,8 @@ def test_complete_recorded_pilot_can_pass_data_checks_without_claiming_operation
     _recorded_pilot(db)
     report = published_data_readiness(db)
     assert report["data_ready"] is True
-    assert report["coverage"] == {"official_areas": 1, "complete_pilot_areas": 1, "evidence_backed_candidates": 1}
+    assert report["coverage"] == {"official_areas": 1, "complete_pilot_areas": 1, "evidence_backed_candidates": 1,
+                                  "desk_reviewed_candidates": 0}
     assert report["future_scenarios_available"] is False
     assert any(c["code"].startswith("license.") and c["status"] == "warning" for c in report["checks"])
     assert report["external_verification_required_th"]
@@ -115,3 +116,15 @@ def test_unreachable_boundary_provider_warns_while_validated_boundaries_stay_pub
     db.add(SourceCheck(source_id=weather.id, checked_at=datetime.now(timezone.utc), status="failed"))
     db.commit()
     assert published_data_readiness(db)["data_ready"] is False
+
+
+def test_desk_reviewed_site_counts_as_evidence_with_onsite_caveat(db):
+    _, candidate = _recorded_pilot(db)
+    candidate.feasibility_constraints = {"site_survey_completed": False, "remote_site_review": True,
+                                         "land_control_verified": True, "design_accessibility_reviewed": True}
+    db.commit()
+    report = published_data_readiness(db)
+    assert report["investment_decisions_ready"] is True
+    assert report["coverage"]["desk_reviewed_candidates"] == 1
+    check = next(c for c in report["checks"] if c["code"] == "investment.evidence")
+    assert check["status"] == "ready" and "ยืนยันหน้างาน" in check["detail_th"]

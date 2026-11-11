@@ -616,6 +616,7 @@ export async function approveCandidate(
   candidateId: string,
   input: {
     cost_assumption_id: string;
+    evidence_method?: "field_survey" | "desk_review";
     feasibility_evidence_url: string;
     feasibility_notes: string;
     confirm_site_feasibility: boolean;
@@ -654,4 +655,10 @@ export async function askAssistant(question: string, areaId?: string) {
 
 export function streamUrl() {
   return endpoint("/api/events/stream");
+}
+
+/** Public map link for an OSM-derived candidate id such as "osm-way-123-tree-planting". */
+export function osmCandidateUrl(candidateId: string): string | null {
+  const match = /^osm-(node|way|relation)-(\d+)-/.exec(candidateId);
+  return match ? `https://www.openstreetmap.org/${match[1]}/${match[2]}` : null;
 }

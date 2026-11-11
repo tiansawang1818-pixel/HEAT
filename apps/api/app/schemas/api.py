@@ -125,6 +125,9 @@ class CostAssumptionCreateRequest(ApiModel):
 
 class CandidateApprovalRequest(ApiModel):
     cost_assumption_id: str = Field(min_length=1, max_length=36)
+    # "desk_review": the administrator confirmed the site from remote evidence
+    # (imagery, public-land records, map access) instead of a field survey.
+    evidence_method: Literal["field_survey", "desk_review"] = "field_survey"
     confirm_site_feasibility: Literal[True]
     confirm_land_control: Literal[True]
     confirm_design_accessibility_review: Literal[True]

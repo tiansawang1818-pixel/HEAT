@@ -382,3 +382,11 @@ describe("Thai presentation helpers", () => {
     expect(area.centroid).toEqual({ type: "Point", coordinates: [100.57, 13.71] });
   });
 });
+
+describe("osmCandidateUrl", () => {
+  it("links OSM-derived candidates to their public map object", async () => {
+    const { osmCandidateUrl } = await import("./api");
+    expect(osmCandidateUrl("osm-way-1056673011-tree-planting")).toBe("https://www.openstreetmap.org/way/1056673011");
+    expect(osmCandidateUrl("manual-site-1")).toBeNull();
+  });
+});

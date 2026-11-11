@@ -90,3 +90,5 @@ Implementation ปัจจุบันใช้ publication gate `scenario-v2` 
 ## Intervention effects
 
 ระบบห้ามสร้าง before/after temperature raster จากค่าทั่วไปที่ไม่มีการ validate เฉพาะพื้นที่ ผลจาก literature/model ต้องใช้คำว่า “projection” ระบุ transferability, maintenance, time horizon และ uncertainty
+
+**หลักฐานรายจุดแบบตรวจจากระยะไกล:** ผู้ดูแลอนุมัติจุดได้ 2 วิธี (`evidence_method`) คือ `field_survey` (ลงพื้นที่ สิทธิ์ในที่ดิน ตรวจแบบ) และ `desk_review` (ภาพดาวเทียมหรือ Street View, ข้อมูลสาธารณะที่ระบุว่าเป็นที่ดินของรัฐหรือ กทม. เช่น แท็ก operator ใน OpenStreetMap และทางเข้าจากทางสาธารณะบนแผนที่) ทั้งสองแบบทำให้จุดเข้า optimizer และนับใน `investment.evidence` แต่ `desk_review` ถูกบันทึกเป็น `remote_site_review` ไม่ใช่ `site_survey_completed` ผลจัดสรรงบจะแสดงจำนวนจุดที่ตรวจจากระยะไกลและข้อจำกัดว่า "ต้องยืนยันหน้างานก่อนเริ่มก่อสร้าง" เสมอ การตรวจระยะไกลไม่เห็นท่อ สายไฟใต้ดิน หรือข้อตกลงการใช้พื้นที่ที่ไม่ได้เผยแพร่

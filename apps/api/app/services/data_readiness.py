@@ -98,7 +98,7 @@ def published_data_readiness(db):
         if all((score.input_versions.get(dataset) or {}).get("version_id") == versions[dataset].id for dataset in set(INDICATOR_DATASETS.values()) if dataset in versions):
             current_score = True
     add("priority.current_inputs", current_score, "คะแนนอ้างอิงข้อมูลปัจจุบัน", "มีคะแนนของพื้นที่นำร่องที่อ้างอิงเวอร์ชันปัจจุบัน" if current_score else "ยังไม่มีคะแนนที่ตรวจย้อนกลับไปยังข้อมูลนำร่องชุดปัจจุบันได้")
-    eligible = 0
+    eligible = desk_reviewed = 0
     for candidate in db.scalars(select(CandidateIntervention).where(CandidateIntervention.active.is_(True), CandidateIntervention.feasibility_status == "eligible")):
         evidence = candidate.evidence or {}
         cost = db.get(CostAssumption, evidence.get("cost_assumption_id")) if evidence.get("cost_assumption_id") else None
@@ -108,12 +108,15 @@ def published_data_readiness(db):
                 and cost.intervention_type == candidate.intervention_type and _aware(cost.effective_from) <= now
                 and cost.assumptions.get("unit_cost_thb") == candidate.estimated_cost_thb
                 and evidence.get("approved_by") and evidence.get("feasibility_evidence")
-                and all(feasibility.get(key) is True for key in ("site_survey_completed", "land_control_verified", "design_accessibility_reviewed"))):
+                and (feasibility.get("site_survey_completed") is True or feasibility.get("remote_site_review") is True)
+                and all(feasibility.get(key) is True for key in ("land_control_verified", "design_accessibility_reviewed"))):
             eligible += 1
+            desk_reviewed += feasibility.get("site_survey_completed") is not True
     # Recorded site evidence gates investment decisions, not published data:
     # without it the optimizer still funds nothing, so this stays a warning.
     add("investment.evidence", eligible > 0, "โครงการพร้อมหลักฐาน",
         f"มี {eligible} โครงการในพื้นที่นำร่องที่มีหลักฐานต้นทุนและความเหมาะสมที่ผู้ดูแลบันทึกแล้ว"
+        + (f" (ตรวจจากระยะไกล {desk_reviewed} จุด ต้องยืนยันหน้างานก่อนก่อสร้าง)" if desk_reviewed else "")
         + ("" if eligible else " ข้อมูลพร้อมใช้ แต่การตัดสินใจลงทุนจริงยังต้องมีหลักฐานรายจุด ระหว่างนี้ใช้ได้เฉพาะประมาณการเบื้องต้น"),
         warning=eligible == 0)
     latest_model = db.scalar(select(ForecastRun).order_by(desc(ForecastRun.created_at)).limit(1))
@@ -126,7 +129,7 @@ def published_data_readiness(db):
         "investment_decisions_ready": eligible > 0,
         "generated_at": now.isoformat(), "checks": checks,
         "summary": {status: sum(c["status"] == status for c in checks) for status in ("ready", "warning", "blocked")},
-        "coverage": {"official_areas": official_count, "complete_pilot_areas": len(complete_areas), "evidence_backed_candidates": eligible},
+        "coverage": {"official_areas": official_count, "complete_pilot_areas": len(complete_areas), "evidence_backed_candidates": eligible, "desk_reviewed_candidates": desk_reviewed},
         "published_versions": {dataset: {"version_id": v.id, "observed_at": _aware(v.observed_at).isoformat() if v.observed_at else None} for dataset, v in versions.items()},
         "future_scenarios_available": current_model,
         "external_verification_required_th": [

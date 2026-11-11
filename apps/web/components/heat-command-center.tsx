@@ -51,6 +51,7 @@ import { Card } from "@/components/ui/card";
 import {
   askAssistant,
   approveCandidate,
+  osmCandidateUrl,
   compareScenarios,
   createCostAssumption,
   downloadSavedScenarioReport,
@@ -1502,6 +1503,7 @@ function EvidenceApprovalPanel({ operatorToken }: { operatorToken: string }) {
   const [feasibilityUrl, setFeasibilityUrl] = useState("");
   const [feasibilityNotes, setFeasibilityNotes] = useState("");
   const [siteChecked, setSiteChecked] = useState(false);
+  const [evidenceMethod, setEvidenceMethod] = useState<"desk_review" | "field_survey">("desk_review");
   const [landChecked, setLandChecked] = useState(false);
   const [accessChecked, setAccessChecked] = useState(false);
 
@@ -1595,6 +1597,7 @@ function EvidenceApprovalPanel({ operatorToken }: { operatorToken: string }) {
     try {
       await approveCandidate(selectedCandidate.id, {
         cost_assumption_id: selectedAssumptionId,
+        evidence_method: evidenceMethod,
         feasibility_evidence_url: feasibilityUrl.trim(),
         feasibility_notes: feasibilityNotes.trim(),
         confirm_site_feasibility: siteChecked,
@@ -1642,12 +1645,20 @@ function EvidenceApprovalPanel({ operatorToken }: { operatorToken: string }) {
           <label><span>จุดที่รอหลักฐาน ({candidates.length})</span><select required value={selectedCandidateId} onChange={(event) => setSelectedCandidateId(event.target.value)}><option value="">ยังไม่มี candidate</option>{candidates.map((item) => <option key={item.id} value={item.id}>{item.name_th} · {evidenceTypeLabels[item.intervention_type] || item.intervention_type}</option>)}</select></label>
           {selectedCandidate && <div className="candidate-evidence-meta"><span>Priority {formatNumber(selectedCandidate.priority_score, 1)}</span><span>{selectedCandidate.area_id}</span></div>}
           <label><span>สมมติฐานต้นทุนที่ตรงประเภท</span><select required value={selectedAssumptionId} onChange={(event) => setSelectedAssumptionId(event.target.value)}><option value="">ยังไม่มีสมมติฐานที่ใช้ได้</option>{matchingAssumptions.map((item) => <option key={item.id} value={item.id}>{item.version} · {formatBaht(item.assumptions.unit_cost_thb || 0)}</option>)}</select></label>
-          <label><span>URL รายงานตรวจพื้นที่</span><input required type="url" value={feasibilityUrl} onChange={(event) => setFeasibilityUrl(event.target.value)} placeholder="https://..." /></label>
+          <label><span>วิธีตรวจหลักฐาน</span><select value={evidenceMethod} onChange={(event) => setEvidenceMethod(event.target.value as "desk_review" | "field_survey")}>
+            <option value="desk_review">ตรวจจากระยะไกล (ภาพดาวเทียม แผนที่ ข้อมูลที่ดินสาธารณะ)</option>
+            <option value="field_survey">ลงพื้นที่สำรวจจริง</option>
+          </select></label>
+          {evidenceMethod === "desk_review" && <p className="readiness-scope">ใช้วางแผนและจัดลำดับงบได้ แต่ต้องยืนยันหน้างานก่อนเริ่มก่อสร้าง</p>}
+          <label><span>{evidenceMethod === "desk_review" ? "URL หลักฐานออนไลน์ (แผนที่/ภาพดาวเทียม/ประกาศที่ดิน)" : "URL รายงานตรวจพื้นที่"}</span><input required type="url" value={feasibilityUrl} onChange={(event) => setFeasibilityUrl(event.target.value)} placeholder="https://..." /></label>
+          {evidenceMethod === "desk_review" && selectedCandidate && osmCandidateUrl(selectedCandidate.id) && (
+            <button type="button" className="underline text-left" onClick={() => setFeasibilityUrl(osmCandidateUrl(selectedCandidate.id) || "")}>ใช้ลิงก์ OpenStreetMap ของจุดนี้</button>
+          )}
           <label><span>บันทึกข้อจำกัดและผลตรวจ</span><textarea required minLength={10} value={feasibilityNotes} onChange={(event) => setFeasibilityNotes(event.target.value)} /></label>
           <div className="evidence-checks">
-            <label><input type="checkbox" checked={siteChecked} onChange={(event) => setSiteChecked(event.target.checked)} /> สำรวจหน้างานแล้ว</label>
-            <label><input type="checkbox" checked={landChecked} onChange={(event) => setLandChecked(event.target.checked)} /> ตรวจสิทธิใช้พื้นที่แล้ว</label>
-            <label><input type="checkbox" checked={accessChecked} onChange={(event) => setAccessChecked(event.target.checked)} /> ทบทวนการออกแบบและการเข้าถึงแล้ว</label>
+            <label><input type="checkbox" checked={siteChecked} onChange={(event) => setSiteChecked(event.target.checked)} /> {evidenceMethod === "desk_review" ? "ดูภาพดาวเทียมแล้ว มีพื้นที่ว่างพอ" : "สำรวจหน้างานแล้ว"}</label>
+            <label><input type="checkbox" checked={landChecked} onChange={(event) => setLandChecked(event.target.checked)} /> {evidenceMethod === "desk_review" ? "ข้อมูลสาธารณะระบุว่าเป็นที่ดินของรัฐ/กทม." : "ตรวจสิทธิใช้พื้นที่แล้ว"}</label>
+            <label><input type="checkbox" checked={accessChecked} onChange={(event) => setAccessChecked(event.target.checked)} /> {evidenceMethod === "desk_review" ? "แผนที่แสดงทางเข้าจากทางสาธารณะ" : "ทบทวนการออกแบบและการเข้าถึงแล้ว"}</label>
           </div>
           <Button type="submit" disabled={saving || !operatorToken || !selectedCandidate}><ShieldCheck size={13} /> อนุมัติเข้า optimizer</Button>
         </form>
