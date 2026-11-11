@@ -139,6 +139,9 @@ def runtime_commands(root):
         "api": ([sys.executable, "-m", "gunicorn", "app.main:app", "-k", "uvicorn.workers.UvicornWorker",
                  "-w", "1", "-b", "127.0.0.1:%d" % PRIVATE_API_PORT, "--max-requests", "400",
                  "--max-requests-jitter", "100", "--timeout", "180", "--graceful-timeout", "30",
+                 # Gunicorn writes to stderr, which the host reports as errors;
+                 # its routine worker-recycle INFO lines are not.
+                 "--log-level", "warning",
                  "--keep-alive", "5"], api),
         "web": (["node", "server.js"], root / "apps" / "web"),
         "ingestion": (celery + ingestion + ["-Q", "celery", "--hostname=ingestion@%h"], api),
@@ -174,6 +177,26 @@ def stop_children(children, grace_seconds=25, step_seconds=8):
             except ProcessLookupError:
                 pass
             child.wait(timeout=5)
+
+
+def run_migrations(root, env, stop, attempts=12, delay_seconds=15, run=subprocess.run):
+    """Apply migrations, waiting while the previous container still holds connections.
+
+    During a rolling deploy the old container keeps its database pools until it
+    stops, and the managed role allows only 10 connections, so the first
+    migration attempt can fail with "too many connections". Retry for about
+    three minutes before giving up.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            run([sys.executable, "-m", "alembic", "upgrade", "head"], cwd=root / "apps" / "api", env=env,
+                check=True, timeout=120)
+            return
+        except subprocess.CalledProcessError:
+            if attempt == attempts or stop.is_set():
+                raise
+            print(json.dumps({"event": "runtime.migrations_retry", "attempt": attempt}), flush=True)
+            stop.wait(delay_seconds)
 
 
 def wait_for_port(port, child, stop, timeout_seconds=120):
@@ -225,7 +248,7 @@ def main():
         phase = "migrations"
         migration_started = time.monotonic()
         print(json.dumps({"event": "runtime.boot", "phase": phase}), flush=True)
-        subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], cwd=root / "apps" / "api", env=env, check=True, timeout=120)
+        run_migrations(root, env, stop)
         print(json.dumps({"event": "runtime.migrations_completed", "duration_ms": round((time.monotonic() - migration_started) * 1000)}), flush=True)
         phase = "processes"
 

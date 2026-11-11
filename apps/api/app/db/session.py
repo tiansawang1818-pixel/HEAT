@@ -18,7 +18,12 @@ def make_database_engine(config: Settings):
         # Limits apply per process. Operators must budget all replicas and
         # Celery child processes, leaving provider connections for recovery.
         options.update(
-            connect_args={"options": "-c work_mem=%s" % config.database_work_mem},
+            # Server-side TCP keepalives: a deploy kills the old container
+            # without closing its sockets, and those orphaned sessions held the
+            # managed role's 10-connection limit; the server now drops a dead
+            # peer within about two minutes.
+            connect_args={"options": "-c work_mem=%s -c tcp_keepalives_idle=60 -c tcp_keepalives_interval=15 "
+                                     "-c tcp_keepalives_count=4" % config.database_work_mem},
             pool_size=config.database_pool_size,
             max_overflow=config.database_max_overflow,
             pool_timeout=config.database_pool_timeout_seconds,

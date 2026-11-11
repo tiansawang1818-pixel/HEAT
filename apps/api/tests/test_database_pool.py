@@ -144,7 +144,8 @@ def test_postgres_connections_cap_work_mem(monkeypatch):
     monkeypatch.setattr(session, "create_engine", lambda url, **options: captured.update(options))
     monkeypatch.setattr(session.event, "listen", lambda target, name, fn: captured.update(listener=(name, fn)))
     session.make_database_engine(Settings(_env_file=None, database_url="postgresql+psycopg://uncontacted.example/test"))
-    assert captured["connect_args"] == {"options": "-c work_mem=4MB"}
+    options = captured["connect_args"]["options"]
+    assert options.startswith("-c work_mem=4MB ") and "-c tcp_keepalives_idle=60" in options
     assert captured["listener"] == ("do_connect", session._retry_when_role_is_full)
     with pytest.raises(ValidationError):
         Settings(_env_file=None, database_work_mem="4MB; DROP")

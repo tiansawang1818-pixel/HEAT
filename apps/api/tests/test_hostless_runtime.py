@@ -190,3 +190,20 @@ def test_shutdown_stops_web_before_the_api_it_proxies(tmp_path):
     t.sleep(1)
     runtime.stop_children(children, grace_seconds=10)
     assert marker.read_text().split() == ["web", "api"]
+
+
+def test_migrations_wait_for_the_previous_container_to_release_connections(tmp_path):
+    import subprocess as sp
+    calls = []
+
+    def flaky(args, **kwargs):
+        calls.append(args)
+        if len(calls) < 3:
+            raise sp.CalledProcessError(1, args)
+    runtime.run_migrations(tmp_path, {}, threading.Event(), attempts=5, delay_seconds=0, run=flaky)
+    assert len(calls) == 3
+
+    def always(args, **kwargs):
+        raise sp.CalledProcessError(1, args)
+    with pytest.raises(sp.CalledProcessError):
+        runtime.run_migrations(tmp_path, {}, threading.Event(), attempts=2, delay_seconds=0, run=always)

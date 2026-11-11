@@ -9,6 +9,8 @@ from typing import Optional
 from celery import Celery
 from billiard.exceptions import SoftTimeLimitExceeded
 
+from sqlalchemy import text
+
 from app.core.config import settings
 from app.core.redis_tls import celery_redis_tls_settings
 from app.db.session import SessionLocal
@@ -53,14 +55,43 @@ def dispatch_ingestion():
         return {"status": "skipped", "reason": "redis_unavailable"}
 
 
+def close_orphaned_sessions(db) -> int:
+    """Terminate this role's sessions that have been idle for 10 minutes.
+
+    A deploy kills the previous container without closing its sockets, so its
+    sessions stay open on the managed database and count against the role's
+    10-connection limit until the next deploy cannot even run migrations.
+    Live pools reconnect transparently (pool_pre_ping), so closing a long-idle
+    session costs at most one reconnect.
+    """
+    if db.get_bind().dialect.name != "postgresql":
+        return 0
+    try:
+        closed = db.execute(text(
+            "SELECT count(*) FILTER (WHERE pg_terminate_backend(pid)) FROM pg_stat_activity "
+            "WHERE usename = current_user AND pid <> pg_backend_pid() AND state = 'idle' "
+            "AND state_change < now() - interval '10 minutes'"
+        )).scalar() or 0
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.warning("Could not close orphaned database sessions: %s", type(exc).__name__)
+        return 0
+    if closed:
+        logger.info("Closed %d orphaned database sessions", closed)
+    return int(closed)
+
+
 def _dispatch_ingestion():
     with SessionLocal() as db:
         ensure_sources(db)
         result = dispatch_due_sources(db, lambda job_id, source: run_manual_ingestion.delay(job_id, source))
         result["historical"] = dispatch_backfills(db, lambda job_id, generation: run_historical_step.delay(job_id, generation))
         if result["status"] == "completed":
-            with redis.Redis.from_url(settings.redis_url, socket_connect_timeout=1, socket_timeout=1) as client:
+            with redis.Redis.from_url(settings.redis_url, socket_connect_timeout=3, socket_timeout=3) as client:
                 client.set("heatshift:dispatcher:last_tick", str(time.time()), ex=300)
+                if client.set("heatshift:db-orphan-sweep", "1", nx=True, ex=300):
+                    result["orphaned_sessions_closed"] = close_orphaned_sessions(db)
                 # Beat restarts with every deploy, so an hourly task may not run for
                 # a while; hand a pending score-method refresh to the ingestion
                 # worker at most once per 15 minutes instead.

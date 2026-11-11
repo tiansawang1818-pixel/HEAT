@@ -87,3 +87,7 @@ def test_dispatcher_skips_tick_quietly_when_redis_stalls(monkeypatch):
         raise TimeoutError("Timeout reading from socket")
     monkeypatch.setattr(worker, "_dispatch_ingestion", stalled)
     assert worker.dispatch_ingestion.run() == {"status": "skipped", "reason": "redis_unavailable"}
+
+
+def test_orphan_sweep_is_a_no_op_outside_postgres(db):
+    assert worker.close_orphaned_sessions(db) == 0
