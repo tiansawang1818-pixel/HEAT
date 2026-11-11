@@ -1,7 +1,7 @@
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 from sqlalchemy import select
@@ -11,7 +11,7 @@ from app.core.config import settings
 from app.models.entities import DatasetVersion, RasterAssetMetadata
 from app.services.connectors import DynamicWorldConnector, LandsatConnector, SentinelConnector
 from app.services.connectors.base import ConnectorError
-from app.services.versions import published_version
+from app.services.versions import indicator_version_pool, published_version
 
 
 @dataclass(frozen=True)
@@ -70,6 +70,9 @@ TILE_SPECS = {
 }
 
 
+MAX_COMPOSITE_SCENES = 12
+
+
 class EarthEngineTileService:
     def __init__(self) -> None:
         self._cache: Dict[str, tuple[float, str]] = {}
@@ -88,12 +91,18 @@ class EarthEngineTileService:
             raise ConnectorError("Earth Engine tile URL does not contain XYZ placeholders")
         return value
 
-    def _render_url(self, spec: TileSpec, version: DatasetVersion) -> str:
+    def _render_url(self, spec: TileSpec, version: DatasetVersion, composite_assets: Optional[List[str]] = None) -> str:
         connector = spec.connector()
         ee = connector._earth_engine()
-        image = ee.Image(version.source_asset_id)
-        analysis = connector._analysis(ee, image)
-        raster = analysis["image"].select(spec.band)
+        if composite_assets:
+            # Each scene covers part of Bangkok and loses pixels to cloud; mosaic
+            # the masked scenes so the newest clear pixel shows everywhere.
+            layers = [connector._analysis(ee, ee.Image(asset))["image"].select(spec.band) for asset in composite_assets]
+            raster = ee.ImageCollection(layers).mosaic()
+        else:
+            image = ee.Image(version.source_asset_id)
+            analysis = connector._analysis(ee, image)
+            raster = analysis["image"].select(spec.band)
         west, south, east, north = settings.bangkok_bbox
         raster = raster.clip(ee.Geometry.Rectangle([west, south, east, north]))
         try:
@@ -129,7 +138,14 @@ class EarthEngineTileService:
                 "reason": "Published version has no validated raster metadata",
                 "dataset_version_id": version.id,
             }
-        cache_key = "%s:%s" % (layer, version.id)
+        composite: List[str] = []
+        if version_id is None:
+            pool = db.scalars(select(DatasetVersion).where(
+                DatasetVersion.id.in_(indicator_version_pool(db, spec.dataset_id))
+            ).order_by(DatasetVersion.observed_at.desc()).limit(MAX_COMPOSITE_SCENES)).all()
+            if len(pool) > 1:
+                composite = [item.source_asset_id for item in reversed(pool)]  # newest drawn last, on top
+        cache_key = "%s:%s:%s" % (layer, version.id, ",".join(composite))
         now = time.monotonic()
         with self._lock:
             cached = self._cache.get(cache_key)
@@ -139,7 +155,7 @@ class EarthEngineTileService:
                 tile_url = ""
         if not tile_url:
             try:
-                tile_url = self._render_url(spec, version)
+                tile_url = self._render_url(spec, version, composite) if composite else self._render_url(spec, version)
             except ConnectorError as exc:
                 return {
                     "available": False,
@@ -177,6 +193,7 @@ class EarthEngineTileService:
                 "unit": spec.legend_unit,
             },
             "delivery": "google-earth-engine-provider-xyz",
+            "composite_scene_count": len(composite) or 1,
         }
 
 

@@ -92,3 +92,25 @@ def test_tile_url_rejects_unexpected_hosts_and_missing_xyz_placeholders():
         EarthEngineTileService._validated_tile_url("https://example.org/{z}/{x}/{y}")
     with pytest.raises(ConnectorError, match="XYZ placeholders"):
         EarthEngineTileService._validated_tile_url("https://earthengine.googleapis.com/static.png")
+
+
+def test_current_tiles_mosaic_recent_scenes_newest_on_top(db, monkeypatch):
+    from datetime import timedelta
+    older = _published_raster(db)
+    newer = DatasetVersion(source_id=older.source_id, source_asset_id="LANDSAT/LC09/C02/T1_L2/LC09_NEWER",
+                           source_version="newer", status="published", quality_status="valid", layer_version=4,
+                           observed_at=older.observed_at + timedelta(days=8), published_at=older.published_at)
+    db.add(newer)
+    db.flush()
+    db.add(RasterAssetMetadata(dataset_version_id=newer.id, storage_uri="earthengine://x", media_type="application/vnd.google-earth-engine.image",
+                               bounds={"type": "Point", "coordinates": [100.5, 13.7]}, resolution_m=30, band_metadata={}))
+    db.commit()
+    service = EarthEngineTileService()
+    seen = []
+    monkeypatch.setattr(service, "_render_url", lambda spec, version, composite=None: seen.append(composite) or
+                        "https://earthengine.googleapis.com/v1/maps/test/tiles/{z}/{x}/{y}")
+    current = service.describe(db, "temperature")
+    assert seen[-1] == [older.source_asset_id, newer.source_asset_id]
+    assert current["composite_scene_count"] == 2 and current["dataset_version_id"] == newer.id
+    service.describe(db, "temperature", older.id)
+    assert seen[-1] is None
