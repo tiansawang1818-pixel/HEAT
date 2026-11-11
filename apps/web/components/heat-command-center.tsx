@@ -255,6 +255,7 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
   const [refreshing, setRefreshing] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [mapError, setMapError] = useState<string | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [featuresLayer, setFeaturesLayer] = useState<string | null>(null);
   const mapNeedsRetry = useRef(false);
   const [assistantQuestion, setAssistantQuestion] = useState("");
@@ -524,11 +525,13 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
     if (!selectedAreaId) return;
     let cancelled = false;
     setHistoryLoading(true);
+    setDetailLoading(true);
     loadAreaDetail(selectedAreaId, activeSnapshotId)
       .then((detail) => {
         if (!cancelled) setSelected((current) => current?.properties.id === selectedAreaId ? { ...current, properties: { ...current.properties, ...detail } } : current);
       })
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => { if (!cancelled) setDetailLoading(false); });
     loadAreaHistory(selectedAreaId, activeSnapshotId)
       .then((points) => { if (!cancelled) setHistory(points); })
       .catch(() => { if (!cancelled) setHistory([]); })
@@ -935,7 +938,7 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
         <AnimatePresence mode="wait">
           {rightTab === "area" && (
             <motion.div key="area" className="panel-scroll" initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }}>
-              <AreaPanel area={selected?.properties || null} loading={loading} onOptimize={() => setRightTab("optimizer")} />
+              <AreaPanel area={selected?.properties || null} loading={loading} detailLoading={detailLoading} onOptimize={() => setRightTab("optimizer")} />
             </motion.div>
           )}
           {rightTab === "optimizer" && (
@@ -1241,7 +1244,7 @@ function ScenarioComparisonMaps({
   );
 }
 
-function AreaPanel({ area, loading, onOptimize }: { area: AreaProperties | null; loading: boolean; onOptimize: () => void }) {
+function AreaPanel({ area, loading, detailLoading = false, onOptimize }: { area: AreaProperties | null; loading: boolean; detailLoading?: boolean; onOptimize: () => void }) {
   if (loading) return <div className="empty-state"><Activity className="animate-pulse text-cyan" /><LoadingLine /><p>กำลังเชื่อมข้อมูลที่ผ่านการตรวจสอบ</p></div>;
   if (!area) return <div className="empty-state"><MapIcon /><h2>เลือกพื้นที่บนแผนที่</h2><p>คลิกเขตเพื่อดูข้อมูลจริง วันที่สังเกตการณ์ และเหตุผลของคะแนน</p></div>;
   const isDemo = isSyntheticQuality(area.quality_status);
@@ -1252,6 +1255,7 @@ function AreaPanel({ area, loading, onOptimize }: { area: AreaProperties | null;
         <div className="score-ring"><strong>{formatNumber(area.priority_score)}</strong><span>/100</span></div>
       </div>
       {isDemo && <div className="inline-warning">ข้อมูลสาธิตหรือสังเคราะห์สำหรับทดสอบ ไม่ใช่การสังเกตจริง</div>}
+      {detailLoading && <p className="readiness-scope"><RefreshCw className="inline animate-spin" size={12} /> กำลังโหลดรายละเอียดของเขตนี้…</p>}
       <div className="observation-strip"><Clock3 size={13} /><span>ข้อมูลสิ่งแวดล้อมล่าสุด</span><strong>{formatThaiDate(area.observation_date)}</strong></div>
       <div className="metrics-grid">
         <Metric label="อุณหภูมิพื้นผิว" value={formatNumber(area.surface_temperature_c, 1)} suffix={area.surface_temperature_c == null ? "" : "°C"} tone="hot" />

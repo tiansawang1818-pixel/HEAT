@@ -15,10 +15,11 @@ from app.services.bootstrap import ensure_sources
 
 @pytest.fixture(autouse=True)
 def clean_database():
-    from app.api.router import _MAP_FEATURE_CACHE, _RESPONSE_CACHE
+    from app.api.router import _MAP_FEATURE_CACHE, _POOL_CACHE, _RESPONSE_CACHE
 
     _MAP_FEATURE_CACHE.clear()
     _RESPONSE_CACHE.clear()
+    _POOL_CACHE.clear()
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()

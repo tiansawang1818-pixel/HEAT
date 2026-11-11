@@ -569,6 +569,24 @@ def areas(
     }
 
 
+_POOL_CACHE: Dict[str, Any] = {}
+
+
+def _current_indicator_pools(db: Session) -> Dict[str, set]:
+    """Each indicator dataset's freshness pool, reused until data changes.
+
+    Building the pools takes about 18 round trips to the remote database;
+    publications and checks change the dashboard generation, so the cache never
+    serves pools older than the newest published version.
+    """
+    key = _dashboard_generation(db)
+    if _POOL_CACHE.get("key") == key and _POOL_CACHE.get("expires", 0) > time.monotonic():
+        return _POOL_CACHE["pools"]
+    pools = {dataset: set(indicator_version_pool(db, dataset)) for dataset in set(INDICATOR_DATASETS.values())}
+    _POOL_CACHE.update(key=key, expires=time.monotonic() + 300, pools=pools)
+    return pools
+
+
 def _latest_indicators(db: Session, area_id: str, version_id: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
     query = select(AreaIndicator).where(AreaIndicator.area_id == area_id)
     if version_id:
@@ -577,9 +595,7 @@ def _latest_indicators(db: Session, area_id: str, version_id: Optional[str] = No
     result: Dict[str, Dict[str, Any]] = {}
     # The current view uses each indicator's freshness pool, as the map and
     # priority scores do: the district's latest clear value from recent scenes.
-    pools = {} if version_id else {
-        dataset: set(indicator_version_pool(db, dataset)) for dataset in set(INDICATOR_DATASETS.values())
-    }
+    pools = {} if version_id else _current_indicator_pools(db)
     for row in rows:
         pool = pools.get(INDICATOR_DATASETS.get(row.indicator_key, ""))
         if pool is not None and (row.dataset_version_id not in pool or row.value is None
