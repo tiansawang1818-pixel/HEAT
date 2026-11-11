@@ -28,7 +28,7 @@ def distributed_lock(key: str, timeout_seconds: int = MONITOR_LOCK_LEASE_SECONDS
         try:
             import redis
 
-            client = redis.Redis.from_url(settings.redis_url, socket_connect_timeout=1, socket_timeout=1)
+            client = redis.Redis.from_url(settings.redis_url, socket_connect_timeout=3, socket_timeout=3)
             lock = client.lock("heatshift:%s" % key, timeout=timeout_seconds, blocking_timeout=0)
             acquired = lock.acquire(blocking=False)
         except Exception as exc:

@@ -38,7 +38,7 @@ def durable_queue():
         raise HTTPException(409, str(exc)) from exc
     try:
         import redis
-        with redis.Redis.from_url(settings.redis_url, socket_connect_timeout=.5, socket_timeout=.5) as client:
+        with redis.Redis.from_url(settings.redis_url, socket_connect_timeout=3, socket_timeout=3) as client:
             client.ping()
     except Exception as exc:
         raise HTTPException(503, "คิวงานถาวรยังไม่พร้อม งานย้อนหลังจะไม่ทำงานใน HTTP process") from exc
