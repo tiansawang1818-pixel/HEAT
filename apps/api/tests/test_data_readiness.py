@@ -108,7 +108,7 @@ def test_unreachable_boundary_provider_warns_while_validated_boundaries_stay_pub
     boundary = db.scalar(select(DataSource).where(DataSource.source_type == "boundary"))
     # Only a stale success remains: no check confirmed the version within two intervals.
     for old in db.scalars(select(SourceCheck).where(SourceCheck.source_id == boundary.id)).all():
-        old.checked_at = datetime.now(timezone.utc) - timedelta(days=30)
+        old.checked_at = datetime.now(timezone.utc) - timedelta(days=400)
     db.add(SourceCheck(source_id=boundary.id, checked_at=datetime.now(timezone.utc), status="failed",
                        error_message="BMA boundary catalog request failed: [Errno 104] Connection reset by peer"))
     db.commit()
@@ -145,3 +145,16 @@ def test_forecast_only_mode_does_not_require_site_evidence(db, monkeypatch):
     report = published_data_readiness(db)
     check = next(c for c in report["checks"] if c["code"] == "investment.evidence")
     assert report["forecast_only"] is True and check["status"] == "ready" and "คาดการณ์" in check["detail_th"]
+
+
+def test_one_boundary_confirmation_stands_for_a_year(db):
+    from datetime import timedelta
+    from app.models.entities import DataSource, SourceCheck
+    _recorded_pilot(db)
+    boundary = db.scalar(select(DataSource).where(DataSource.source_type == "boundary"))
+    for old in db.scalars(select(SourceCheck).where(SourceCheck.source_id == boundary.id)).all():
+        old.checked_at = datetime.now(timezone.utc) - timedelta(days=200)
+    db.add(SourceCheck(source_id=boundary.id, checked_at=datetime.now(timezone.utc), status="failed"))
+    db.commit()
+    check = next(c for c in published_data_readiness(db)["checks"] if c["code"] == "check.bma-boundaries")
+    assert check["status"] == "ready"

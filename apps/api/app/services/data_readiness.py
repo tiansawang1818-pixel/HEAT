@@ -13,6 +13,9 @@ from app.services.versions import INDICATOR_DATASETS, LAYER_DATASETS, indicator_
 from app.services.forecast_workflow import forecast_inputs
 
 
+
+BOUNDARY_CONFIRMATION_SECONDS = 365 * 86400
+
 def _aware(value):
     return value.replace(tzinfo=timezone.utc) if value and value.tzinfo is None else value
 
@@ -49,7 +52,9 @@ def published_data_readiness(db):
             # retries keep failing, so look for any recent successful check.
             recent = db.scalar(select(SourceCheck).where(SourceCheck.source_id == source.id, SourceCheck.status == "success")
                                .order_by(desc(SourceCheck.checked_at)).limit(1))
-            checked = bool(recent and (now - _aware(recent.checked_at)).total_seconds() <= 2 * source.check_interval_seconds)
+            # District boundaries change only by decree, so one confirmation of
+            # the published version stands for a year.
+            checked = bool(recent and (now - _aware(recent.checked_at)).total_seconds() <= BOUNDARY_CONFIRMATION_SECONDS)
         if not checked and source.source_type == "boundary" and version.status == "published":
             # District boundaries change rarely. When the provider cannot be
             # reached, the last validated official geometry stays published, so
