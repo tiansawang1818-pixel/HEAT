@@ -142,7 +142,43 @@ def test_sse_waiting_for_pool_leaves_event_loop_free_to_release_other_request(tm
 def test_postgres_connections_cap_work_mem(monkeypatch):
     captured = {}
     monkeypatch.setattr(session, "create_engine", lambda url, **options: captured.update(options))
+    monkeypatch.setattr(session.event, "listen", lambda target, name, fn: captured.update(listener=(name, fn)))
     session.make_database_engine(Settings(_env_file=None, database_url="postgresql+psycopg://uncontacted.example/test"))
     assert captured["connect_args"] == {"options": "-c work_mem=4MB"}
+    assert captured["listener"] == ("do_connect", session._retry_when_role_is_full)
     with pytest.raises(ValidationError):
         Settings(_env_file=None, database_work_mem="4MB; DROP")
+
+
+def test_connect_waits_out_a_full_role_limit_then_gives_up(monkeypatch):
+    from app.db import session as db_session
+    monkeypatch.setattr(db_session.time, "sleep", lambda seconds: None)
+    attempts = []
+
+    class Dialect:
+        def __init__(self, failures):
+            self.failures = failures
+        def connect(self, *args, **kwargs):
+            attempts.append(1)
+            if len(attempts) <= self.failures:
+                raise RuntimeError('FATAL:  too many connections for role "heatshift_runtime"')
+            return "connection"
+
+    assert db_session._retry_when_role_is_full(Dialect(2), None, (), {}) == "connection"
+    attempts.clear()
+    import pytest
+    with pytest.raises(RuntimeError, match="too many connections"):
+        db_session._retry_when_role_is_full(Dialect(9), None, (), {})
+    assert len(attempts) == 4
+
+
+def test_role_limit_is_reported_as_busy(client, monkeypatch):
+    from sqlalchemy.exc import OperationalError
+    from app.api import router as api_router
+
+    def full(db):
+        raise OperationalError("connect", {}, Exception('FATAL:  too many connections for role "heatshift_runtime"'))
+    monkeypatch.setattr(api_router, "_dataset_status", full)
+    api_router._RESPONSE_CACHE.clear()
+    response = client.get("/api/datasets/status")
+    assert response.status_code == 503 and response.headers["Retry-After"] == "5"

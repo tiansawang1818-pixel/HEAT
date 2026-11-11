@@ -4,7 +4,7 @@ import re
 import time
 import uuid
 
-from sqlalchemy.exc import TimeoutError as PoolTimeoutError
+from sqlalchemy.exc import OperationalError, TimeoutError as PoolTimeoutError
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -77,6 +77,17 @@ async def invalid_request(request: Request, exc: RequestValidationError):
         {"loc": error["loc"], "type": error["type"], "msg": error["msg"]}
         for error in exc.errors()
     ]})
+
+
+@app.exception_handler(OperationalError)
+async def database_unavailable(request: Request, exc: OperationalError):
+    # The managed database refuses new connections while its role limit is
+    # full (briefly, during deploys); report it as retryable, not a failure.
+    if "too many connections" not in str(exc):
+        raise exc
+    logging.getLogger("app.main").warning("Database role connection limit reached for %s", request.url.path)
+    return JSONResponse(status_code=503, headers={"Retry-After": "5"},
+                        content={"detail": "ระบบกำลังประมวลผลคำขออื่นอยู่ กรุณาลองใหม่อีกครั้ง"})
 
 
 @app.exception_handler(PoolTimeoutError)
