@@ -41,6 +41,8 @@ return current
                 # over a second; later calls reuse the pooled connection.
                 socket_connect_timeout=2,
                 socket_timeout=1,
+                health_check_interval=25,
+                socket_keepalive=True,
                 decode_responses=True,
             )
         return self._redis

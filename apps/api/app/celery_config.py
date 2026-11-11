@@ -23,6 +23,21 @@ def celery_settings() -> dict:
         task_soft_time_limit=MONITOR_SOFT_TIME_LIMIT_SECONDS,
         task_time_limit=MONITOR_HARD_TIME_LIMIT_SECONDS,
         broker_connection_retry_on_startup=True,
+        # The managed Redis closes idle connections; ping pooled connections
+        # before reuse and keep sockets alive so a dropped link is reopened
+        # instead of failing an ack.
+        broker_transport_options={
+            "health_check_interval": 25,
+            "socket_keepalive": True,
+            "socket_connect_timeout": 10,
+            "socket_timeout": 30,
+            "retry_on_timeout": True,
+            # Longer than the hard task limit, so a running task is never redelivered.
+            "visibility_timeout": MONITOR_HARD_TIME_LIMIT_SECONDS + 15 * 60,
+        },
+        redis_backend_health_check_interval=25,
+        redis_socket_keepalive=True,
+        redis_retry_on_timeout=True,
         task_routes={"app.worker.dispatch_ingestion": {"queue": "control"}},
         beat_schedule={
             "dispatch-due-source-checks": {"task": "app.worker.dispatch_ingestion", "schedule": settings.scheduler_tick_seconds},

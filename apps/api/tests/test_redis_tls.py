@@ -29,3 +29,13 @@ def test_managed_redis_configures_broker_and_backend_without_connecting():
 def test_managed_redis_rejects_url_tls_downgrades(query):
     with pytest.raises(ValueError):
         celery_redis_tls_settings("rediss://db.example.org/0?" + query)
+
+
+def test_celery_reopens_connections_the_managed_redis_closed():
+    from app.celery_config import celery_settings
+    from app.services.locks import MONITOR_HARD_TIME_LIMIT_SECONDS
+    options = celery_settings()
+    transport = options["broker_transport_options"]
+    assert transport["health_check_interval"] > 0 and transport["socket_keepalive"] is True
+    assert transport["visibility_timeout"] > MONITOR_HARD_TIME_LIMIT_SECONDS
+    assert options["redis_backend_health_check_interval"] > 0
