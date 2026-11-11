@@ -1169,3 +1169,12 @@ def test_concurrent_rebuild_serves_the_previous_response(db, monkeypatch):
     assert _json.loads(response.body) == {"stale": True}
     response = api_router._cached_dashboard_response(db, "unit/busy", lambda: {"fresh": True})
     assert _json.loads(response.body) == {"fresh": True}
+
+
+def test_empty_decision_run_explains_missing_site_evidence(client, monkeypatch):
+    from app.api import router as api_router
+    monkeypatch.setattr(api_router, "_candidate_rows", lambda db, ids=None: [])
+    body = client.post("/api/optimization/run", json={"budget_thb": 1_000_000, "objective": "balanced",
+                                                      "enabled_types": ["tree_planting"]}).json()
+    assert body["selected"] == [] and body["eligible_candidates"] == 0
+    assert "ประมาณการเบื้องต้น" in body["empty_reason"]

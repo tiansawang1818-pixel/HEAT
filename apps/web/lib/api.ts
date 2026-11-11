@@ -379,6 +379,7 @@ function normalizeOptimizationResult(raw: Record<string, unknown>, strategyFallb
     allocations: selected.map(normalizeOptimizationProject),
     status: String(raw.status || "completed"),
     limitations: Array.isArray(raw.limitations) ? raw.limitations as string[] : [],
+    empty_reason: typeof raw.empty_reason === "string" ? raw.empty_reason : null,
   };
 }
 

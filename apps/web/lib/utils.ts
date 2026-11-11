@@ -315,6 +315,8 @@ export interface OptimizationResult {
   limitations?: string[];
   /** "planning_estimate" results price unverified sites and are never decisions. */
   mode?: "decision" | "planning_estimate";
+  /** Why a decision run selected nothing, in Thai, when the API explains it. */
+  empty_reason?: string | null;
 }
 
 export interface SavedScenarioRecord {

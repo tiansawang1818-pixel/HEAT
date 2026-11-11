@@ -1335,6 +1335,12 @@ function OptimizerPanel(props: OptimizerPanelProps) {
           {props.result.mode === "planning_estimate" && (
             <div className="inline-warning"><strong>ประมาณการเบื้องต้นเพื่อวางแผนเท่านั้น</strong> จุดเหล่านี้ยังไม่ผ่านการสำรวจพื้นที่ สิทธิ์ในที่ดิน หรือการตรวจแบบ ห้ามใช้ตัดสินใจลงทุน</div>
           )}
+          {props.result.mode !== "planning_estimate" && !props.result.allocations.length && (
+            <div className="inline-warning">
+              {props.result.empty_reason || "ยังไม่มีจุดที่ผ่านหลักฐานรายจุดให้จัดสรรงบจริง"}
+              {" "}<button type="button" className="underline" disabled={props.loading} onClick={props.onEstimate}>ดูประมาณการเบื้องต้นแทน</button>
+            </div>
+          )}
           <Card className="result-card">
             <div><span>ใช้งบ</span><strong>{formatBaht(props.result.total_cost_thb)}</strong></div>
             <div><span>ผลรวมประมาณการ (ยังไม่หักซ้ำ)</span><strong>{formatNumber(props.result.estimated_beneficiaries)}</strong></div>

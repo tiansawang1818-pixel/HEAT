@@ -1425,6 +1425,12 @@ def optimization_run(request: OptimizationRequest, db: Session = Depends(get_db)
         "input_versions": versions,
         "limitations": ["ผลประโยชน์เป็นค่าประมาณตามหลักฐานใน candidate แต่ละรายการ", "ไม่ตีความคะแนนความร้อนเป็นฐานะทางเศรษฐกิจ",
                          "ต้นทุนที่มีเศษบาทกันงบโดยปัดขึ้นเป็นบาทเต็ม", *portfolio.limitations],
+        "eligible_candidates": len(rows),
+        "empty_reason": None if selected else (
+            "ยังไม่มีจุดที่ผู้ดูแลอนุมัติหลักฐานรายจุด (สำรวจพื้นที่ สิทธิ์ในที่ดิน และตรวจแบบ) จึงยังไม่มีจุดให้จัดสรรงบจริง "
+            "ใช้ \"ประมาณการเบื้องต้น\" เพื่อดูการจัดสรรตามราคาที่อนุมัติแล้ว" if not rows else
+            "ไม่มีจุดที่อนุมัติแล้วในประเภทโครงการที่เลือกซึ่งอยู่ในงบนี้"
+        ),
     }
 
 
