@@ -36,6 +36,7 @@ def _rate_limit_rule(method: str, path: str):
         "/api/assistant/query": ("assistant", settings.rate_limit_assistant_per_minute, False),
         "/api/ingestion/run": ("admin", settings.rate_limit_admin_per_minute, settings.rate_limit_fail_closed_admin),
         "/api/cost-assumptions": ("admin", settings.rate_limit_admin_per_minute, settings.rate_limit_fail_closed_admin),
+        "/api/sources/bma-boundaries/browser-check": ("admin", settings.rate_limit_admin_per_minute, settings.rate_limit_fail_closed_admin),
     }
     if path in exact:
         return exact[path]

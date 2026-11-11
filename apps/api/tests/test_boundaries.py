@@ -229,3 +229,37 @@ def test_mirror_confirms_published_boundaries_when_bma_catalog_is_unreachable(db
     resource["last_modified"] = "2027-01-01T00:00:00"
     with pytest.raises(ConnectorError, match="newer district boundary"):
         run_monitor(db, BangkokBoundaryConnector(), requested_by="test")
+
+
+def test_admin_browser_check_confirms_published_boundaries(client, db, monkeypatch):
+    import copy, json
+    from app.services.data_readiness import published_data_readiness
+    manifest = json.loads((settings.bma_boundary_snapshot_dir / "manifest.json").read_text())
+
+    def unreachable(*args, **kwargs):
+        raise httpx.ConnectTimeout("origin unreachable")
+    monkeypatch.setattr(httpx, "get", unreachable)
+    run_monitor(db, BangkokBoundaryConnector(), requested_by="test")
+    db.add(SourceCheck(source_id=db.scalar(select(DatasetVersion)).source_id, status="failed",
+                       checked_at=datetime.now(timezone.utc), error_message="Connection reset by peer"))
+    db.commit()
+    headers = {"X-Admin-Key": "test-admin-key", "X-Admin-Actor": "browser-admin"}
+    url = "/api/sources/bma-boundaries/browser-check"
+    assert client.post(url, json={"catalog": manifest["catalog"]}).status_code == 401
+    confirmed = client.post(url, headers=headers, json={"catalog": manifest["catalog"]})
+    assert confirmed.status_code == 200 and confirmed.json()["current_version_confirmed"] is True
+
+    # A later failed server retry does not undo a recent browser confirmation.
+    db.add(SourceCheck(source_id=db.scalar(select(DatasetVersion)).source_id, status="failed",
+                       checked_at=datetime.now(timezone.utc), error_message="Connection reset by peer"))
+    db.commit()
+    check = next(c for c in published_data_readiness(db)["checks"] if c["code"] == "check.bma-boundaries")
+    assert check["status"] == "ready"
+
+    wrong = copy.deepcopy(manifest["catalog"])
+    wrong["result"]["id"] = "another-dataset"
+    assert client.post(url, headers=headers, json={"catalog": wrong}).status_code == 422
+    newer = copy.deepcopy(manifest["catalog"])
+    next(r for r in newer["result"]["resources"] if r["id"] == BangkokBoundaryConnector.snapshot_resource)["last_modified"] = "2027-01-01T00:00:00"
+    flagged = client.post(url, headers=headers, json={"catalog": newer}).json()
+    assert flagged["status"] == "degraded" and flagged["current_version_confirmed"] is False

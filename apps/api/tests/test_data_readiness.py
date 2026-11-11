@@ -103,8 +103,12 @@ def test_missing_site_evidence_warns_without_blocking_published_data(db, monkeyp
 def test_unreachable_boundary_provider_warns_while_validated_boundaries_stay_published(db):
     from app.models.entities import DataSource, SourceCheck
 
+    from datetime import timedelta
     _recorded_pilot(db)
     boundary = db.scalar(select(DataSource).where(DataSource.source_type == "boundary"))
+    # Only a stale success remains: no check confirmed the version within two intervals.
+    for old in db.scalars(select(SourceCheck).where(SourceCheck.source_id == boundary.id)).all():
+        old.checked_at = datetime.now(timezone.utc) - timedelta(days=30)
     db.add(SourceCheck(source_id=boundary.id, checked_at=datetime.now(timezone.utc), status="failed",
                        error_message="BMA boundary catalog request failed: [Errno 104] Connection reset by peer"))
     db.commit()

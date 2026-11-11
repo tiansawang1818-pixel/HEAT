@@ -142,3 +142,8 @@ class CandidateApprovalRequest(ApiModel):
         if (self.estimated_beneficiaries is not None or self.benefit_score is not None) and not self.benefit_evidence_url:
             raise ValueError("benefit_evidence_url is required when benefit values are supplied")
         return self
+
+
+class BoundaryBrowserCheckRequest(ApiModel):
+    """data.go.th CKAN package_show response fetched by an administrator's browser."""
+    catalog: Dict[str, Any]

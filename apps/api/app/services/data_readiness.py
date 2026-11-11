@@ -43,6 +43,13 @@ def published_data_readiness(db):
         versions[source.dataset_id] = version
         last_check = db.scalar(select(SourceCheck).where(SourceCheck.source_id == source.id).order_by(desc(SourceCheck.checked_at)).limit(1))
         checked = bool(last_check and last_check.status == "success" and (now - _aware(last_check.checked_at)).total_seconds() <= max(120, 2 * source.check_interval_seconds))
+        if not checked and source.source_type == "boundary":
+            # The official catalogs refuse the hosting region; an administrator's
+            # browser in Thailand can confirm the version instead. Hourly server
+            # retries keep failing, so look for any recent successful check.
+            recent = db.scalar(select(SourceCheck).where(SourceCheck.source_id == source.id, SourceCheck.status == "success")
+                               .order_by(desc(SourceCheck.checked_at)).limit(1))
+            checked = bool(recent and (now - _aware(recent.checked_at)).total_seconds() <= 2 * source.check_interval_seconds)
         if not checked and source.source_type == "boundary" and version.status == "published":
             # District boundaries change rarely. When the provider cannot be
             # reached, the last validated official geometry stays published, so

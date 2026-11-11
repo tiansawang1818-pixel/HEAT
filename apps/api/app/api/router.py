@@ -41,6 +41,7 @@ from app.models.entities import (
 )
 from app.schemas.api import (
     AssistantQuery,
+    BoundaryBrowserCheckRequest,
     CandidateApprovalRequest,
     CostAssumptionCreateRequest,
     ForecastRequest,
@@ -50,6 +51,7 @@ from app.schemas.api import (
     ScenarioCompareRequest,
     ScenarioSaveRequest,
 )
+from app.services.connectors.base import ConnectorError
 from app.services.connectors import (
     BangkokBoundaryConnector,
     DynamicWorldConnector,
@@ -2427,3 +2429,38 @@ def system_data_readiness(db: Session = Depends(get_db)) -> Response:
     # (about 9 s); any publication, check or job invalidates it immediately, and
     # approvals made by admins show up within two minutes.
     return _cached_dashboard_response(db, "system/data-readiness", lambda: published_data_readiness(db), seconds=120)
+
+
+@router.post("/sources/bma-boundaries/browser-check")
+def boundary_browser_check(
+    request: BoundaryBrowserCheckRequest,
+    admin_actor: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Record a boundary source check made from an administrator's browser.
+
+    data.go.th and the BMA catalog refuse connections from the hosting region,
+    so the administrator's browser in Thailand reads the official catalog and
+    the server validates the same dataset, resource and version rules here.
+    """
+    source = db.scalar(select(DataSource).where(DataSource.dataset_id == BangkokBoundaryConnector.dataset_id))
+    latest = published_version(db, BangkokBoundaryConnector.dataset_id)
+    if source is None or latest is None:
+        raise HTTPException(status_code=409, detail="No published district boundary version to compare")
+    connector = BangkokBoundaryConnector()
+    try:
+        newer = connector._catalog_asset(request.catalog, connector.snapshot_dataset, connector.snapshot_resource,
+                                         latest_asset_id=latest.source_asset_id, snapshot={})
+    except ConnectorError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    now = datetime.now(timezone.utc)
+    check = SourceCheck(
+        source_id=source.id, checked_at=now, completed_at=now, discovered_count=len(newer), queued_count=0,
+        status="degraded" if newer else "success",
+        error_message="data.go.th lists a newer district boundary resource; review before publishing" if newer else None,
+        provider_quota={"verified_via": "administrator_browser", "catalog": connector.snapshot_catalog, "actor": admin_actor},
+    )
+    db.add(check)
+    db.commit()
+    _RESPONSE_CACHE.pop("system/data-readiness", None)
+    return {"status": check.status, "current_version_confirmed": not newer, "checked_at": _iso(now)}

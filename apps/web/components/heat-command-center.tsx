@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { DataReadinessCard } from "@/components/data-readiness-card";
+import { confirmBoundariesFromBrowser } from "@/lib/boundary-check";
 import { HistoricalIngestionPanel } from "@/components/historical-ingestion-panel";
 import { subscribeDatasetUpdates } from "@/lib/dataset-updates";
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -1697,6 +1698,19 @@ function ObservatoryOverlay({ datasets, snapshot, readiness, readinessError, loa
     const timer = setInterval(refresh, 30_000);
     return () => { cancelled = true; clearInterval(timer); };
   }, []);
+  const [boundaryCheck, setBoundaryCheck] = useState<string | null>(null);
+  useEffect(() => {
+    // The official catalogs block the hosting region, so an administrator's
+    // browser in Thailand confirms the district boundary version once per visit.
+    if (!adminSession?.authenticated) return;
+    let cancelled = false;
+    confirmBoundariesFromBrowser("__session__")
+      .then((result) => { if (!cancelled) setBoundaryCheck(result.current_version_confirmed
+        ? "ยืนยันขอบเขต 50 เขตกับ data.go.th จากเบราว์เซอร์นี้แล้ว"
+        : "data.go.th มีขอบเขตเวอร์ชันใหม่กว่า ต้องทบทวนก่อนเผยแพร่"); })
+      .catch((checkError) => { if (!cancelled) setBoundaryCheck(checkError instanceof Error ? checkError.message : "ตรวจขอบเขตจากเบราว์เซอร์ไม่สำเร็จ"); });
+    return () => { cancelled = true; };
+  }, [adminSession?.authenticated]);
   const signOut = async () => {
     try { await logoutAdmin(); setAdminSession((value) => value ? { ...value, authenticated: false, actor: undefined, csrf_token: undefined } : null); }
     catch { setSessionError("ออกจากระบบไม่สำเร็จ กรุณาลองอีกครั้ง"); }
@@ -1772,6 +1786,7 @@ function ObservatoryOverlay({ datasets, snapshot, readiness, readinessError, loa
         </div>
         <Button onClick={() => onRefresh(source, credential)} disabled={refreshing || !credential} variant="outline">{refreshing ? <RefreshCw className="animate-spin" size={14} /> : <RefreshCw size={14} />} ตรวจสอบตอนนี้</Button>
       </div>
+      {boundaryCheck && <p className="readiness-scope">{boundaryCheck}</p>}
       {sessionError && <div className="error-box">{sessionError}</div>}
       <EvidenceApprovalPanel operatorToken={credential} />
       <HistoricalIngestionPanel credential={credential} />
