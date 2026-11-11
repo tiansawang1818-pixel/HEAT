@@ -340,7 +340,8 @@ def test_layer_freshness_uses_observation_age_and_failed_checks_preserve_map(cli
     check.completed_at = now + timedelta(seconds=1)  # a finishing check always records its completion
     db.commit()
     layer = next(item for item in client.get("/api/map/layers").json()["items"] if item["id"] == "temperature")
-    assert layer["status"] == "error"
+    # Validated data stays on the map, so an unreachable provider is degraded, not an error.
+    assert layer["status"] == "stale"
     assert client.get("/api/map/features?layer=temperature").json()["features"][0]["properties"]["value"] == 35.0
 
 

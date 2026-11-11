@@ -240,8 +240,12 @@ def _format_source_status(source: DataSource, latest_any: Optional[DatasetVersio
             reason = "ภาพล่าสุดถูกเมฆบังทุกเขต ระบบใช้ภาพที่ชัดก่อนหน้า"
     elif latest_any and latest_any.status == "failed" and (not latest or _aware(latest_any.discovered_at) > _aware(latest.published_at)):
         status, reason = "error", "เวอร์ชันล่าสุดไม่ผ่านการตรวจสอบ; ระบบยังคงใช้เวอร์ชันก่อนหน้า"
-    elif check and check.status == "failed" and (not latest or not latest.published_at or _aware(check.checked_at) > _aware(latest.published_at)):
-        status, reason = "error", "ตรวจสอบผู้ให้บริการครั้งล่าสุดไม่สำเร็จ; ยังคงใช้ข้อมูลที่เผยแพร่ก่อนหน้าเมื่อมี"
+    elif check and check.status == "failed" and latest and latest.published_at and _aware(check.checked_at) > _aware(latest.published_at):
+        # Validated data is still served, so an unreachable provider degrades
+        # the source rather than breaking it; readiness treats it as a warning.
+        status, reason = "stale", "เชื่อมต่อผู้ให้บริการครั้งล่าสุดไม่สำเร็จ ระบบใช้ข้อมูลที่ตรวจแล้วล่าสุดและจะลองใหม่เอง"
+    elif check and check.status == "failed" and not latest:
+        status, reason = "error", "ตรวจสอบผู้ให้บริการครั้งล่าสุดไม่สำเร็จ และยังไม่มีข้อมูลที่ผ่านการตรวจ"
     elif check and check.status == "degraded" and latest:
         status, reason = "stale", "ยังตรวจสอบต้นทาง กทม. ไม่ได้ ระบบแสดงสำเนาขอบเขตจากแค็ตตาล็อกข้อมูลเปิดของรัฐที่ผ่านการตรวจสอบ"
     elif latest and latest.observed_at:

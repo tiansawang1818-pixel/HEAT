@@ -38,6 +38,7 @@ def test_source_status_batches_history_and_preserves_published_observation(db):
     assert result["count"] == len(sources) and len(sources) > 1
     assert len(selects) <= 4
     for item in result["items"]:
+        # The newest version failed validation, which still marks the source as an error.
         assert item["status"] == "error"
         assert item["source_version"] == "new" and item["layer_version"] == 2
         assert item["quality_status"] == "validated"
