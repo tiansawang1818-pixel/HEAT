@@ -253,6 +253,7 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
   const [refreshing, setRefreshing] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [mapError, setMapError] = useState<string | null>(null);
+  const [featuresLayer, setFeaturesLayer] = useState<string | null>(null);
   const mapNeedsRetry = useRef(false);
   const [assistantQuestion, setAssistantQuestion] = useState("");
   const [assistantAnswer, setAssistantAnswer] = useState<string | null>(null);
@@ -353,6 +354,7 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
       void loadLayerFeatures(activeLayer, viewportFiltered ? mainViewport.bounds : cityExtentBbox, controller.signal, activeLayerVersion, dataRevision, activeSnapshotId)
         .then((features) => {
           setData((current) => ({ ...current, features }));
+          setFeaturesLayer(activeLayer);
           mapNeedsRetry.current = false;
           setMapError(null);
         })
@@ -698,6 +700,9 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
   const currentLayer = data.layers.find((layer) => layer.id === activeLayer) || defaultLayers.find((layer) => layer.id === activeLayer);
   const activeScenario = scenarioResults.find((item) => item.run_id === activeScenarioId) || scenarioResults.at(-1);
   const displayedProjects = initialView === "scenarios" && activeScenario ? activeScenario.allocations : optimization?.allocations;
+  // Until the active layer's features arrive, the map still holds the previous
+  // layer's values; show it as loading rather than as missing data.
+  const layerLoading = !data.isDemo && featuresLayer !== activeLayer;
   const displayedFeatures = useMemo<FeatureCollection>(() => {
     if (initialView !== "outlook" || !forecastResult?.projections.length) return data.features;
     const projections = new Map(forecastResult.projections.map((item) => [item.area_id, item]));
@@ -823,6 +828,7 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
         <HeatMap
           data={displayedFeatures}
           activeLayer={activeLayer}
+          loading={layerLoading}
           rasterTile={rasterTile}
           viewport={mainViewport}
           onViewportChange={setMainViewport}

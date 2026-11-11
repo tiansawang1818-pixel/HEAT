@@ -55,6 +55,7 @@ function layerValue(feature: { properties: AreaProperties }, layer: string) {
 interface HeatMapProps {
   data: FeatureCollection;
   activeLayer: string;
+  loading?: boolean;
   rasterTile?: RasterTileDescriptor | null;
   selectedId?: string;
   projects?: OptimizationProject[];
@@ -77,6 +78,7 @@ export interface MapViewport {
 export function HeatMap({
   data,
   activeLayer,
+  loading = false,
   rasterTile = null,
   selectedId,
   projects = [],
@@ -203,11 +205,11 @@ export function HeatMap({
       pickable: true,
       stroked: true,
       filled: true,
-      getFillColor: (feature) => rasterTile ? [0, 0, 0, 1] : ramp(layerValue(feature, activeLayer), activeLayer),
+      getFillColor: (feature) => rasterTile || loading ? [0, 0, 0, 1] : ramp(layerValue(feature, activeLayer), activeLayer),
       getLineColor: (feature) => feature.properties.id === selectedId ? [78, 234, 255, 255] : [192, 226, 235, 145],
       getLineWidth: (feature) => feature.properties.id === selectedId ? 4 : 1,
       lineWidthMinPixels: 1,
-      updateTriggers: { getFillColor: [activeLayer, rasterTile?.dataset_version_id], getLineColor: [selectedId], getLineWidth: [selectedId] },
+      updateTriggers: { getFillColor: [activeLayer, rasterTile?.dataset_version_id, loading], getLineColor: [selectedId], getLineWidth: [selectedId] },
       onClick: (info: PickingInfo) => info.object && onSelect(info.object as GeoFeature),
       autoHighlight: true,
       highlightColor: [78, 234, 255, 55],
@@ -234,14 +236,14 @@ export function HeatMap({
         if ("properties" in object) {
           const value = layerValue(object, activeLayer);
           return {
-            text: `${object.properties.name_th}\n${value == null ? "ยังไม่มีค่าที่ผ่านการตรวจสอบ" : `${value.toLocaleString("th-TH")}${activeLayer === "population" ? " คน/ตร.กม." : ""}`}`,
+            text: `${object.properties.name_th}\n${loading ? "กำลังโหลดข้อมูลชั้นนี้…" : value == null ? "ยังไม่มีค่าที่ผ่านการตรวจสอบ" : `${value.toLocaleString("th-TH")}${activeLayer === "population" ? " คน/ตร.กม." : ""}`}`,
             style: { backgroundColor: "#0d1922", color: "#f8fafc", border: "1px solid rgba(255,255,255,.16)", fontSize: "12px", whiteSpace: "pre-line" },
           };
         }
         return { text: object.name };
       },
     });
-  }, [activeLayer, data, onSelect, projects, rasterTile, selectedId]);
+  }, [activeLayer, data, loading, onSelect, projects, rasterTile, selectedId]);
 
   return (
     <div className="absolute inset-0">
