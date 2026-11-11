@@ -78,6 +78,7 @@ const layerProperty: Record<string, keyof AreaProperties> = {
   population: "population_density",
   built: "built_up_pct",
   "future-risk": "scenario_change_c",
+  historical: "temperature_trend_c_per_year",
 };
 
 function normalizeDataset(raw: Record<string, unknown>): DatasetStatus {

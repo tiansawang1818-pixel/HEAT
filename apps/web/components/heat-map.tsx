@@ -32,7 +32,10 @@ function ramp(value: number | null | undefined, layer: string): [number, number,
     const t = Math.min(1, value / 100);
     return [96 + 110 * t, 90 - 25 * t, 130 - 35 * t, 200];
   }
-  const normalized = layer === "temperature" ? (value - 25) / 20 : layer === "future-risk" ? (value + 0.5) / 4 : value / 100;
+  const normalized = layer === "temperature" ? (value - 25) / 20
+    : layer === "future-risk" ? (value + 0.5) / 4
+    : layer === "historical" ? (value + 1) / 4  // °C per year, about -1 to +3
+    : value / 100;
   const t = Math.min(1, Math.max(0, normalized));
   return [255, 185 - 145 * t, 45 - 25 * t, 205];
 }
@@ -48,6 +51,7 @@ function layerValue(feature: { properties: AreaProperties }, layer: string) {
     built: p.built_up_pct,
     built_up: p.built_up_pct,
     "future-risk": p.scenario_change_c,
+    historical: p.temperature_trend_c_per_year,
   };
   return valueByLayer[layer];
 }
@@ -236,7 +240,7 @@ export function HeatMap({
         if ("properties" in object) {
           const value = layerValue(object, activeLayer);
           return {
-            text: `${object.properties.name_th}\n${loading ? "กำลังโหลดข้อมูลชั้นนี้…" : value == null ? "ยังไม่มีค่าที่ผ่านการตรวจสอบ" : `${value.toLocaleString("th-TH")}${activeLayer === "population" ? " คน/ตร.กม." : ""}`}`,
+            text: `${object.properties.name_th}\n${loading ? "กำลังโหลดข้อมูลชั้นนี้…" : value == null ? "ยังไม่มีค่าที่ผ่านการตรวจสอบ" : `${value.toLocaleString("th-TH", { maximumFractionDigits: 2 })}${activeLayer === "population" ? " คน/ตร.กม." : activeLayer === "historical" ? " °C/ปี" : ""}`}`,
             style: { backgroundColor: "#0d1922", color: "#f8fafc", border: "1px solid rgba(255,255,255,.16)", fontSize: "12px", whiteSpace: "pre-line" },
           };
         }

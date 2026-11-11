@@ -180,6 +180,8 @@ export interface AreaProperties {
   observation_date?: string | null;
   priority_explanation?: string[];
   scenario_change_c?: number | null;
+  /** Land surface temperature trend, °C per year. */
+  temperature_trend_c_per_year?: number | null;
   scenario_uncertainty_c?: number | null;
   scenario_horizon_years?: number | null;
 }

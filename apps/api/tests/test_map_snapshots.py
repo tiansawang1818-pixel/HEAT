@@ -86,3 +86,15 @@ def test_current_map_shows_each_districts_latest_clear_value_across_scenes(clien
     pinned = client.get("/api/map/features", params={"layer": "ndvi", "dataset_version_id": newer.id}).json()
     pinned_values = {f["properties"]["area_id"]: f["properties"]["value"] for f in pinned["features"]}
     assert pinned_values["west-district"] is None and pinned_values["east-district"] == 0.2
+
+
+def test_historical_layer_shows_the_scored_temperature_trend(client, db):
+    from app.models.entities import PriorityScore
+    area = GeographicArea(id="trend-area", name_th="แนวโน้ม", name_en="Trend",
+                          geometry={"type": "MultiPolygon", "coordinates": [[[[100.5, 13.7], [100.51, 13.7], [100.51, 13.71], [100.5, 13.71], [100.5, 13.7]]]]})
+    db.add(area)
+    db.add(PriorityScore(area_id=area.id, score=60.0, components={"historical_change": 0.42}, weights={},
+                         missing_inputs=[], input_versions={}, formula_version="test"))
+    db.commit()
+    features = client.get("/api/map/features", params={"layer": "historical"}).json()["features"]
+    assert next(f for f in features if f["properties"]["area_id"] == "trend-area")["properties"]["value"] == 0.42

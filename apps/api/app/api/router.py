@@ -876,7 +876,7 @@ def map_features(
         observation_by_area: Dict[str, AreaIndicator] = {}
         forecast = None
         projection_by_area: Dict[str, Dict[str, Any]] = {}
-        if layer == "priority" and area_ids:
+        if layer in ("priority", "historical") and area_ids:
             for score in db.scalars(
                 select(PriorityScore)
                 .where(PriorityScore.area_id.in_(area_ids))
@@ -914,6 +914,12 @@ def map_features(
             if layer == "priority":
                 score = score_by_area.get(area.id)
                 value, observed_at, quality = (score.score, score.calculated_at, "derived") if score else (None, None, "unavailable")
+            elif layer == "historical":
+                # The trend (°C per year between the earliest and latest clear
+                # Landsat observation) is computed with the priority score.
+                score = score_by_area.get(area.id)
+                trend = (score.components or {}).get("historical_change") if score else None
+                value, observed_at, quality = (trend, score.calculated_at, "derived") if trend is not None else (None, None, "unavailable")
             elif layer == "future-risk":
                 projection = projection_by_area.get(area.id)
                 value, observed_at, quality = (
