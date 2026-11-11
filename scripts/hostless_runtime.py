@@ -134,11 +134,11 @@ def runtime_commands(root):
     return {
         # Python never returns freed heap to the OS, so the API grew past 300 MB
         # and pushed the container into its memory limit. Gunicorn keeps the
-        # listening socket and replaces its single worker after a bounded number
+        # listening socket and replaces its single worker after about 400 requests
         # of requests; requests queue briefly instead of being refused.
         "api": ([sys.executable, "-m", "gunicorn", "app.main:app", "-k", "uvicorn.workers.UvicornWorker",
-                 "-w", "1", "-b", "127.0.0.1:%d" % PRIVATE_API_PORT, "--max-requests", "1500",
-                 "--max-requests-jitter", "300", "--timeout", "180", "--graceful-timeout", "30",
+                 "-w", "1", "-b", "127.0.0.1:%d" % PRIVATE_API_PORT, "--max-requests", "400",
+                 "--max-requests-jitter", "100", "--timeout", "180", "--graceful-timeout", "30",
                  "--keep-alive", "5"], api),
         "web": (["node", "server.js"], root / "apps" / "web"),
         "ingestion": (celery + ingestion + ["-Q", "celery", "--hostname=ingestion@%h"], api),
