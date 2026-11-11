@@ -37,8 +37,10 @@ return current
         if self._redis is None:
             self._redis = redis.Redis.from_url(
                 settings.redis_url,
-                socket_connect_timeout=0.25,
-                socket_timeout=0.25,
+                # The first TLS handshake to managed Redis after a restart can take
+                # over a second; later calls reuse the pooled connection.
+                socket_connect_timeout=2,
+                socket_timeout=1,
                 decode_responses=True,
             )
         return self._redis
@@ -56,7 +58,9 @@ return current
         try:
             count = int(self._client().eval(self._SCRIPT, 1, key, window_seconds + 1))
         except redis.RedisError:
-            logger.exception("rate-limit backend unavailable", extra={"route": scope})
+            # Requests fall back to the fail-open/closed decision below, so a brief
+            # Redis stall is an expected degradation, not an application error.
+            logger.warning("rate-limit backend unavailable", extra={"route": scope})
             return RateLimitDecision(not fail_closed, limit, 0, retry_after, backend_available=False)
         return RateLimitDecision(count <= limit, limit, max(0, limit - count), retry_after)
 
