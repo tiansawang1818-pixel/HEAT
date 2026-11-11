@@ -575,10 +575,15 @@ def _latest_indicators(db: Session, area_id: str, version_id: Optional[str] = No
         query = query.where(AreaIndicator.dataset_version_id == version_id)
     rows = db.scalars(query.order_by(desc(AreaIndicator.observed_at))).all()
     result: Dict[str, Dict[str, Any]] = {}
-    versions = {} if version_id else current_versions(db)
+    # The current view uses each indicator's freshness pool, as the map and
+    # priority scores do: the district's latest clear value from recent scenes.
+    pools = {} if version_id else {
+        dataset: set(indicator_version_pool(db, dataset)) for dataset in set(INDICATOR_DATASETS.values())
+    }
     for row in rows:
-        active = versions.get(INDICATOR_DATASETS.get(row.indicator_key, ""))
-        if active and row.dataset_version_id != active["version_id"]:
+        pool = pools.get(INDICATOR_DATASETS.get(row.indicator_key, ""))
+        if pool is not None and (row.dataset_version_id not in pool or row.value is None
+                                 or row.quality_status in EXCLUDED_QUALITY):
             continue
         if row.indicator_key not in result:
             result[row.indicator_key] = {
@@ -787,7 +792,7 @@ def map_tile_descriptor(
 # the remote database with one, without serving data older than a publication.
 _MAP_FEATURE_CACHE: Dict[str, tuple] = {}
 _MAP_FEATURE_CACHE_SECONDS = 60
-_MAP_FEATURE_CACHE_ENTRIES = 32
+_MAP_FEATURE_CACHE_ENTRIES = 16
 
 
 def _cached_map_features(key: str) -> Optional[tuple]:

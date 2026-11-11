@@ -128,7 +128,7 @@ def runtime_commands(root):
     # child so hard time limits still apply, and replaces it after any task
     # that leaves it above 200 MB. The dispatcher only runs a short bounded
     # dispatch task, so it runs in-process instead of forking a second copy.
-    ingestion = worker + ["--pool=prefork", "--max-memory-per-child=200000"]
+    ingestion = worker + ["--pool=prefork", "--max-memory-per-child=150000"]
     dispatcher = worker + ["--pool=solo"]
     return {
         "api": ([sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", str(PRIVATE_API_PORT)], api),

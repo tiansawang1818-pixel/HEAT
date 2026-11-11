@@ -117,7 +117,7 @@ def test_dispatcher_runs_in_process_and_ingestion_recycles_large_children(tmp_pa
     commands = runtime.runtime_commands(tmp_path)
     assert "--pool=solo" in commands["dispatcher"][0]
     ingestion = commands["ingestion"][0]
-    assert "--pool=prefork" in ingestion and "--max-memory-per-child=200000" in ingestion
+    assert "--pool=prefork" in ingestion and "--max-memory-per-child=150000" in ingestion
 
 
 def test_api_gets_a_larger_pool_within_the_managed_connection_budget():

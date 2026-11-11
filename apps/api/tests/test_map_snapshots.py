@@ -81,6 +81,8 @@ def test_current_map_shows_each_districts_latest_clear_value_across_scenes(clien
     current = client.get("/api/map/features", params={"layer": "ndvi"}).json()
     values = {f["properties"]["area_id"]: f["properties"]["value"] for f in current["features"]}
     assert values["west-district"] == 0.4 and values["east-district"] == 0.2
+    detail = client.get("/api/areas/west-district").json()
+    assert detail["indicators"]["ndvi"]["value"] == 0.4
     pinned = client.get("/api/map/features", params={"layer": "ndvi", "dataset_version_id": newer.id}).json()
     pinned_values = {f["properties"]["area_id"]: f["properties"]["value"] for f in pinned["features"]}
     assert pinned_values["west-district"] is None and pinned_values["east-district"] == 0.2

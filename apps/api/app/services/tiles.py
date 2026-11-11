@@ -70,7 +70,8 @@ TILE_SPECS = {
 }
 
 
-MAX_COMPOSITE_SCENES = 12
+# Enough recent scenes that cloud gaps in one are filled by another.
+MAX_COMPOSITE_SCENES = 24
 
 
 class EarthEngineTileService:
