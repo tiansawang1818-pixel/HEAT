@@ -67,4 +67,4 @@ def test_bootstrap_syncs_code_owned_freshness_window(db):
     db.commit()
     ensure_sources(db)
     db.refresh(source)
-    assert source.stale_after_seconds == 90 * 86400
+    assert source.stale_after_seconds == 365 * 86400
