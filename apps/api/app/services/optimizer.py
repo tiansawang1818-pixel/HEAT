@@ -50,14 +50,34 @@ def _solve_ortools(candidates: Sequence[Candidate], budget_thb: int, values: Seq
     model.add(sum(candidates[i].cost_thb * selected[i] for i in range(len(candidates))) <= budget_thb)
     scaled = [int(round(value * 1_000_000)) for value in values]
     model.maximize(sum(scaled[i] * selected[i] for i in range(len(candidates))))
+    # On a throttled host the time limit can expire before the search improves
+    # on an empty portfolio, so start from (and never return worse than) the
+    # greedy value-per-baht solution.
+    greedy = _greedy_indexes(candidates, budget_thb, values)
+    greedy_set = set(greedy)
+    for index, variable in enumerate(selected):
+        model.add_hint(variable, index in greedy_set)
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = 8.0
     solver.parameters.num_search_workers = 1
     solver.parameters.random_seed = 42
     status = solver.solve(model)
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        return ([], "ortools-cp-sat")
-    return ([i for i in range(len(candidates)) if solver.value(selected[i])], "ortools-cp-sat")
+        return (greedy, "greedy-value-per-baht")
+    chosen = [i for i in range(len(candidates)) if solver.value(selected[i])]
+    if sum(scaled[i] for i in chosen) < sum(scaled[i] for i in greedy):
+        return (greedy, "greedy-value-per-baht")
+    return (chosen, "ortools-cp-sat")
+
+
+def _greedy_indexes(candidates: Sequence[Candidate], budget_thb: int, values: Sequence[float]) -> List[int]:
+    order = sorted(range(len(candidates)), key=lambda i: (-values[i] / max(candidates[i].cost_thb, 1), candidates[i].id))
+    chosen, spent = [], 0
+    for index in order:
+        if values[index] > 0 and spent + candidates[index].cost_thb <= budget_thb:
+            chosen.append(index)
+            spent += candidates[index].cost_thb
+    return sorted(chosen)
 
 
 def _solve_dynamic(candidates: Sequence[Candidate], budget_thb: int, values: Sequence[float]) -> Tuple[List[int], str]:

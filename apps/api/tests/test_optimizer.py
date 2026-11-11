@@ -74,3 +74,20 @@ def test_missing_ranking_evidence_is_not_replaced_with_priority_or_zero_people()
         assert result.status == "insufficient_data" and result.selected_ids == []
         assert result.beneficiaries is None
     assert optimize_portfolio(candidates, 100_000, {"priority": 1}).beneficiaries is None
+
+
+def test_solver_never_returns_worse_than_greedy_when_time_runs_out(monkeypatch):
+    from app.services import optimizer
+    candidates = [optimizer.Candidate(id=str(i), cost_thb=8000, beneficiaries=0, priority_score=50,
+                                      benefit_score=0, intervention_type="tree_planting") for i in range(20)]
+    original = optimizer._greedy_indexes
+    monkeypatch.setattr(optimizer, "_greedy_indexes", lambda c, b, v: original(c, b, v))
+
+    class EmptySolver:
+        parameters = type("P", (), {})()
+        def solve(self, model): return 2  # FEASIBLE
+        def value(self, variable): return 0
+    from ortools.sat.python import cp_model
+    monkeypatch.setattr(cp_model, "CpSolver", EmptySolver)
+    portfolio = optimizer.optimize_portfolio(candidates, 100_000, {"priority": 1.0})
+    assert len(portfolio.selected_ids) == 12 and portfolio.solver == "greedy-value-per-baht"
