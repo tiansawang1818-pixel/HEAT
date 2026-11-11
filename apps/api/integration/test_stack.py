@@ -73,7 +73,7 @@ def test_historical_checkpoints_survive_sessions_with_real_postgis_and_redis(mon
         def discover(self, latest_asset_id=None, checkpoint=None):
             return [self.image(2024)]
 
-        def discover_historical_page(self, start_date, end_date, cursor, page_size=10, window_days=16):
+        def discover_historical_page(self, start_date, end_date, cursor, page_size=10, window_days=16, months=None):
             self.catalogue_calls += 1
             return HistoricalPage([self.image(2018), self.image(2019)],
                                   {"window_start": end_date.isoformat(), "collection_index": 0}, 2, True)
