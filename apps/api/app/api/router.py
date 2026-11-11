@@ -3,6 +3,7 @@ import html
 import json
 import math
 import re
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -333,6 +334,7 @@ def datasets(db: Session = Depends(get_db)) -> Dict[str, Any]:
 # while it is unchanged the encoded response is reused for a short time.
 _RESPONSE_CACHE: Dict[str, tuple] = {}
 _RESPONSE_CACHE_SECONDS = 30
+_RESPONSE_BUILD_LOCKS: Dict[str, threading.Lock] = {}
 
 
 def _dashboard_generation(db: Session) -> tuple:
@@ -352,8 +354,26 @@ def _cached_dashboard_response(db: Session, name: str, build, seconds: int = _RE
     if entry and entry[0] == key and entry[1] > time.monotonic():
         body = entry[2]
     else:
-        body = json.dumps(build(), ensure_ascii=False, separators=(",", ":"), default=str).encode("utf-8")
-        _RESPONSE_CACHE[name] = (key, time.monotonic() + seconds, body)
+        lock = _RESPONSE_BUILD_LOCKS.setdefault(name, threading.Lock())
+        if entry and not lock.acquire(blocking=False):
+            # Another request is rebuilding this response; serve the previous one
+            # instead of holding a second database connection for the same work.
+            body = entry[2]
+        else:
+            if not entry:
+                # Nothing to serve yet: wait for the builder without pinning a
+                # pooled connection, then reuse what it built.
+                db.close()
+                lock.acquire()
+            try:
+                entry = _RESPONSE_CACHE.get(name)
+                if entry and entry[0] == key and entry[1] > time.monotonic():
+                    body = entry[2]
+                else:
+                    body = json.dumps(build(), ensure_ascii=False, separators=(",", ":"), default=str).encode("utf-8")
+                    _RESPONSE_CACHE[name] = (key, time.monotonic() + seconds, body)
+            finally:
+                lock.release()
     return Response(content=body, media_type="application/json", headers={"Cache-Control": "no-cache"})
 
 

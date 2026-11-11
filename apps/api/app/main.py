@@ -4,6 +4,7 @@ import re
 import time
 import uuid
 
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -75,6 +76,17 @@ async def invalid_request(request: Request, exc: RequestValidationError):
         {"loc": error["loc"], "type": error["type"], "msg": error["msg"]}
         for error in exc.errors()
     ]})
+
+
+@app.exception_handler(PoolTimeoutError)
+async def database_busy(request: Request, exc: PoolTimeoutError):
+    # Every pooled connection is serving a slower request; ask the client to
+    # retry shortly instead of reporting an application failure.
+    logging.getLogger("app.main").warning("Database pool busy for %s", request.url.path)
+    return JSONResponse(status_code=503, headers={"Retry-After": "5"},
+                        content={"detail": "ระบบกำลังประมวลผลคำขออื่นอยู่ กรุณาลองใหม่อีกครั้ง"})
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,

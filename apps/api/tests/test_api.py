@@ -1142,3 +1142,30 @@ def test_dashboard_reads_are_reused_until_the_data_generation_moves(client, db):
     assert b"renamed" in client.get("/api/datasets/status").content
     assert client.get("/api/map/layers").status_code == 200
     assert client.get("/api/weather/context").status_code == 200
+
+
+def test_pool_timeout_is_reported_as_busy_not_a_server_error(client, monkeypatch):
+    from sqlalchemy.exc import TimeoutError as PoolTimeoutError
+    from app.api import router as api_router
+
+    def exhausted(db):
+        raise PoolTimeoutError("QueuePool limit reached")
+    monkeypatch.setattr(api_router, "_dataset_status", exhausted)
+    api_router._RESPONSE_CACHE.clear()
+    response = client.get("/api/datasets/status")
+    assert response.status_code == 503 and response.headers["Retry-After"] == "5"
+
+
+def test_concurrent_rebuild_serves_the_previous_response(db, monkeypatch):
+    import json as _json
+    from app.api import router as api_router
+    api_router._RESPONSE_CACHE["unit/busy"] = ("old-key", 0, b'{"stale":true}')
+    lock = api_router._RESPONSE_BUILD_LOCKS.setdefault("unit/busy", __import__("threading").Lock())
+    lock.acquire()
+    try:
+        response = api_router._cached_dashboard_response(db, "unit/busy", lambda: {"fresh": True})
+    finally:
+        lock.release()
+    assert _json.loads(response.body) == {"stale": True}
+    response = api_router._cached_dashboard_response(db, "unit/busy", lambda: {"fresh": True})
+    assert _json.loads(response.body) == {"fresh": True}
