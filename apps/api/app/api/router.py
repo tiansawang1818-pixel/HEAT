@@ -401,9 +401,11 @@ def _cached_dashboard_response(db: Session, name: str, build, seconds: int = _RE
                 if entry and entry[0] == key and entry[1] > time.monotonic():
                     body = entry[2]
                 else:
+                    started = time.monotonic()
                     body = _encode_dashboard(build(db))
                     _RESPONSE_CACHE[name] = (key, time.monotonic() + seconds, body)
                     if stale_while_revalidate:
+                        logger.info("Dashboard %s built without a cached payload in %.1fs", name, time.monotonic() - started)
                         _store_shared_dashboard(name, key, body)
     return Response(content=body, media_type="application/json", headers={"Cache-Control": "no-cache"})
 
@@ -420,7 +422,8 @@ def _shared_dashboard_entry(name: str, key: str, seconds: int) -> Optional[tuple
         import redis
         with redis.Redis.from_url(settings.redis_url, socket_connect_timeout=2, socket_timeout=2) as client:
             stored_key, body = client.mget(_SHARED_CACHE_PREFIX + name + ":key", _SHARED_CACHE_PREFIX + name + ":body")
-    except Exception:
+    except Exception as exc:
+        logger.warning("Shared dashboard cache read failed for %s: %s", name, type(exc).__name__)
         return None
     if not stored_key or not body:
         return None
@@ -435,8 +438,9 @@ def _store_shared_dashboard(name: str, key: str, body: bytes) -> None:
         import redis
         with redis.Redis.from_url(settings.redis_url, socket_connect_timeout=2, socket_timeout=2) as client:
             client.mset({_SHARED_CACHE_PREFIX + name + ":key": key, _SHARED_CACHE_PREFIX + name + ":body": body})
-    except Exception:
-        pass  # The in-process cache still serves this worker.
+    except Exception as exc:
+        # The in-process cache still serves this worker.
+        logger.warning("Shared dashboard cache write failed for %s: %s", name, type(exc).__name__)
 
 
 def _rebuild_dashboard_response(name: str, key: str, build, seconds: int, lock: threading.Lock) -> None:
