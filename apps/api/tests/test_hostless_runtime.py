@@ -127,7 +127,7 @@ def test_api_gets_a_larger_pool_within_the_managed_connection_budget():
 
 
 def test_python_processes_limit_malloc_arenas_and_web_caps_its_heap():
-    for name in ("api", "ingestion", "dispatcher", "beat"):
+    for name in ("api", "ingestion", "dispatcher"):
         assert runtime.PROCESS_ENV[name]["MALLOC_ARENA_MAX"] == "2"
     assert runtime.PROCESS_ENV["web"]["NODE_OPTIONS"] == "--max-old-space-size=256"
 
@@ -157,3 +157,10 @@ def test_web_starts_only_after_the_api_listens(tmp_path, monkeypatch):
                       on_started=lambda _: stop.set(), ready_ports={"api": 18000})
     assert started_before_wait == [(18000, ["import time; time.sleep(30) # api"])]
     assert len(spawned) == 2
+
+
+def test_beat_runs_embedded_in_the_dispatcher(tmp_path):
+    commands = runtime.runtime_commands(tmp_path)
+    assert "beat" not in commands
+    dispatcher = commands["dispatcher"][0]
+    assert "-B" in dispatcher and "--pool=solo" in dispatcher and "-Q" in dispatcher

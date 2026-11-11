@@ -115,7 +115,6 @@ PROCESS_ENV = {
     "api": {"DATABASE_POOL_SIZE": "4", "MALLOC_ARENA_MAX": "2"},
     "ingestion": {"MALLOC_ARENA_MAX": "2"},
     "dispatcher": {"MALLOC_ARENA_MAX": "2"},
-    "beat": {"MALLOC_ARENA_MAX": "2"},
     "web": {"NODE_OPTIONS": "--max-old-space-size=256"},
 }
 
@@ -126,18 +125,17 @@ def runtime_commands(root):
     worker = ["worker", "--loglevel=INFO", "--concurrency=1", "--without-gossip", "--without-mingle"]
     # 768 MiB holds six Python processes plus Node. Ingestion keeps a prefork
     # child so hard time limits still apply, and replaces it after any task
-    # that leaves it above 200 MB. The dispatcher only runs a short bounded
+    # that leaves it above 150 MB. The dispatcher only runs a short bounded
     # dispatch task, so it runs in-process instead of forking a second copy.
     ingestion = worker + ["--pool=prefork", "--max-memory-per-child=150000"]
-    dispatcher = worker + ["--pool=solo"]
+    # Beat runs embedded in the dispatcher (-B): it only publishes two task
+    # names on a timetable, and a separate process cost about 90 MB.
+    dispatcher = worker + ["--pool=solo", "-B", "--schedule=/tmp/heatshift/celerybeat-schedule"]
     return {
         "api": ([sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", str(PRIVATE_API_PORT)], api),
         "web": (["node", "server.js"], root / "apps" / "web"),
         "ingestion": (celery + ingestion + ["-Q", "celery", "--hostname=ingestion@%h"], api),
         "dispatcher": (celery + dispatcher + ["-Q", "control", "--hostname=dispatcher@%h"], api),
-        # Beat only publishes task names; app.celery_config avoids importing the task code.
-        "beat": ([sys.executable, "-m", "celery", "-A", "app.celery_config.beat_app", "beat", "--loglevel=INFO",
-                  "--schedule=/tmp/heatshift/celerybeat-schedule"], api),
     }
 
 

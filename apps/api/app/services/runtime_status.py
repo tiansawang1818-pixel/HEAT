@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 
-COMPONENTS = ("api", "web", "ingestion", "dispatcher", "beat")
+COMPONENTS = ("api", "web", "ingestion", "dispatcher")
 
 
 def _tree_rss_bytes(pid, proc=Path("/proc")):

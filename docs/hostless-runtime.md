@@ -4,7 +4,7 @@
 
 ## โปรเซสและ persistence
 
-`scripts/hostless_runtime.py` เริ่ม migrations ก่อน แล้วดูแล Next.js, FastAPI, ingestion worker, control dispatcher และ Beat รวม 5 โปรเซสใน container เดียว พอร์ตภายนอกเป็น Next.js ตาม `PORT` ที่ provider กำหนด (Hostless ส่ง 8000 ในการเปิดจริงครั้งแรก); API ฟังเฉพาะ loopback 18000 ใช้ generic proxy ที่ build ด้วย `API_INTERNAL_URL=http://127.0.0.1:18000` งาน admin ยังคงผ่าน App Router ที่ตรวจสิทธิ์ก่อน หาก provider กำหนดพอร์ตเว็บชนกับพอร์ต API ส่วนตัว ตัวเริ่มระบบปฏิเสธก่อนเปิดโปรเซส
+`scripts/hostless_runtime.py` เริ่ม migrations ก่อน แล้วดูแล Next.js, FastAPI, ingestion worker และ control dispatcher (ฝัง Beat ไว้ด้วย `-B` เพื่อประหยัดแรมราว 90 MB) รวม 4 โปรเซสใน container เดียว พอร์ตภายนอกเป็น Next.js ตาม `PORT` ที่ provider กำหนด (Hostless ส่ง 8000 ในการเปิดจริงครั้งแรก); API ฟังเฉพาะ loopback 18000 ใช้ generic proxy ที่ build ด้วย `API_INTERNAL_URL=http://127.0.0.1:18000` งาน admin ยังคงผ่าน App Router ที่ตรวจสิทธิ์ก่อน หาก provider กำหนดพอร์ตเว็บชนกับพอร์ต API ส่วนตัว ตัวเริ่มระบบปฏิเสธก่อนเปิดโปรเซส
 
 เมื่อโปรเซสใดหยุดแม้ exit code 0 ตัวดูแลหยุดกลุ่มที่เหลือและคืน nonzero เพื่อให้ platform restart ทั้งแอป ส่ง SIGTERM และรอ bounded grace ก่อน SIGKILL การทดสอบ child restart ไม่แทนการพิสูจน์ข้อมูลคิวครบหลัง abrupt crash
 
