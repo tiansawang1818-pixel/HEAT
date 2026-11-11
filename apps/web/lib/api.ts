@@ -298,7 +298,10 @@ export async function loadAreaDetail(areaId: string, datasetVersionId?: string):
     name_en: typeof raw.name_en === "string" ? raw.name_en : undefined,
     priority_score: priority?.score,
     surface_temperature_c: value("lst_c_mean", "surface_temperature_c", "temperature"),
-    temperature_anomaly_c: value("temperature_anomaly", "lst_anomaly_c"),
+    // The anomaly is derived when scores are calculated (district LST minus the
+    // city mean), so it lives in the score components, not raw indicators.
+    temperature_anomaly_c: value("temperature_anomaly", "lst_anomaly_c")
+      ?? (typeof priority?.components?.temperature_anomaly === "number" ? priority.components.temperature_anomaly : undefined),
     population: value("population_estimate", "population"),
     population_density: value("population_density"),
     population_reference_year: value("population_reference_year"),
