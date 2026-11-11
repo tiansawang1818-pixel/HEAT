@@ -57,3 +57,30 @@ def test_snapshot_ids_cannot_select_staging_or_a_different_layer(client, db):
     assert client.get("/api/map/features", params={"layer": "temperature", "dataset_version_id": staged.id}).status_code == 404
     assert client.get("/api/areas/snapshot-area", params={"dataset_version_id": staged.id}).status_code == 404
     assert client.get("/api/map/observations?layer=priority").json()["supports_snapshots"] is False
+
+
+def test_current_map_shows_each_districts_latest_clear_value_across_scenes(client, db):
+    from datetime import timedelta
+    source = db.scalar(select(DataSource).where(DataSource.name == "Sentinel-2"))
+    now = datetime.now(timezone.utc)
+    shape = lambda x: {"type": "MultiPolygon", "coordinates": [[[[x, 13.7], [x + 0.01, 13.7], [x + 0.01, 13.71], [x, 13.71], [x, 13.7]]]]}
+    west = GeographicArea(id="west-district", name_th="ตะวันตก", name_en="West", geometry=shape(100.4))
+    east = GeographicArea(id="east-district", name_th="ตะวันออก", name_en="East", geometry=shape(100.6))
+    db.add_all([west, east])
+    older = DatasetVersion(source_id=source.id, source_asset_id="s2-older", source_version="older", status="published",
+                           quality_status="valid", observed_at=now - timedelta(days=6), published_at=now, layer_version=1)
+    newer = DatasetVersion(source_id=source.id, source_asset_id="s2-newer", source_version="newer", status="published",
+                           quality_status="valid", observed_at=now - timedelta(days=1), published_at=now, layer_version=2)
+    db.add_all([older, newer])
+    db.flush()
+    db.add_all([
+        AreaIndicator(area_id=west.id, dataset_version_id=older.id, indicator_key="ndvi", value=0.4, observed_at=older.observed_at),
+        AreaIndicator(area_id=east.id, dataset_version_id=newer.id, indicator_key="ndvi", value=0.2, observed_at=newer.observed_at),
+    ])
+    db.commit()
+    current = client.get("/api/map/features", params={"layer": "ndvi"}).json()
+    values = {f["properties"]["area_id"]: f["properties"]["value"] for f in current["features"]}
+    assert values["west-district"] == 0.4 and values["east-district"] == 0.2
+    pinned = client.get("/api/map/features", params={"layer": "ndvi", "dataset_version_id": newer.id}).json()
+    pinned_values = {f["properties"]["area_id"]: f["properties"]["value"] for f in pinned["features"]}
+    assert pinned_values["west-district"] is None and pinned_values["east-district"] == 0.2

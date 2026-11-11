@@ -71,7 +71,8 @@ from app.services.runtime_status import runtime_status
 from app.services.forecast_workflow import ForecastInProgress, compute_forecast
 from app.services.data_readiness import published_data_readiness
 from app.services.locks import LockBackendUnavailable
-from app.services.versions import INDICATOR_DATASETS, LAYER_DATASETS, current_versions, published_version
+from app.services.analytics import EXCLUDED_QUALITY
+from app.services.versions import INDICATOR_DATASETS, LAYER_DATASETS, current_versions, indicator_version_pool, published_version
 
 
 router = APIRouter()
@@ -885,8 +886,17 @@ def map_features(
             }
         elif area_ids:
             observation_query = select(AreaIndicator).where(AreaIndicator.area_id.in_(area_ids), AreaIndicator.indicator_key == indicator_key)
-            if snapshot:
+            if dataset_version_id and snapshot:
                 observation_query = observation_query.where(AreaIndicator.dataset_version_id == snapshot.id)
+            elif snapshot:
+                # The current view shows each district's latest clear value from
+                # the source's freshness pool, as priority scores use; one scene
+                # alone covers only part of Bangkok.
+                observation_query = observation_query.where(
+                    AreaIndicator.dataset_version_id.in_(indicator_version_pool(db, LAYER_DATASETS[layer])),
+                    AreaIndicator.value.is_not(None),
+                    AreaIndicator.quality_status.notin_(EXCLUDED_QUALITY),
+                )
             for observation in db.scalars(
                 observation_query.order_by(AreaIndicator.area_id, desc(AreaIndicator.observed_at))
             ).all():

@@ -329,7 +329,10 @@ export function HeatCommandCenter({ initialView = "explorer" }: { initialView?: 
   const layerObservations = observations?.layer === activeLayer ? observations : null;
   const selectedSnapshotId = snapshotChoice?.layer === activeLayer ? snapshotChoice.id : "";
   const selectedSnapshot = layerObservations?.items.find((item) => item.id === selectedSnapshotId) || (snapshotChoice?.layer === activeLayer ? snapshotChoice.observation : undefined);
-  const activeSnapshotId = selectedSnapshotId || layerObservations?.items[0]?.id;
+  // Without an explicit date the API serves the current view: each district's
+  // latest clear value and a mosaic of recent scenes. Pinning the newest scene
+  // here would limit both to the part of Bangkok that one scene covers.
+  const activeSnapshotId = selectedSnapshotId || undefined;
   // Only point layers need viewport filtering; district layers load the whole city once.
   const viewportFiltered = activeLayer === "candidates";
   const viewportBoundsKey = viewportFiltered
