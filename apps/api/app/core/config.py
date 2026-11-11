@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     # Forecast-only deployments plan with screened sites and never fund real
     # investments, so per-site field evidence is not a readiness requirement.
     investment_decisions_enabled: bool = False
+    # Hostless has no Prometheus scraper, so the public deployment keeps
+    # operational counters behind admin auth; self-hosted stacks scrape freely.
+    metrics_require_admin: bool = False
     gee_tile_descriptor_ttl_seconds: int = 3000
     open_meteo_latitude: float = 13.7563
     open_meteo_longitude: float = 100.5018

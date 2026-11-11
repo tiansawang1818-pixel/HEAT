@@ -3,13 +3,14 @@ import html
 import json
 import math
 import re
+import logging
 import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 from sqlalchemy import and_, desc, func, or_, select
@@ -19,7 +20,7 @@ from sqlalchemy.orm import Session, defer
 from app.api.deps import require_admin
 from app.api.backfills import router as backfill_router
 from app.core.config import settings
-from app.db.session import get_db
+from app.db.session import SessionLocal, get_db
 from app.models.entities import (
     AreaIndicator,
     CandidateIntervention,
@@ -77,6 +78,7 @@ from app.services.analytics import EXCLUDED_QUALITY
 from app.services.versions import INDICATOR_DATASETS, LAYER_DATASETS, current_versions, indicator_version_pool, published_version
 
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 router.include_router(backfill_router)
 
@@ -317,7 +319,13 @@ def health_ready(response: Response, db: Session = Depends(get_db)) -> Dict[str,
 
 
 @router.get("/metrics", include_in_schema=False)
-def metrics(db: Session = Depends(get_db)) -> Response:
+def metrics(
+    db: Session = Depends(get_db),
+    x_admin_key: str = Header(default=""),
+    authorization: str = Header(default=""),
+) -> Response:
+    if settings.metrics_require_admin:
+        require_admin(x_admin_key=x_admin_key, x_admin_actor="metrics", authorization=authorization)
     return Response(
         content=prometheus_metrics(db),
         media_type="text/plain; version=0.0.4",
@@ -351,38 +359,66 @@ def _dashboard_generation(db: Session) -> tuple:
     )).one())
 
 
-def _cached_dashboard_response(db: Session, name: str, build, seconds: int = _RESPONSE_CACHE_SECONDS) -> Response:
+def _cached_dashboard_response(db: Session, name: str, build, seconds: int = _RESPONSE_CACHE_SECONDS,
+                               stale_while_revalidate: bool = False) -> Response:
+    """Serve a dashboard payload built by ``build(session)``.
+
+    When data changed but an older payload exists, return it at once and let
+    one background thread rebuild with its own session, so no visitor waits
+    for a slow rebuild (the readiness audit takes 9-16 s against the remote
+    database). With nothing cached yet, one request builds and others wait
+    without holding a pooled connection.
+    """
     key = "%s|%s" % (name, _dashboard_generation(db))
     entry = _RESPONSE_CACHE.get(name)
     if entry and entry[0] == key and entry[1] > time.monotonic():
         body = entry[2]
     else:
         lock = _RESPONSE_BUILD_LOCKS.setdefault(name, threading.Lock())
-        if entry and not lock.acquire(blocking=False):
-            # Another request is rebuilding this response; serve the previous one
-            # instead of holding a second database connection for the same work.
+        if entry and stale_while_revalidate:
             body = entry[2]
-        else:
-            if not entry:
-                # Nothing to serve yet: wait for the builder without pinning a
-                # pooled connection, then reuse what it built.
-                db.close()
-                lock.acquire()
+            if lock.acquire(blocking=False):
+                threading.Thread(target=_rebuild_dashboard_response, args=(name, key, build, seconds, lock),
+                                 daemon=True).start()
+        elif entry and not lock.acquire(blocking=False):
+            # Another request is rebuilding; serve the previous payload rather
+            # than holding a second pooled connection for the same work.
+            body = entry[2]
+        elif entry:
             try:
+                body = _encode_dashboard(build(db))
+                _RESPONSE_CACHE[name] = (key, time.monotonic() + seconds, body)
+            finally:
+                lock.release()
+        else:
+            db.close()
+            with lock:
                 entry = _RESPONSE_CACHE.get(name)
                 if entry and entry[0] == key and entry[1] > time.monotonic():
                     body = entry[2]
                 else:
-                    body = json.dumps(build(), ensure_ascii=False, separators=(",", ":"), default=str).encode("utf-8")
+                    body = _encode_dashboard(build(db))
                     _RESPONSE_CACHE[name] = (key, time.monotonic() + seconds, body)
-            finally:
-                lock.release()
     return Response(content=body, media_type="application/json", headers={"Cache-Control": "no-cache"})
+
+
+def _encode_dashboard(payload: Any) -> bytes:
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str).encode("utf-8")
+
+
+def _rebuild_dashboard_response(name: str, key: str, build, seconds: int, lock: threading.Lock) -> None:
+    try:
+        with SessionLocal() as session:
+            _RESPONSE_CACHE[name] = (key, time.monotonic() + seconds, _encode_dashboard(build(session)))
+    except Exception:
+        logger.warning("Background rebuild of %s failed; the previous response stays cached", name, exc_info=True)
+    finally:
+        lock.release()
 
 
 @router.get("/datasets/status")
 def dataset_status(db: Session = Depends(get_db)) -> Response:
-    return _cached_dashboard_response(db, "datasets/status", lambda: _dataset_status(db))
+    return _cached_dashboard_response(db, "datasets/status", lambda session: _dataset_status(session))
 
 
 def _dataset_status(db: Session) -> Dict[str, Any]:
@@ -396,7 +432,7 @@ def _dataset_status(db: Session) -> Dict[str, Any]:
 
 @router.get("/weather/context")
 def weather_context(db: Session = Depends(get_db)) -> Response:
-    return _cached_dashboard_response(db, "weather/context", lambda: _weather_context(db))
+    return _cached_dashboard_response(db, "weather/context", lambda session: _weather_context(session))
 
 
 def _weather_context(db: Session) -> Dict[str, Any]:
@@ -707,7 +743,7 @@ LAYER_DEFINITIONS = [
 
 @router.get("/map/layers")
 def map_layers(db: Session = Depends(get_db)) -> Response:
-    return _cached_dashboard_response(db, "map/layers", lambda: _map_layers(db))
+    return _cached_dashboard_response(db, "map/layers", lambda session: _map_layers(session))
 
 
 def _map_layers(db: Session) -> Dict[str, Any]:
@@ -2086,8 +2122,15 @@ def assistant_query(request: AssistantQuery, db: Session = Depends(get_db)) -> D
                 )
                 grounding.append({"type": "priority_score", "id": score.id, "formula_version": score.formula_version})
     else:
+        # Rank only each district's newest score; older rows from earlier
+        # methods or inputs stay as history and must not win the ranking.
+        latest = select(PriorityScore.id, func.row_number().over(
+            partition_by=PriorityScore.area_id,
+            order_by=(PriorityScore.calculated_at.desc(), PriorityScore.id.desc()),
+        ).label("recency")).subquery()
         top = db.execute(
             select(PriorityScore, GeographicArea)
+            .join(latest, (latest.c.id == PriorityScore.id) & (latest.c.recency == 1))
             .join(GeographicArea, GeographicArea.id == PriorityScore.area_id)
             .order_by(desc(PriorityScore.score))
             .limit(1)
@@ -2455,7 +2498,8 @@ def system_data_readiness(db: Session = Depends(get_db)) -> Response:
     # The full readiness audit runs dozens of queries against a remote database
     # (about 9 s); any publication, check or job invalidates it immediately, and
     # approvals made by admins show up within two minutes.
-    return _cached_dashboard_response(db, "system/data-readiness", lambda: published_data_readiness(db), seconds=120)
+    return _cached_dashboard_response(db, "system/data-readiness", lambda session: published_data_readiness(session), seconds=120,
+                                     stale_while_revalidate=True)
 
 
 @router.post("/sources/bma-boundaries/browser-check")

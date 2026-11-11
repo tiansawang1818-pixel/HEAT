@@ -1158,18 +1158,27 @@ def test_pool_timeout_is_reported_as_busy_not_a_server_error(client, monkeypatch
 
 def test_concurrent_rebuild_serves_the_previous_response(db, monkeypatch):
     import json as _json
+    import threading as _threading
+    import time as _time
     from app.api import router as api_router
     api_router._RESPONSE_CACHE["unit/busy"] = ("old-key", 0, b'{"stale":true}')
-    lock = api_router._RESPONSE_BUILD_LOCKS.setdefault("unit/busy", __import__("threading").Lock())
+    lock = api_router._RESPONSE_BUILD_LOCKS.setdefault("unit/busy", _threading.Lock())
     lock.acquire()
     try:
-        response = api_router._cached_dashboard_response(db, "unit/busy", lambda: {"fresh": True})
+        response = api_router._cached_dashboard_response(db, "unit/busy", lambda session: {"fresh": True})
     finally:
         lock.release()
     assert _json.loads(response.body) == {"stale": True}
-    response = api_router._cached_dashboard_response(db, "unit/busy", lambda: {"fresh": True})
+    # Data changed and a payload exists: answer from it now, rebuild in the background.
+    response = api_router._cached_dashboard_response(db, "unit/busy", lambda session: {"fresh": True},
+                                                     stale_while_revalidate=True)
+    assert _json.loads(response.body) == {"stale": True}
+    for _ in range(50):
+        if not lock.locked() and api_router._RESPONSE_CACHE["unit/busy"][2] == b'{"fresh":true}':
+            break
+        _time.sleep(0.05)
+    response = api_router._cached_dashboard_response(db, "unit/busy", lambda session: {"never": True})
     assert _json.loads(response.body) == {"fresh": True}
-
 
 def test_empty_decision_run_explains_missing_site_evidence(client, monkeypatch):
     from app.api import router as api_router
@@ -1207,3 +1216,27 @@ def test_desk_review_approval_counts_for_planning_with_onsite_caveat(client, db)
     run = client.post("/api/optimization/run", json={"budget_thb": 100_000, "candidate_ids": ["desk-candidate"]}).json()
     assert run["selected"][0]["id"] == "desk-candidate" and run["desk_reviewed_selected"] == 1
     assert any("ยืนยันหน้างาน" in item for item in run["limitations"])
+
+
+def test_assistant_ranks_only_each_districts_latest_score(client, db):
+    from datetime import datetime, timedelta, timezone
+    from app.models.entities import GeographicArea, PriorityScore
+    shape = {"type": "MultiPolygon", "coordinates": [[[[100.5, 13.7], [100.51, 13.7], [100.51, 13.71], [100.5, 13.71], [100.5, 13.7]]]]}
+    db.add_all([GeographicArea(id="old-high", name_th="เขตคะแนนเก่าสูง", name_en="Old", geometry=shape),
+                GeographicArea(id="now-top", name_th="เขตสูงสุดตอนนี้", name_en="Now", geometry=shape)])
+    now = datetime.now(timezone.utc)
+    def score(area, value, age):
+        return PriorityScore(area_id=area, score=value, components={}, weights={}, missing_inputs=[], input_versions={},
+                             formula_version="test", calculated_at=now - timedelta(days=age))
+    db.add_all([score("old-high", 97.6, 5), score("old-high", 50.0, 0), score("now-top", 75.0, 0)])
+    db.commit()
+    answer = client.post("/api/assistant/query", json={"question": "เขตไหนร้อนที่สุด"}).json()
+    text = answer.get("answer") or answer.get("answer_th") or ""
+    assert "เขตสูงสุดตอนนี้" in text and "97.6" not in text
+
+
+def test_metrics_can_require_admin(client, monkeypatch):
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "metrics_require_admin", True)
+    assert client.get("/api/metrics").status_code == 401
+    assert client.get("/api/metrics", headers={"X-Admin-Key": "test-admin-key"}).status_code == 200

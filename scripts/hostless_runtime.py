@@ -62,7 +62,7 @@ def prepare_environment(source, scratch):
                DASHBOARD_ADMIN_TOKEN="", DATABASE_POOL_SIZE="2", DATABASE_MAX_OVERFLOW="0",
                DATABASE_POOL_TIMEOUT_SECONDS="10", HOSTNAME="0.0.0.0",
                API_INTERNAL_URL=f"http://127.0.0.1:{PRIVATE_API_PORT}", NEXT_PUBLIC_API_URL="",
-               RATE_LIMIT_ENABLED="true", XDG_CACHE_HOME=str(scratch / "cache"))
+               RATE_LIMIT_ENABLED="true", METRICS_REQUIRE_ADMIN="true", XDG_CACHE_HOME=str(scratch / "cache"))
     env["HOSTLESS_COMBINED_RUNTIME"] = "true"
     parsed = urlsplit(env.get("DATABASE_URL", ""))
     if parsed.scheme not in {"postgres", "postgresql", "postgresql+psycopg"} or not parsed.hostname or not parsed.path.strip("/"):

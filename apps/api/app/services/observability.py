@@ -73,7 +73,7 @@ def prometheus_metrics(db: Session) -> str:
     request_counts, duration_sums = request_telemetry.snapshot()
     heartbeat = None
     try:
-        with redis.Redis.from_url(settings.redis_url, socket_connect_timeout=.25, socket_timeout=.25) as client:
+        with redis.Redis.from_url(settings.redis_url, socket_connect_timeout=3, socket_timeout=3) as client:
             raw = client.get("heatshift:dispatcher:last_tick")
             heartbeat = float(raw) if raw else None
             if heartbeat is not None and not math.isfinite(heartbeat):
