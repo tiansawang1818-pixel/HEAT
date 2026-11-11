@@ -93,6 +93,15 @@ class BangkokBoundaryConnector(SourceConnector):
             response.raise_for_status()
             newer = self._catalog_asset(response.json(), self.snapshot_dataset, self.snapshot_resource,
                                         latest_asset_id=latest_asset_id, snapshot={})
+        except httpx.HTTPStatusError as exc:
+            # Cloudflare names the edge (cf-ray suffix) and the block type in the
+            # body; both explain an IP or region block without any secrets.
+            body = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", exc.response.text or ""))
+            match = re.search(r"(error code:? ?\d{4}|Access denied[^.]{0,80}|Sorry, you have been blocked[^.]{0,80})", body, re.I)
+            logger.warning("data.go.th boundary mirror check failed: HTTP %s via %s cf-ray=%s %s",
+                           exc.response.status_code, exc.response.headers.get("server", "?"),
+                           exc.response.headers.get("cf-ray", "?"), match.group(0) if match else body[:160])
+            return False
         except (httpx.HTTPError, ValueError, ConnectorError) as exc:
             logger.warning("data.go.th boundary mirror check failed: %s: %s", type(exc).__name__, str(exc)[:200])
             return False
