@@ -371,6 +371,10 @@ def _cached_dashboard_response(db: Session, name: str, build, seconds: int = _RE
     """
     key = "%s|%s" % (name, _dashboard_generation(db))
     entry = _RESPONSE_CACHE.get(name)
+    if stale_while_revalidate and not entry:
+        # A recycled API worker starts with an empty memory cache; reuse the
+        # last payload any worker stored in Redis instead of a cold rebuild.
+        entry = _shared_dashboard_entry(name, key, seconds)
     if entry and entry[0] == key and entry[1] > time.monotonic():
         body = entry[2]
     else:
@@ -399,6 +403,8 @@ def _cached_dashboard_response(db: Session, name: str, build, seconds: int = _RE
                 else:
                     body = _encode_dashboard(build(db))
                     _RESPONSE_CACHE[name] = (key, time.monotonic() + seconds, body)
+                    if stale_while_revalidate:
+                        _store_shared_dashboard(name, key, body)
     return Response(content=body, media_type="application/json", headers={"Cache-Control": "no-cache"})
 
 
@@ -406,10 +412,39 @@ def _encode_dashboard(payload: Any) -> bytes:
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str).encode("utf-8")
 
 
+_SHARED_CACHE_PREFIX = "heatshift:dashboard:"
+
+
+def _shared_dashboard_entry(name: str, key: str, seconds: int) -> Optional[tuple]:
+    try:
+        import redis
+        with redis.Redis.from_url(settings.redis_url, socket_connect_timeout=2, socket_timeout=2) as client:
+            stored_key, body = client.mget(_SHARED_CACHE_PREFIX + name + ":key", _SHARED_CACHE_PREFIX + name + ":body")
+    except Exception:
+        return None
+    if not stored_key or not body:
+        return None
+    stored_key = stored_key.decode("utf-8", "replace")
+    entry = (stored_key, time.monotonic() + seconds if stored_key == key else 0, body)
+    _RESPONSE_CACHE[name] = entry
+    return entry
+
+
+def _store_shared_dashboard(name: str, key: str, body: bytes) -> None:
+    try:
+        import redis
+        with redis.Redis.from_url(settings.redis_url, socket_connect_timeout=2, socket_timeout=2) as client:
+            client.mset({_SHARED_CACHE_PREFIX + name + ":key": key, _SHARED_CACHE_PREFIX + name + ":body": body})
+    except Exception:
+        pass  # The in-process cache still serves this worker.
+
+
 def _rebuild_dashboard_response(name: str, key: str, build, seconds: int, lock: threading.Lock) -> None:
     try:
         with SessionLocal() as session:
-            _RESPONSE_CACHE[name] = (key, time.monotonic() + seconds, _encode_dashboard(build(session)))
+            body = _encode_dashboard(build(session))
+            _RESPONSE_CACHE[name] = (key, time.monotonic() + seconds, body)
+            _store_shared_dashboard(name, key, body)
     except Exception:
         logger.warning("Background rebuild of %s failed; the previous response stays cached", name, exc_info=True)
     finally:
