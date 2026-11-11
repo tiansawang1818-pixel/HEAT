@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 import httpx
+import logging
 
 from app.core.config import settings
 from app.services.checkpoints import fingerprint
@@ -28,6 +29,9 @@ BANGKOK_EXTENT = {
     "coordinates": [[[100.327, 13.494], [100.938, 13.494], [100.938, 13.955], [100.327, 13.955], [100.327, 13.494]]],
 }
 
+
+
+logger = logging.getLogger(__name__)
 
 class BangkokBoundaryConnector(SourceConnector):
     source_name = "Bangkok district boundaries"
@@ -89,7 +93,8 @@ class BangkokBoundaryConnector(SourceConnector):
             response.raise_for_status()
             newer = self._catalog_asset(response.json(), self.snapshot_dataset, self.snapshot_resource,
                                         latest_asset_id=latest_asset_id, snapshot={})
-        except (httpx.HTTPError, ValueError, ConnectorError):
+        except (httpx.HTTPError, ValueError, ConnectorError) as exc:
+            logger.warning("data.go.th boundary mirror check failed: %s: %s", type(exc).__name__, str(exc)[:200])
             return False
         # _catalog_asset returns nothing only when the mirror's version matches.
         if newer:
