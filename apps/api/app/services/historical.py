@@ -178,7 +178,7 @@ def execute_backfill_step(db: Session, job_id: str, generation: int, connector=N
                     if job.status != "running":
                         return {"status": "cancelled"}
                     page = connector.discover_historical_page(config.start_date, config.end_date,
-                        checkpoint["cursor"], config.page_size, config.window_days)
+                        checkpoint["cursor"], config.page_size, config.window_days, config.months)
                     checkpoint.update(cursor=page.cursor, pending=[_serialize(asset) for asset in page.assets],
                                       catalogue_done=page.done, scanned=checkpoint["scanned"] + page.scanned_count)
                     _store(db, job_id, checkpoint, "running", "catalogue_staged")

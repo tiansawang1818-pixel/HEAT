@@ -15,6 +15,10 @@ class HistoricalPage:
     done: bool
 
 
+def _next_month(value: date) -> date:
+    return date(value.year + (value.month == 12), value.month % 12 + 1, 1)
+
+
 class EarthEngineConnector(SourceConnector):
     collection_id: str
     collection_ids: Optional[List[str]] = None
@@ -38,7 +42,7 @@ class EarthEngineConnector(SourceConnector):
 
     def discover_historical_page(
         self, start_date: date, end_date: date, cursor: Dict[str, Any],
-        page_size: int = 10, window_days: int = 16,
+        page_size: int = 10, window_days: int = 16, months: Optional[Sequence[int]] = None,
     ) -> HistoricalPage:
         """One bounded catalogue query; end_date is exclusive.
 
@@ -52,11 +56,19 @@ class EarthEngineConnector(SourceConnector):
         window_start = date.fromisoformat(cursor.get("window_start", start_date.isoformat()))
         collection_index = int(cursor.get("collection_index", 0))
         after_index = cursor.get("after_index")
-        if window_start >= end_date:
-            return HistoricalPage([], dict(cursor), 0, True)
         if window_start < start_date or not 0 <= collection_index < len(ids):
             raise ValueError("Historical cursor is outside its frozen range")
+        allowed = set(months) if months else None
+        if allowed and window_start.month not in allowed:
+            # Skip excluded months locally, without spending a catalogue query.
+            while window_start < end_date and window_start.month not in allowed:
+                window_start = _next_month(window_start)
+            collection_index, after_index = 0, None
+        if window_start >= end_date:
+            return HistoricalPage([], {"window_start": window_start.isoformat(), "collection_index": 0}, 0, True)
         window_end = min(end_date, window_start + timedelta(days=window_days))
+        if allowed and _next_month(window_start).month not in allowed:
+            window_end = min(window_end, _next_month(window_start))
         ee = self._earth_engine()
         collection_id = ids[collection_index]
         collection = ee.ImageCollection(collection_id).filterBounds(ee.Geometry.Rectangle(settings.bangkok_bbox))

@@ -42,7 +42,7 @@ class HistoricalFixture(LandsatConnector):
     def discover(self, latest_asset_id=None, checkpoint=None):
         return [asset("fixture-current", 2025)]
 
-    def discover_historical_page(self, start_date, end_date, cursor, page_size=10, window_days=16):
+    def discover_historical_page(self, start_date, end_date, cursor, page_size=10, window_days=16, months=None):
         self.catalogue_calls += 1
         if self.catalogue_error:
             raise self.catalogue_error
@@ -262,3 +262,34 @@ def test_real_connector_keyset_pages_keep_original_ids_and_visit_both_collection
         assert len(query_log) <= 4
     assert found == [key + "/" + index for key in connector.collection_ids for index in ("001", "003")]
     assert len(query_log) == 4 and all(size == 3 for _, _, size in query_log)
+
+
+def test_month_filter_scans_only_dry_season_windows(monkeypatch):
+    connector = LandsatConnector()
+    windows = []
+
+    class Collection:
+        def __init__(self, collection_id): pass
+        def filterBounds(self, value): return self
+        def filterDate(self, start, end):
+            windows.append((start, end))
+            return self
+        def filter(self, value): return self
+        def sort(self, key, ascending): return self
+        def limit(self, size): return self
+        def getInfo(self): return {"features": []}
+
+    ee = SimpleNamespace(ImageCollection=Collection, Geometry=SimpleNamespace(Rectangle=lambda value: value),
+                         Filter=SimpleNamespace(gt=lambda *v: ("gt", *v), lte=lambda *v: ("lte", *v)))
+    monkeypatch.setattr(connector, "_earth_engine", lambda: ee)
+    cursor, done = {}, False
+    while not done:
+        page = connector.discover_historical_page(date(2022, 3, 20), date(2023, 2, 1), cursor, window_days=16, months=[1, 2, 3, 4])
+        cursor, done = page.cursor, page.done
+    months = {int(start[5:7]) for start, _ in windows}
+    assert months <= {1, 2, 3, 4} and min(start for start, _ in windows) == "2022-03-20"
+    assert all(int(end[5:7]) in {1, 2, 3, 4, 5} for _, end in windows)
+    assert any(start.startswith("2023-01") for start, _ in windows)
+    with pytest.raises(ValueError):
+        from app.schemas.api import BackfillRequest
+        BackfillRequest(source="landsat", start_date=date(2022, 1, 1), end_date=date(2023, 1, 1), months=[13])

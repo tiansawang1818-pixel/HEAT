@@ -12,6 +12,8 @@ export interface BackfillDefinition extends BackfillBudget {
   end_date: string;
   page_size: number;
   window_days: number;
+  /** Calendar months to scan, e.g. [1, 2, 3, 4] for the dry season; all when omitted. */
+  months?: number[];
 }
 
 export interface BackfillJob {

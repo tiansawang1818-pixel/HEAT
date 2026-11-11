@@ -69,6 +69,7 @@ export function HistoricalIngestionPanel({ credential }: { credential: string })
         <label><span>ประมวลผลสูงสุด (ครั้ง รวมลองใหม่)</span><input type="number" required min={1} max={100} value={definition.max_assets} onChange={e => setDefinition(d => ({ ...d, max_assets: Number(e.target.value) }))} /></label>
         <label><span>ตรวจรายการสูงสุด (ครั้ง)</span><input type="number" required min={1} max={500} value={definition.max_catalogue_requests} onChange={e => setDefinition(d => ({ ...d, max_catalogue_requests: Number(e.target.value) }))} /></label>
         <label><span>เว้นแต่ละชุด (วินาที)</span><input type="number" required min={60} max={86400} value={definition.step_delay_seconds} onChange={e => setDefinition(d => ({ ...d, step_delay_seconds: Number(e.target.value) }))} /></label>
+        <label><span>ช่วงเดือน</span><select value={definition.months ? "dry" : "all"} onChange={e => setDefinition(d => ({ ...d, months: e.target.value === "dry" ? [1, 2, 3, 4] : undefined }))}><option value="all">ทุกเดือน</option><option value="dry">เฉพาะหน้าแล้ง ม.ค.–เม.ย. (เมฆน้อย)</option></select></label>
         <p>เริ่มจากเพดานต่ำและตรวจโควตาในบัญชีผู้ให้บริการก่อนเพิ่มงาน ภาพที่เมฆมากอาจไม่ผ่านเกณฑ์ และประวัติห้าปีไม่ได้รับรองว่าแบบจำลองอนาคตจะผ่านการทดสอบ</p>
         <Button type="submit" disabled={!allowed}>สร้างงานย้อนหลัง</Button>
       </form>

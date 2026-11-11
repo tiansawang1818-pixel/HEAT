@@ -83,9 +83,14 @@ class BackfillRequest(BackfillBudget):
     end_date: date
     page_size: int = Field(default=10, ge=1, le=25)
     window_days: int = Field(default=16, ge=1, le=32)
+    # Optional calendar months to scan, e.g. [1, 2, 3, 4] for Bangkok's dry
+    # season, so a multi-year range does not spend its budget on monsoon cloud.
+    months: Optional[List[int]] = Field(default=None, min_length=1, max_length=12)
 
     @model_validator(mode="after")
     def frozen_range(self) -> "BackfillRequest":
+        if self.months is not None and any(not 1 <= month <= 12 for month in self.months):
+            raise ValueError("Months must be between 1 and 12")
         if self.start_date >= self.end_date or (self.end_date - self.start_date).days > 3660:
             raise ValueError("Historical range must be positive and at most ten years")
         if self.end_date > datetime.now(timezone.utc).date():
