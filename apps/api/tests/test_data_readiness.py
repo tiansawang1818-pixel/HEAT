@@ -94,7 +94,7 @@ def test_missing_site_evidence_warns_without_blocking_published_data(db):
     db.commit()
     report = published_data_readiness(db)
     investment = next(c for c in report["checks"] if c["code"] == "investment.evidence")
-    assert investment["status"] == "warning" and "ประมาณการเบื้องต้น" in investment["detail_th"]
+    assert investment["status"] == "warning" and "คาดการณ์พอร์ต" in investment["detail_th"]
     assert report["data_ready"] is True and report["investment_decisions_ready"] is False
 
 

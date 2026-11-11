@@ -117,7 +117,7 @@ def published_data_readiness(db):
     add("investment.evidence", eligible > 0, "โครงการพร้อมหลักฐาน",
         f"มี {eligible} โครงการในพื้นที่นำร่องที่มีหลักฐานต้นทุนและความเหมาะสมที่ผู้ดูแลบันทึกแล้ว"
         + (f" (ตรวจจากระยะไกล {desk_reviewed} จุด ต้องยืนยันหน้างานก่อนก่อสร้าง)" if desk_reviewed else "")
-        + ("" if eligible else " ข้อมูลพร้อมใช้ แต่การตัดสินใจลงทุนจริงยังต้องมีหลักฐานรายจุด ระหว่างนี้ใช้ได้เฉพาะประมาณการเบื้องต้น"),
+        + ("" if eligible else " ข้อมูลพร้อมใช้ แต่การตัดสินใจลงทุนจริงยังต้องมีหลักฐานรายจุด ระหว่างนี้ใช้ได้เฉพาะการคาดการณ์พอร์ต"),
         warning=eligible == 0)
     latest_model = db.scalar(select(ForecastRun).order_by(desc(ForecastRun.created_at)).limit(1))
     current_model = bool(latest_model and latest_model.results.get("status") == "completed" and latest_model.metrics.get("validation_passed"))

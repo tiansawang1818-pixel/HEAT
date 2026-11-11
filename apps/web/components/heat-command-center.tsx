@@ -1326,20 +1326,21 @@ function OptimizerPanel(props: OptimizerPanelProps) {
       </div>
       {props.disabled && <div className="inline-warning">ต้องเชื่อม backend และข้อมูลที่ผ่าน validation ก่อนจึงจะรัน optimizer ได้</div>}
       {props.error && <div className="error-box">{props.error}</div>}
-      <Button className="w-full" variant="thermal" disabled={props.loading || props.disabled || !props.interventions.length} onClick={props.onRun}>
-        {props.loading ? <RefreshCw className="animate-spin" size={15} /> : <Sparkles size={15} />} {props.loading ? "กำลังแก้ปัญหา…" : "คำนวณพอร์ตที่เหมาะสม"}
+      <Button className="w-full" variant="thermal" disabled={props.loading || props.disabled || !props.interventions.length} onClick={props.onEstimate}>
+        {props.loading ? <RefreshCw className="animate-spin" size={15} /> : <Sparkles size={15} />} {props.loading ? "กำลังแก้ปัญหา…" : "คาดการณ์พอร์ตที่เหมาะสม"}
       </Button>
+      <p className="readiness-scope">คาดการณ์จากราคาต่อจุดที่อนุมัติแล้วกับทุกจุดคัดกรอง ยังไม่ใช่การตัดสินใจลงทุน</p>
       <Button className="mt-2 w-full" variant="outline" disabled={props.loading || props.disabled} onClick={props.onCompare}><FlaskConical size={15} /> เทียบ 3 ยุทธศาสตร์</Button>
-      <Button className="mt-2 w-full" variant="outline" disabled={props.loading || props.disabled || !props.interventions.length} onClick={props.onEstimate}><MapIcon size={15} /> ประมาณการเบื้องต้น (ยังไม่สำรวจ)</Button>
+      <Button className="mt-2 w-full" variant="outline" disabled={props.loading || props.disabled || !props.interventions.length} onClick={props.onRun}><ShieldCheck size={15} /> จัดสรรงบลงทุนจริง (เฉพาะจุดที่อนุมัติ)</Button>
       {props.result && (
         <>
           {props.result.mode === "planning_estimate" && (
-            <div className="inline-warning"><strong>ประมาณการเบื้องต้นเพื่อวางแผนเท่านั้น</strong> จุดเหล่านี้ยังไม่ผ่านการสำรวจพื้นที่ สิทธิ์ในที่ดิน หรือการตรวจแบบ ห้ามใช้ตัดสินใจลงทุน</div>
+            <div className="inline-warning"><strong>คาดการณ์พอร์ตเพื่อวางแผนเท่านั้น</strong> จุดเหล่านี้ยังไม่ผ่านการสำรวจพื้นที่ สิทธิ์ในที่ดิน หรือการตรวจแบบ ห้ามใช้ตัดสินใจลงทุน</div>
           )}
           {props.result.mode !== "planning_estimate" && !props.result.allocations.length && (
             <div className="inline-warning">
               {props.result.empty_reason || "ยังไม่มีจุดที่ผ่านหลักฐานรายจุดให้จัดสรรงบจริง"}
-              {" "}<button type="button" className="underline" disabled={props.loading} onClick={props.onEstimate}>ดูประมาณการเบื้องต้นแทน</button>
+              {" "}<button type="button" className="underline" disabled={props.loading} onClick={props.onEstimate}>ดูการคาดการณ์พอร์ตแทน</button>
             </div>
           )}
           <Card className="result-card">

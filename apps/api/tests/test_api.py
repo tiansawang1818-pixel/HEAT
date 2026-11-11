@@ -1177,7 +1177,7 @@ def test_empty_decision_run_explains_missing_site_evidence(client, monkeypatch):
     body = client.post("/api/optimization/run", json={"budget_thb": 1_000_000, "objective": "balanced",
                                                       "enabled_types": ["tree_planting"]}).json()
     assert body["selected"] == [] and body["eligible_candidates"] == 0
-    assert "ประมาณการเบื้องต้น" in body["empty_reason"]
+    assert "คาดการณ์พอร์ตที่เหมาะสม" in body["empty_reason"]
 
 
 def test_desk_review_approval_counts_for_planning_with_onsite_caveat(client, db):
