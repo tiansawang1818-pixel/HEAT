@@ -40,7 +40,8 @@ def test_hostless_assigned_port_8000_keeps_web_and_api_separate(tmp_path):
     from urllib.parse import urlsplit
     prepared = runtime.prepare_environment({**managed_environment(), "PORT": "8000"}, tmp_path)
     commands = runtime.runtime_commands(tmp_path)
-    api_port = commands["api"][0][-1]
+    api = commands["api"][0]
+    api_port = api[api.index("-b") + 1].rsplit(":", 1)[1]
     assert prepared["PORT"] == "8000"
     assert api_port != prepared["PORT"]
     assert urlsplit(prepared["API_INTERNAL_URL"]).port == int(api_port)
@@ -164,3 +165,11 @@ def test_beat_runs_embedded_in_the_dispatcher(tmp_path):
     assert "beat" not in commands
     dispatcher = commands["dispatcher"][0]
     assert "-B" in dispatcher and "--pool=solo" in dispatcher and "-Q" in dispatcher
+
+
+def test_api_worker_is_recycled_to_cap_memory_growth(tmp_path):
+    api = runtime.runtime_commands(tmp_path)["api"][0]
+    assert api[1:3] == ["-m", "gunicorn"] and "uvicorn.workers.UvicornWorker" in api
+    assert api[api.index("-w") + 1] == "1"
+    assert int(api[api.index("--max-requests") + 1]) > 0
+    assert api[api.index("-b") + 1] == "127.0.0.1:%d" % runtime.PRIVATE_API_PORT
