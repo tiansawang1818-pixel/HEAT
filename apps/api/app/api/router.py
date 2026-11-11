@@ -342,14 +342,14 @@ def _dashboard_generation(db: Session) -> tuple:
     )).one())
 
 
-def _cached_dashboard_response(db: Session, name: str, build) -> Response:
+def _cached_dashboard_response(db: Session, name: str, build, seconds: int = _RESPONSE_CACHE_SECONDS) -> Response:
     key = "%s|%s" % (name, _dashboard_generation(db))
     entry = _RESPONSE_CACHE.get(name)
     if entry and entry[0] == key and entry[1] > time.monotonic():
         body = entry[2]
     else:
         body = json.dumps(build(), ensure_ascii=False, separators=(",", ":"), default=str).encode("utf-8")
-        _RESPONSE_CACHE[name] = (key, time.monotonic() + _RESPONSE_CACHE_SECONDS, body)
+        _RESPONSE_CACHE[name] = (key, time.monotonic() + seconds, body)
     return Response(content=body, media_type="application/json", headers={"Cache-Control": "no-cache"})
 
 
@@ -1047,6 +1047,7 @@ def cost_assumption_create(
     )
     try:
         db.commit()
+        _RESPONSE_CACHE.pop("system/data-readiness", None)
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="Cost assumption version already exists")
@@ -1141,6 +1142,7 @@ def candidate_approve(
         )
     )
     db.commit()
+    _RESPONSE_CACHE.pop("system/data-readiness", None)
     db.refresh(candidate)
     return _serialize_candidate(candidate)
 
@@ -2372,6 +2374,8 @@ def system_readiness(
 
 
 @router.get("/system/data-readiness")
-def system_data_readiness(response: Response, db: Session = Depends(get_db)) -> Dict[str, Any]:
-    response.headers["Cache-Control"] = "no-store"
-    return published_data_readiness(db)
+def system_data_readiness(db: Session = Depends(get_db)) -> Response:
+    # The full readiness audit runs dozens of queries against a remote database
+    # (about 9 s); any publication, check or job invalidates it immediately, and
+    # approvals made by admins show up within two minutes.
+    return _cached_dashboard_response(db, "system/data-readiness", lambda: published_data_readiness(db), seconds=120)

@@ -13,7 +13,7 @@ from app.services.versions import INDICATOR_DATASETS, LAYER_DATASETS
 
 def test_empty_install_is_not_mistaken_for_real_data_readiness(client):
     response = client.get("/api/system/data-readiness")
-    assert response.status_code == 200 and response.headers["Cache-Control"] == "no-store"
+    assert response.status_code == 200 and response.headers["Cache-Control"] == "no-cache"
     report = response.json()
     assert report["data_ready"] is False
     assert report["coverage"]["complete_pilot_areas"] == 0
