@@ -203,3 +203,29 @@ def test_publication_error_rolls_back_boundaries_and_allows_retry(db, monkeypatc
     assert db.scalar(select(func.count()).select_from(GeographicArea)) == 0
     assert run_monitor(db, BangkokBoundaryConnector(), requested_by="test")["processed"] == 1
     assert db.get(DatasetVersion, version.id).status == "published"
+
+
+def test_mirror_confirms_published_boundaries_when_bma_catalog_is_unreachable(db, monkeypatch):
+    import copy, json
+    manifest = json.loads((settings.bma_boundary_snapshot_dir / "manifest.json").read_text())
+
+    def bootstrap(*args, **kwargs):
+        raise httpx.ConnectTimeout("origin unreachable")
+    monkeypatch.setattr(httpx, "get", bootstrap)
+    run_monitor(db, BangkokBoundaryConnector(), requested_by="test")
+
+    catalog = copy.deepcopy(manifest["catalog"])
+
+    def bma_down_mirror_up(url, **kwargs):
+        if "data.bangkok.go.th" in url:
+            raise httpx.ConnectError("connection reset by peer")
+        return httpx.Response(200, json=catalog, request=httpx.Request("GET", url))
+    monkeypatch.setattr(httpx, "get", bma_down_mirror_up)
+    result = run_monitor(db, BangkokBoundaryConnector(), requested_by="test")
+    assert result["status"] == "success" and result["processed"] == 0
+    assert db.scalar(select(SourceCheck).order_by(SourceCheck.checked_at.desc())).status == "success"
+
+    resource = next(r for r in catalog["result"]["resources"] if r["id"] == BangkokBoundaryConnector.snapshot_resource)
+    resource["last_modified"] = "2027-01-01T00:00:00"
+    with pytest.raises(ConnectorError, match="newer district boundary"):
+        run_monitor(db, BangkokBoundaryConnector(), requested_by="test")

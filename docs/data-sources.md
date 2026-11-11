@@ -45,6 +45,7 @@ For the combined Hostless runtime, set `GEE_PROJECT` and inject `GEE_SERVICE_ACC
 
 - ตรวจ CKAN metadata ของชุด `e537025b-1cf6-4c5b-8e46-c2e976f13283` และ resource ID ที่ตรึงไว้ก่อนดาวน์โหลด
 - ตรวจ CKAN API ของกรุงเทพมหานครทุก 7 วัน เมื่อยังไม่มีขอบเขตที่เผยแพร่และเชื่อมต่อแค็ตตาล็อกไม่ได้ ระบบสามารถตรวจและเผยแพร่สำเนาจาก [ชุดข้อมูล 50 เขตของกรุงเทพมหานคร](https://data.go.th/th/dataset/district) ที่ระบุ Creative Commons Attribution ดูข้อมูลกำกับใน `data/bootstrap/bma/manifest.json`
+- เมื่อมีขอบเขตที่เผยแพร่แล้วแต่แค็ตตาล็อก กทม. ไม่ตอบ ระบบตรวจแค็ตตาล็อก data.go.th ของทรัพยากรเดียวกันแทน ถ้า data.go.th ยังระบุเวอร์ชันที่เผยแพร่อยู่ การตรวจถือว่าสำเร็จ ถ้าระบุเวอร์ชันใหม่กว่า ระบบแจ้งให้ผู้ดูแลทบทวนสำเนาใหม่ก่อนเผยแพร่ ไม่ดาวน์โหลดเผยแพร่เอง
 - รับเฉพาะ HTTPS จาก `data.bangkok.go.th`, จำกัดขนาด ZIP/member และอ่าน archive ในหน่วยความจำโดยไม่ extract path ลง filesystem
 - ต้นทางระบุ format ว่า `shapfile`; เก็บค่านี้ตามจริง และรับ alias ของ shapefile เฉพาะ URL `.zip` บน host ที่อนุญาต จากนั้นตรวจ ZIP และสมาชิก `.shp/.shx/.dbf/.prj` จริงเหมือนเดิม
 - อ่าน Shapefile encoding CP874, แปลง `EPSG:32647` เป็น `EPSG:4326`, repair geometry และตรวจว่าครบ 50 district codes/ชื่อไม่ซ้ำ

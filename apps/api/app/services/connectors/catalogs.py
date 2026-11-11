@@ -43,6 +43,7 @@ class BangkokBoundaryConnector(SourceConnector):
 
     def __init__(self) -> None:
         self._used_snapshot = False
+        self._verified_via_mirror = False
 
     def monitor_warning(self) -> Optional[str]:
         if self._used_snapshot:
@@ -56,6 +57,7 @@ class BangkokBoundaryConnector(SourceConnector):
 
     def discover(self, latest_asset_id: Optional[str] = None, checkpoint: Optional[Dict[str, Any]] = None) -> List[SourceAsset]:
         self._used_snapshot = False
+        self._verified_via_mirror = False
         try:
             response = httpx.get(
                 settings.bma_boundary_catalog_url,
@@ -69,11 +71,31 @@ class BangkokBoundaryConnector(SourceConnector):
             # preserve the currently published geometry, regardless of version.
             if not latest_asset_id and (settings.bma_boundary_snapshot_dir / "manifest.json").is_file():
                 return self._discover_snapshot()
+            if latest_asset_id and self._mirror_confirms(latest_asset_id):
+                # The national open-data catalog republishes the same official
+                # resource and still lists the published version as current.
+                return []
             raise ConnectorError("BMA boundary catalog request failed: %s" % exc) from exc
         except (httpx.HTTPError, ValueError) as exc:
             raise ConnectorError("BMA boundary catalog request failed: %s" % exc) from exc
         return self._catalog_asset(body, settings.bma_boundary_dataset_id, settings.bma_boundary_resource_id,
                                    latest_asset_id=latest_asset_id)
+
+    def _mirror_confirms(self, latest_asset_id: str) -> bool:
+        """True when data.go.th lists the published boundary resource unchanged."""
+        try:
+            response = httpx.get(self.snapshot_catalog, params={"id": self.snapshot_dataset},
+                                 timeout=settings.source_request_timeout_seconds)
+            response.raise_for_status()
+            newer = self._catalog_asset(response.json(), self.snapshot_dataset, self.snapshot_resource,
+                                        latest_asset_id=latest_asset_id, snapshot={})
+        except (httpx.HTTPError, ValueError, ConnectorError):
+            return False
+        # _catalog_asset returns nothing only when the mirror's version matches.
+        if newer:
+            raise ConnectorError("data.go.th lists a newer district boundary resource; publish a reviewed snapshot")
+        self._verified_via_mirror = True
+        return True
 
     def _discover_snapshot(self) -> List[SourceAsset]:
         try:
