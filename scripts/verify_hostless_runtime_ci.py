@@ -53,7 +53,7 @@ def main():
         raise AssertionError("Combined runtime did not become healthy")
 
     def inspect_runtime():
-        code = "import json,os; p=json.load(open('/tmp/heatshift/processes.json')); assert len(p)==5; [os.kill(pid,0) for pid in p.values()]; print(json.dumps(p))"
+        code = "import json,os; p=json.load(open('/tmp/heatshift/processes.json')); assert len(p)==4 and set(p)=={'api','web','ingestion','dispatcher'}; [os.kill(pid,0) for pid in p.values()]; print(json.dumps(p))"
         return json.loads(run(["docker", "exec", name, "python", "-c", code], capture=True))
 
     try:
@@ -112,7 +112,7 @@ def main():
             samples.append({"memory_bytes": int(lines[0]), "cpu_usage_usec": int(fields["usage_usec"])})
             time.sleep(2)
         # Kill one real idle worker. Fail-fast must stop the whole application,
-        # and a provider-style restart must start all five processes again.
+        # and a provider-style restart must start all four processes again.
         run(["docker", "exec", name, "python", "-c", "import os,signal; os.kill(%d,signal.SIGKILL)" % processes["ingestion"]])
         exit_code = run(["docker", "wait", name], capture=True, timeout=45).strip()
         assert exit_code != "0"
