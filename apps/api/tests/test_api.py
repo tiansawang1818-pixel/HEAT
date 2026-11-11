@@ -1260,3 +1260,23 @@ def test_forecast_mode_compares_strategies_over_priced_screened_sites(client, db
     optimized = next(s for s in body["scenarios"] if s["strategy"] == "heatshift_optimized")
     assert len(optimized["allocations"]) == 5 and optimized["allocated_thb"] == 40_000
     assert all(item["estimated_cost_thb"] == 8000 for item in optimized["allocations"])
+
+
+def test_recycled_worker_reuses_the_shared_readiness_payload(db, monkeypatch):
+    import json as _json
+    import redis as _redis
+    from app.api import router as api_router
+    store = {}
+
+    class FakeRedis:
+        def __enter__(self): return self
+        def __exit__(self, *exc): return False
+        def mget(self, *keys): return [store.get(k) for k in keys]
+        def mset(self, mapping): store.update({k: (v.encode() if isinstance(v, str) else v) for k, v in mapping.items()})
+    monkeypatch.setattr(_redis.Redis, "from_url", classmethod(lambda cls, *a, **k: FakeRedis()))
+    calls = []
+    build = lambda session: calls.append(1) or {"audit": "ok"}
+    api_router._cached_dashboard_response(db, "unit/shared", build, stale_while_revalidate=True)
+    api_router._RESPONSE_CACHE.clear()  # a new worker process
+    response = api_router._cached_dashboard_response(db, "unit/shared", build, stale_while_revalidate=True)
+    assert _json.loads(response.body) == {"audit": "ok"} and len(calls) == 1
