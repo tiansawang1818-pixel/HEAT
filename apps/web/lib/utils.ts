@@ -7,6 +7,8 @@ export interface PublishedDataReadiness {
   data_ready: boolean;
   /** False until at least one site has recorded field evidence; data can be ready without it. */
   investment_decisions_ready?: boolean;
+  /** The deployment forecasts portfolios only and never funds real investments. */
+  forecast_only?: boolean;
   generated_at: string;
   checks: { code: string; status: "ready" | "warning" | "blocked"; label_th: string; detail_th: string }[];
   summary: { ready: number; warning: number; blocked: number };

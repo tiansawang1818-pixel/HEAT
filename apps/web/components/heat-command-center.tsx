@@ -1329,9 +1329,8 @@ function OptimizerPanel(props: OptimizerPanelProps) {
       <Button className="w-full" variant="thermal" disabled={props.loading || props.disabled || !props.interventions.length} onClick={props.onEstimate}>
         {props.loading ? <RefreshCw className="animate-spin" size={15} /> : <Sparkles size={15} />} {props.loading ? "กำลังแก้ปัญหา…" : "คาดการณ์พอร์ตที่เหมาะสม"}
       </Button>
-      <p className="readiness-scope">คาดการณ์จากราคาต่อจุดที่อนุมัติแล้วกับทุกจุดคัดกรอง ยังไม่ใช่การตัดสินใจลงทุน</p>
+      <p className="readiness-scope">คาดการณ์จากราคาต่อจุดที่อนุมัติแล้วกับทุกจุดคัดกรอง เพื่อวางแผน ไม่ใช่การตัดสินใจลงทุน</p>
       <Button className="mt-2 w-full" variant="outline" disabled={props.loading || props.disabled} onClick={props.onCompare}><FlaskConical size={15} /> เทียบ 3 ยุทธศาสตร์</Button>
-      <Button className="mt-2 w-full" variant="outline" disabled={props.loading || props.disabled || !props.interventions.length} onClick={props.onRun}><ShieldCheck size={15} /> จัดสรรงบลงทุนจริง (เฉพาะจุดที่อนุมัติ)</Button>
       {props.result && (
         <>
           {props.result.mode === "planning_estimate" && (

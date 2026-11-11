@@ -6,6 +6,7 @@ from app.models.entities import (
     AreaIndicator, CandidateIntervention, CostAssumption, DataSource, DatasetVersion, ForecastRun, GeographicArea,
     PopulationEstimate, PriorityScore, RasterAssetMetadata, SourceCheck, TemperatureObservation, ValidationReport,
 )
+from app.core.config import settings
 from app.services.data_readiness import published_data_readiness
 from app.services.forecast_workflow import forecast_inputs
 from app.services.versions import INDICATOR_DATASETS, LAYER_DATASETS
@@ -87,7 +88,8 @@ def test_new_history_marks_a_previously_validated_scenario_as_outdated(db):
     assert db.get(ForecastRun, run.id).training_versions == inputs
 
 
-def test_missing_site_evidence_warns_without_blocking_published_data(db):
+def test_missing_site_evidence_warns_without_blocking_published_data(db, monkeypatch):
+    monkeypatch.setattr(settings, "investment_decisions_enabled", True)
     _, candidate = _recorded_pilot(db)
     assert published_data_readiness(db)["investment_decisions_ready"] is True
     candidate.feasibility_constraints = {"site_survey_completed": False}
@@ -118,7 +120,8 @@ def test_unreachable_boundary_provider_warns_while_validated_boundaries_stay_pub
     assert published_data_readiness(db)["data_ready"] is False
 
 
-def test_desk_reviewed_site_counts_as_evidence_with_onsite_caveat(db):
+def test_desk_reviewed_site_counts_as_evidence_with_onsite_caveat(db, monkeypatch):
+    monkeypatch.setattr(settings, "investment_decisions_enabled", True)
     _, candidate = _recorded_pilot(db)
     candidate.feasibility_constraints = {"site_survey_completed": False, "remote_site_review": True,
                                          "land_control_verified": True, "design_accessibility_reviewed": True}
@@ -128,3 +131,13 @@ def test_desk_reviewed_site_counts_as_evidence_with_onsite_caveat(db):
     assert report["coverage"]["desk_reviewed_candidates"] == 1
     check = next(c for c in report["checks"] if c["code"] == "investment.evidence")
     assert check["status"] == "ready" and "ยืนยันหน้างาน" in check["detail_th"]
+
+
+def test_forecast_only_mode_does_not_require_site_evidence(db, monkeypatch):
+    monkeypatch.setattr(settings, "investment_decisions_enabled", False)
+    _, candidate = _recorded_pilot(db)
+    candidate.feasibility_constraints = {"site_survey_completed": False}
+    db.commit()
+    report = published_data_readiness(db)
+    check = next(c for c in report["checks"] if c["code"] == "investment.evidence")
+    assert report["forecast_only"] is True and check["status"] == "ready" and "คาดการณ์" in check["detail_th"]

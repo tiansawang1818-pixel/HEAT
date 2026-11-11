@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import desc, func, select
 
+from app.core.config import settings
 from app.models.entities import (
     AreaIndicator, CandidateIntervention, CostAssumption, DataSource, DatasetVersion,
     ForecastRun, GeographicArea, PopulationEstimate, PriorityScore, RasterAssetMetadata, SourceCheck, ValidationReport,
@@ -114,11 +115,17 @@ def published_data_readiness(db):
             desk_reviewed += feasibility.get("site_survey_completed") is not True
     # Recorded site evidence gates investment decisions, not published data:
     # without it the optimizer still funds nothing, so this stays a warning.
-    add("investment.evidence", eligible > 0, "โครงการพร้อมหลักฐาน",
-        f"มี {eligible} โครงการในพื้นที่นำร่องที่มีหลักฐานต้นทุนและความเหมาะสมที่ผู้ดูแลบันทึกแล้ว"
-        + (f" (ตรวจจากระยะไกล {desk_reviewed} จุด ต้องยืนยันหน้างานก่อนก่อสร้าง)" if desk_reviewed else "")
-        + ("" if eligible else " ข้อมูลพร้อมใช้ แต่การตัดสินใจลงทุนจริงยังต้องมีหลักฐานรายจุด ระหว่างนี้ใช้ได้เฉพาะการคาดการณ์พอร์ต"),
-        warning=eligible == 0)
+    forecast_only = not settings.investment_decisions_enabled
+    if forecast_only:
+        add("investment.evidence", True, "โหมดคาดการณ์",
+            "ระบบใช้คาดการณ์พอร์ตเพื่อวางแผนจากจุดคัดกรองและราคาที่อนุมัติ ไม่ได้ใช้ตัดสินใจลงทุนจริง จึงไม่ต้องมีหลักฐานรายจุด"
+            + (f" (มีจุดที่อนุมัติหลักฐานแล้ว {eligible} จุด)" if eligible else ""))
+    else:
+        add("investment.evidence", eligible > 0, "โครงการพร้อมหลักฐาน",
+            f"มี {eligible} โครงการในพื้นที่นำร่องที่มีหลักฐานต้นทุนและความเหมาะสมที่ผู้ดูแลบันทึกแล้ว"
+            + (f" (ตรวจจากระยะไกล {desk_reviewed} จุด ต้องยืนยันหน้างานก่อนก่อสร้าง)" if desk_reviewed else "")
+            + ("" if eligible else " ข้อมูลพร้อมใช้ แต่การตัดสินใจลงทุนจริงยังต้องมีหลักฐานรายจุด ระหว่างนี้ใช้ได้เฉพาะการคาดการณ์พอร์ต"),
+            warning=eligible == 0)
     latest_model = db.scalar(select(ForecastRun).order_by(desc(ForecastRun.created_at)).limit(1))
     current_model = bool(latest_model and latest_model.results.get("status") == "completed" and latest_model.metrics.get("validation_passed"))
     if current_model:
@@ -127,6 +134,7 @@ def published_data_readiness(db):
     return {
         "scope": "published_data_and_recorded_decision_evidence", "data_ready": all(c["status"] != "blocked" for c in checks),
         "investment_decisions_ready": eligible > 0,
+        "forecast_only": forecast_only,
         "generated_at": now.isoformat(), "checks": checks,
         "summary": {status: sum(c["status"] == status for c in checks) for status in ("ready", "warning", "blocked")},
         "coverage": {"official_areas": official_count, "complete_pilot_areas": len(complete_areas), "evidence_backed_candidates": eligible, "desk_reviewed_candidates": desk_reviewed},

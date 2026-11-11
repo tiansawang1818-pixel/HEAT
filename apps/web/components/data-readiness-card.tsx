@@ -28,7 +28,7 @@ export function DataReadinessCard() {
 
   return <section className={cn("readiness-panel", report?.data_ready ? "ready" : "blocked")} aria-label="ข้อมูลและหลักฐานก่อนเปิดใช้">
     <div className="readiness-heading">
-      <div><span>ข้อมูลและหลักฐานก่อนเปิดใช้</span><strong>{report ? report.data_ready ? (report.investment_decisions_ready === false ? "ข้อมูลพร้อมใช้ · การลงทุนจริงยังรอหลักฐานรายจุด" : "ผ่านการตรวจระเบียนข้อมูลนำร่อง") : "ยังมีข้อมูลหรือหลักฐานที่ต้องเติม" : "กำลังตรวจข้อมูลจริงและโครงการ"}</strong>
+      <div><span>ข้อมูลและหลักฐานก่อนเปิดใช้</span><strong>{report ? report.data_ready ? (report.forecast_only ? "ข้อมูลพร้อมใช้ · โหมดคาดการณ์" : report.investment_decisions_ready === false ? "ข้อมูลพร้อมใช้ · การลงทุนจริงยังรอหลักฐานรายจุด" : "ผ่านการตรวจระเบียนข้อมูลนำร่อง") : "ยังมีข้อมูลหรือหลักฐานที่ต้องเติม" : "กำลังตรวจข้อมูลจริงและโครงการ"}</strong>
         <small>{report ? `ตรวจ ${formatThaiDate(report.generated_at, true)}` : "อ่านผลจากข้อมูลที่เผยแพร่และรายงานตรวจสอบจริง"}</small></div>
       {report && <Badge>{report.summary.blocked} ต้องจัดการ · {report.summary.warning} ต้องทบทวน</Badge>}
     </div>
