@@ -130,3 +130,30 @@ def test_python_processes_limit_malloc_arenas_and_web_caps_its_heap():
     for name in ("api", "ingestion", "dispatcher", "beat"):
         assert runtime.PROCESS_ENV[name]["MALLOC_ARENA_MAX"] == "2"
     assert runtime.PROCESS_ENV["web"]["NODE_OPTIONS"] == "--max-old-space-size=256"
+
+
+def test_web_starts_only_after_the_api_listens(tmp_path, monkeypatch):
+    started_before_wait = []
+
+    def waited(port, child, stop, timeout_seconds=120):
+        started_before_wait.append((port, sorted(spawned)))
+        return True
+
+    spawned = []
+    real_popen = runtime.subprocess.Popen
+
+    def popen(command, **kwargs):
+        spawned.append(command[-1])
+        return real_popen(command, **kwargs)
+
+    monkeypatch.setattr(runtime, "wait_for_port", waited)
+    monkeypatch.setattr(runtime.subprocess, "Popen", popen)
+    stop = threading.Event()
+    commands = {
+        "api": ([sys.executable, "-c", "import time; time.sleep(30) # api"], tmp_path),
+        "web": ([sys.executable, "-c", "import time; time.sleep(30) # web"], tmp_path),
+    }
+    runtime.supervise(commands, dict(os.environ), stop, grace_seconds=1,
+                      on_started=lambda _: stop.set(), ready_ports={"api": 18000})
+    assert started_before_wait == [(18000, ["import time; time.sleep(30) # api"])]
+    assert len(spawned) == 2

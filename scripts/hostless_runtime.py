@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import socket
 import ssl
 import subprocess
 import sys
@@ -159,13 +160,29 @@ def stop_children(children, grace_seconds=25):
             child.wait(timeout=5)
 
 
-def supervise(commands, env, stop=None, *, grace_seconds=25, on_started=None):
+def wait_for_port(port, child, stop, timeout_seconds=120):
+    """Return once something listens on localhost:port, or the child or deadline ends."""
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline and child.poll() is None and not stop.is_set():
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=1):
+                return True
+        except OSError:
+            stop.wait(0.5)
+    return False
+
+
+def supervise(commands, env, stop=None, *, grace_seconds=25, on_started=None, ready_ports=None):
     stop = stop if stop is not None else threading.Event()
     children = {}
     try:
         for name, (command, cwd) in commands.items():
             children[name] = subprocess.Popen(command, cwd=cwd, env={**env, **PROCESS_ENV.get(name, {})},
                                               start_new_session=True)
+            # Start the public web server only after the private API listens, so
+            # health checks during a deploy are not proxied to a closed port.
+            if ready_ports and name in ready_ports:
+                wait_for_port(ready_ports[name], children[name], stop)
         if on_started:
             on_started(children)
         while not stop.wait(0.2):
@@ -201,7 +218,7 @@ def main():
             (scratch / "processes.json").write_text(json.dumps(state))
             print(json.dumps({"event": "runtime.started", "components": list(state)}), flush=True)
 
-        return supervise(runtime_commands(root), env, stop, on_started=announce)
+        return supervise(runtime_commands(root), env, stop, on_started=announce, ready_ports={"api": PRIVATE_API_PORT})
     except Exception as error:
         # Never print configuration, URI arguments, CA contents or exceptions.
         print(json.dumps({"event": "runtime.startup_failed", "phase": phase, "error_type": type(error).__name__}), flush=True)
