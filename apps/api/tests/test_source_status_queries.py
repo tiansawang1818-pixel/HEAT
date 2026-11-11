@@ -69,3 +69,10 @@ def test_bootstrap_syncs_code_owned_freshness_window(db):
     ensure_sources(db)
     db.refresh(source)
     assert source.stale_after_seconds == 365 * 86400
+
+
+def test_administrative_boundaries_use_a_ten_year_freshness_window(db):
+    from app.services.bootstrap import ensure_sources
+    ensure_sources(db)
+    source = db.scalar(select(DataSource).where(DataSource.dataset_id == "bma/bangkok-district-boundaries"))
+    assert source.stale_after_seconds == 3650 * 86400
