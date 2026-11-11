@@ -173,3 +173,20 @@ def test_api_worker_is_recycled_to_cap_memory_growth(tmp_path):
     assert api[api.index("-w") + 1] == "1"
     assert int(api[api.index("--max-requests") + 1]) > 0
     assert api[api.index("-b") + 1] == "127.0.0.1:%d" % runtime.PRIVATE_API_PORT
+
+
+def test_shutdown_stops_web_before_the_api_it_proxies(tmp_path):
+    stopped = []
+    marker = tmp_path / "order.txt"
+    script = ("import signal,sys,time,pathlib\n"
+              "def bye(*_):\n"
+              "    with open(%r,'a') as f: f.write(sys.argv[1]+'\\n')\n"
+              "    sys.exit(0)\n"
+              "signal.signal(signal.SIGTERM, bye)\n"
+              "time.sleep(30)\n") % str(marker)
+    import subprocess as sp
+    children = [sp.Popen([sys.executable, "-c", script, name], start_new_session=True) for name in ("api", "web")]
+    import time as t
+    t.sleep(1)
+    runtime.stop_children(children, grace_seconds=10)
+    assert marker.read_text().split() == ["web", "api"]

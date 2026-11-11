@@ -146,14 +146,25 @@ def runtime_commands(root):
     }
 
 
-def stop_children(children, grace_seconds=25):
+def stop_children(children, grace_seconds=25, step_seconds=8):
+    """Stop children in reverse start order, letting each exit before the next.
+
+    Start order is api, web, ingestion, dispatcher, so the public web server
+    stops before the private API it proxies to; signalling both at once let
+    the API close while the web was still forwarding a request ("socket hang
+    up"). Anything still running at the overall deadline is killed.
+    """
+    deadline = time.monotonic() + grace_seconds
     for child in reversed(children):
         if child.poll() is None:
             try:
                 os.killpg(child.pid, signal.SIGTERM)
             except ProcessLookupError:
+                continue
+            try:
+                child.wait(timeout=max(0.01, min(step_seconds, deadline - time.monotonic())))
+            except subprocess.TimeoutExpired:
                 pass
-    deadline = time.monotonic() + grace_seconds
     for child in children:
         try:
             child.wait(timeout=max(0.01, deadline - time.monotonic()))
