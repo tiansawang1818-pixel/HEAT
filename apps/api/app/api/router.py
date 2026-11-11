@@ -1719,13 +1719,43 @@ def optimization_run_report(run_id: str, db: Session = Depends(get_db)) -> HTMLR
 @router.post("/scenarios/compare")
 def scenarios_compare(request: ScenarioCompareRequest, db: Session = Depends(get_db)) -> Dict[str, Any]:
     versions = _current_versions(db)
-    candidate_rows = _candidate_rows(db, request.candidate_ids)
-    temperature_version = versions.get(LAYER_DATASETS["temperature"], {}).get("version_id")
-    temperatures = dict(db.execute(select(AreaIndicator.area_id, AreaIndicator.value).where(
-        AreaIndicator.dataset_version_id == temperature_version, AreaIndicator.indicator_key == "lst_c_mean",
-        AreaIndicator.area_id.in_([row.area_id for row in candidate_rows]),
-    )).all()) if temperature_version else {}
-    candidates = _to_optimizer_candidates(candidate_rows, temperatures)
+    forecast_only = not settings.investment_decisions_enabled
+    if forecast_only:
+        # Forecast mode compares strategies over every screened site of a
+        # priced type, at the approved per-site price, like the portfolio forecast.
+        assumptions = _approved_cost_assumptions(db)
+        query = select(CandidateIntervention).where(
+            CandidateIntervention.active.is_(True),
+            CandidateIntervention.intervention_type.in_(list(assumptions) or [""]),
+        )
+        if request.candidate_ids is not None:
+            query = query.where(CandidateIntervention.id.in_(request.candidate_ids))
+        candidate_rows = list(db.scalars(query).all())
+        site_costs = {row.id: math.ceil(float(assumptions[row.intervention_type].assumptions["unit_cost_thb"]))
+                      for row in candidate_rows}
+    else:
+        candidate_rows = _candidate_rows(db, request.candidate_ids)
+        site_costs = {row.id: math.ceil(row.estimated_cost_thb or 0) for row in candidate_rows}
+    # Each district's latest clear surface temperature, as the map and scores use.
+    temperature_pool = indicator_version_pool(db, LAYER_DATASETS["temperature"])
+    temperatures: Dict[str, float] = {}
+    for area_id, value in db.execute(select(AreaIndicator.area_id, AreaIndicator.value).where(
+        AreaIndicator.dataset_version_id.in_(temperature_pool or [""]), AreaIndicator.indicator_key == "lst_c_mean",
+        AreaIndicator.value.is_not(None), AreaIndicator.quality_status.notin_(EXCLUDED_QUALITY),
+        AreaIndicator.area_id.in_({row.area_id for row in candidate_rows}),
+    ).order_by(AreaIndicator.area_id, desc(AreaIndicator.observed_at))).all():
+        temperatures.setdefault(area_id, value)
+    candidates = [
+        Candidate(
+            id=row.id, cost_thb=site_costs[row.id], beneficiaries=float(row.estimated_beneficiaries or 0),
+            priority_score=float(row.priority_score or 0), benefit_score=float(row.benefit_score or 0),
+            intervention_type=row.intervention_type,
+            feasible=forecast_only or row.feasibility_status == "eligible",
+            surface_temperature_c=temperatures.get(row.area_id),
+            beneficiaries_available=row.estimated_beneficiaries is not None,
+        )
+        for row in candidate_rows
+    ]
     candidates_by_id = {candidate.id: candidate for candidate in candidate_rows}
     common_weights = _objective_weights("balanced", None)
     definitions = [
@@ -1749,7 +1779,7 @@ def scenarios_compare(request: ScenarioCompareRequest, db: Session = Depends(get
                     "name_th": candidate.name_th,
                     "intervention_type": candidate.intervention_type,
                     "geometry": to_geojson(candidate.geometry),
-                    "estimated_cost_thb": candidate.estimated_cost_thb,
+                    "estimated_cost_thb": site_costs[candidate.id],
                     "annual_maintenance_thb": candidate.annual_maintenance_thb,
                     "estimated_beneficiaries": candidate.estimated_beneficiaries,
                     "priority_score": candidate.priority_score,
@@ -1785,6 +1815,7 @@ def scenarios_compare(request: ScenarioCompareRequest, db: Session = Depends(get
         "input_fingerprint": fingerprint,
         "eligible_candidate_ids": [c.id for c in eligible_candidates(candidates, request.enabled_types)],
         "eligibility_consistent": True,
+        "mode": "planning_estimate" if forecast_only else "decision",
         "comparison_note_th": "ใช้โครงการที่มีสิทธิ์ เวอร์ชันข้อมูล และงบชุดเดียวกัน ร้อนที่สุดก่อน/ประชากรก่อนเรียงตามหลักฐานแล้วเลือกที่งบพอ ส่วน HEAT//SHIFT ใช้ OR-Tools คะแนน objective ประเมินทุกพอร์ตด้วยน้ำหนักสมดุลเดียวกัน หากหลักฐานจัดอันดับขาดจะแสดงข้อมูลไม่เพียงพอ",
     }
 

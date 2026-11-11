@@ -1240,3 +1240,23 @@ def test_metrics_can_require_admin(client, monkeypatch):
     monkeypatch.setattr(settings, "metrics_require_admin", True)
     assert client.get("/api/metrics").status_code == 401
     assert client.get("/api/metrics", headers={"X-Admin-Key": "test-admin-key"}).status_code == 200
+
+
+def test_forecast_mode_compares_strategies_over_priced_screened_sites(client, db, monkeypatch):
+    from app.core.config import settings
+    from app.models.entities import CandidateIntervention, CostAssumption, GeographicArea
+    monkeypatch.setattr(settings, "investment_decisions_enabled", False)
+    shape = {"type": "MultiPolygon", "coordinates": [[[[100.5, 13.7], [100.51, 13.7], [100.51, 13.71], [100.5, 13.71], [100.5, 13.7]]]]}
+    db.add(GeographicArea(id="compare-area", name_th="เขตเทียบ", name_en="Compare", geometry=shape))
+    db.add(CostAssumption(intervention_type="tree_planting", version="unit-1", evidence_url="https://example.org/price",
+                          assumptions={"status": "approved", "cost_basis": "fixed_per_site", "unit_cost_thb": 8000}))
+    for i in range(5):
+        db.add(CandidateIntervention(id="screened-%d" % i, area_id="compare-area", name_th="จุด %d" % i,
+                                     intervention_type="tree_planting", geometry={"type": "Point", "coordinates": [100.505, 13.705]},
+                                     priority_score=60 + i, feasibility_status="insufficient_evidence", evidence={}, uncertainty={}))
+    db.commit()
+    body = client.post("/api/scenarios/compare", json={"budget_thb": 100_000, "intervention_types": ["tree_planting"]}).json()
+    assert body["mode"] == "planning_estimate"
+    optimized = next(s for s in body["scenarios"] if s["strategy"] == "heatshift_optimized")
+    assert len(optimized["allocations"]) == 5 and optimized["allocated_thb"] == 40_000
+    assert all(item["estimated_cost_thb"] == 8000 for item in optimized["allocations"])

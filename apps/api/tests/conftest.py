@@ -3,6 +3,9 @@ import os
 os.environ["DATABASE_URL"] = "sqlite+pysqlite:///:memory:"
 os.environ["DEMO_MODE"] = "false"
 os.environ["ADMIN_API_KEY"] = "test-admin-key"
+# Decision-integrity tests exercise the evidence-gated investment mode; tests
+# for the forecast-only deployment switch it off explicitly.
+os.environ["INVESTMENT_DECISIONS_ENABLED"] = "true"
 
 import pytest
 from fastapi.testclient import TestClient
