@@ -10,6 +10,8 @@ FastAPI รันผ่าน gunicorn worker เดียว ที่ถูก
 
 นอกจากนับ request แล้ว worker ยังเช็กแรมตัวเองหลังทุก request ถ้าเกิน `API_RECYCLE_RSS_MB` (280 MB) จะส่ง SIGTERM ให้ตัวเองครั้งเดียว ให้ gunicorn เปลี่ยน worker แบบนุ่มนวล เพราะคำขอแผนที่และพื้นที่ไม่กี่ครั้งดันแรมขึ้นครั้งละ 30–50 MB จนเคยถึง 423 MB และทำให้คอนเทนเนอร์รีสตาร์ตซ้ำ
 
+worker ใช้คลาส `app.core.gunicorn_worker.ApiWorker` ที่จำกัดการปิดแบบนุ่มนวลไว้ 3 วินาที (`--graceful-timeout 10` เป็นเพดานสำรอง) เพราะ gunicorn จะเริ่ม worker ใหม่หลังตัวเก่าปิดเสร็จ และช่อง `/api/events/stream` (SSE) ของเบราว์เซอร์ไม่เคยปิดเอง ทำให้ทุกการรีไซเคิลเคยค้าง 30 วินาที คำขอช่วงนั้นได้ 500 ที่ proxy
+
 เมื่อโปรเซสใดหยุดแม้ exit code 0 ตัวดูแลหยุดกลุ่มที่เหลือและคืน nonzero เพื่อให้ platform restart ทั้งแอป ส่ง SIGTERM และรอ bounded grace ก่อน SIGKILL การทดสอบ child restart ไม่แทนการพิสูจน์ข้อมูลคิวครบหลัง abrupt crash
 
 ข้อมูล/ประวัติ/สถานะงานอยู่ใน PostGIS และ Redis ภายนอก ไม่เปิด PostgreSQL/Redis ใน app filesystem ไม่ต้องมี paid volume Beat schedule, cache และ CA file อยู่ใน scratch `/tmp/heatshift` ซึ่งสร้างใหม่ได้หลัง restart; cursor และ distributed locks อยู่ใน backends ตามเดิม

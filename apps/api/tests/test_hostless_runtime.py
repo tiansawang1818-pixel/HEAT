@@ -171,7 +171,7 @@ def test_beat_runs_embedded_in_the_dispatcher(tmp_path):
 
 def test_api_worker_is_recycled_to_cap_memory_growth(tmp_path):
     api = runtime.runtime_commands(tmp_path)["api"][0]
-    assert api[1:3] == ["-m", "gunicorn"] and "uvicorn.workers.UvicornWorker" in api
+    assert api[1:3] == ["-m", "gunicorn"] and "app.core.gunicorn_worker.ApiWorker" in api
     assert api[api.index("-w") + 1] == "1"
     assert int(api[api.index("--max-requests") + 1]) > 0
     assert api[api.index("-b") + 1] == "127.0.0.1:%d" % runtime.PRIVATE_API_PORT
@@ -211,3 +211,9 @@ def test_migrations_wait_for_the_previous_container_to_release_connections(tmp_p
         raise sp.CalledProcessError(1, args)
     with pytest.raises(sp.CalledProcessError):
         runtime.run_migrations(tmp_path, {}, threading.Event(), attempts=2, delay_seconds=0, run=always)
+
+
+def test_api_worker_bounds_shutdown_so_event_streams_cannot_stall_a_recycle():
+    from app.core.gunicorn_worker import ApiWorker
+    assert ApiWorker.CONFIG_KWARGS["timeout_graceful_shutdown"] <= 5
+    assert ApiWorker.CONFIG_KWARGS["loop"] == "auto"

@@ -137,9 +137,9 @@ def runtime_commands(root):
         # and pushed the container into its memory limit. Gunicorn keeps the
         # listening socket and replaces its single worker after about 400 requests
         # of requests; requests queue briefly instead of being refused.
-        "api": ([sys.executable, "-m", "gunicorn", "app.main:app", "-k", "uvicorn.workers.UvicornWorker",
+        "api": ([sys.executable, "-m", "gunicorn", "app.main:app", "-k", "app.core.gunicorn_worker.ApiWorker",
                  "-w", "1", "-b", "127.0.0.1:%d" % PRIVATE_API_PORT, "--max-requests", "250",
-                 "--max-requests-jitter", "50", "--timeout", "180", "--graceful-timeout", "30",
+                 "--max-requests-jitter", "50", "--timeout", "180", "--graceful-timeout", "10",
                  # Gunicorn writes to stderr, which the host reports as errors;
                  # its routine worker-recycle INFO lines are not.
                  "--log-level", "warning",
