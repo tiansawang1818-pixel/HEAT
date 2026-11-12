@@ -138,8 +138,8 @@ def runtime_commands(root):
         # listening socket and replaces its single worker after about 400 requests
         # of requests; requests queue briefly instead of being refused.
         "api": ([sys.executable, "-m", "gunicorn", "app.main:app", "-k", "uvicorn.workers.UvicornWorker",
-                 "-w", "1", "-b", "127.0.0.1:%d" % PRIVATE_API_PORT, "--max-requests", "400",
-                 "--max-requests-jitter", "100", "--timeout", "180", "--graceful-timeout", "30",
+                 "-w", "1", "-b", "127.0.0.1:%d" % PRIVATE_API_PORT, "--max-requests", "250",
+                 "--max-requests-jitter", "50", "--timeout", "180", "--graceful-timeout", "30",
                  # Gunicorn writes to stderr, which the host reports as errors;
                  # its routine worker-recycle INFO lines are not.
                  "--log-level", "warning",
