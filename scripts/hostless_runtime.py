@@ -143,9 +143,9 @@ def runtime_commands(root):
                  # Gunicorn writes to stderr, which the host reports as errors;
                  # its routine worker-recycle INFO lines are not.
                  "--log-level", "warning",
-                 # Recycled workers fork from the preloaded master instead of
-                 # importing the app again, so the gap is milliseconds.
-                 "--preload", "--keep-alive", "5"], api),
+                 # No --preload: a preloaded master keeps a second copy of the
+                 # app (~130 MB) that this 768 MiB container cannot spare.
+                 "--keep-alive", "5"], api),
         "web": (["node", "server.js"], root / "apps" / "web"),
         "ingestion": (celery + ingestion + ["-Q", "celery", "--hostname=ingestion@%h"], api),
         "dispatcher": (celery + dispatcher + ["-Q", "control", "--hostname=dispatcher@%h"], api),

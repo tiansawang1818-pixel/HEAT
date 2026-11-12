@@ -174,8 +174,8 @@ def test_api_worker_is_recycled_to_cap_memory_growth(tmp_path):
     assert api[api.index("-w") + 1] == "1"
     assert int(api[api.index("--max-requests") + 1]) > 0
     assert api[api.index("-b") + 1] == "127.0.0.1:%d" % runtime.PRIVATE_API_PORT
-    # A recycled worker forks from the preloaded app instead of re-importing it.
-    assert "--preload" in api
+    # Preloading would keep a second copy of the app in the master process.
+    assert "--preload" not in api
 
 
 def test_shutdown_stops_web_before_the_api_it_proxies(tmp_path):
