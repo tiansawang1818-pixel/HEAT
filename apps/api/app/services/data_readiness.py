@@ -101,20 +101,27 @@ def published_data_readiness(db):
     )))
     expected_rasters = {versions[dataset].id for dataset in {LAYER_DATASETS[k] for k in ("temperature", "ndvi", "vegetation")} if dataset in versions}
     add("map.raster_metadata", len(expected_rasters) == 3 and expected_rasters <= raster_ids, "ที่มาของ raster layers", f"พบ metadata WGS84 สำหรับ {len(raster_ids)} เวอร์ชัน; ยังต้องตรวจภาพ tiles กับพื้นที่จริง")
-    scores = db.scalars(select(PriorityScore).where(PriorityScore.area_id.in_(complete_areas)).order_by(desc(PriorityScore.calculated_at))).all()
-    current_score = False
-    seen = set()
-    for score in scores:
-        if score.area_id in seen:
-            continue
-        seen.add(score.area_id)
-        if all((score.input_versions.get(dataset) or {}).get("version_id") == versions[dataset].id for dataset in set(INDICATOR_DATASETS.values()) if dataset in versions):
-            current_score = True
+    # Only each area's newest score matters; loading every historical row
+    # with its JSON components cost the API worker ~80 MB per rebuild.
+    ranked = select(PriorityScore.area_id, PriorityScore.input_versions, func.row_number().over(
+        partition_by=PriorityScore.area_id, order_by=desc(PriorityScore.calculated_at)).label("rank"),
+    ).where(PriorityScore.area_id.in_(complete_areas)).subquery()
+    current_score = any(
+        all(((input_versions or {}).get(dataset) or {}).get("version_id") == versions[dataset].id
+            for dataset in set(INDICATOR_DATASETS.values()) if dataset in versions)
+        for input_versions in db.scalars(select(ranked.c.input_versions).where(ranked.c.rank == 1)))
     add("priority.current_inputs", current_score, "คะแนนอ้างอิงข้อมูลปัจจุบัน", "มีคะแนนของพื้นที่นำร่องที่อ้างอิงเวอร์ชันปัจจุบัน" if current_score else "ยังไม่มีคะแนนที่ตรวจย้อนกลับไปยังข้อมูลนำร่องชุดปัจจุบันได้")
     eligible = desk_reviewed = 0
-    for candidate in db.scalars(select(CandidateIntervention).where(CandidateIntervention.active.is_(True), CandidateIntervention.feasibility_status == "eligible")):
+    costs: dict = {}
+    for candidate in db.execute(select(
+        CandidateIntervention.area_id, CandidateIntervention.estimated_cost_thb, CandidateIntervention.intervention_type,
+        CandidateIntervention.evidence, CandidateIntervention.feasibility_constraints,
+    ).where(CandidateIntervention.active.is_(True), CandidateIntervention.feasibility_status == "eligible")):
         evidence = candidate.evidence or {}
-        cost = db.get(CostAssumption, evidence.get("cost_assumption_id")) if evidence.get("cost_assumption_id") else None
+        cost_id = evidence.get("cost_assumption_id")
+        if cost_id and cost_id not in costs:
+            costs[cost_id] = db.get(CostAssumption, cost_id)
+        cost = costs.get(cost_id) if cost_id else None
         feasibility = candidate.feasibility_constraints or {}
         if (candidate.area_id in complete_areas and candidate.estimated_cost_thb and candidate.estimated_cost_thb > 0
                 and cost and cost.assumptions.get("status") == "approved" and cost.evidence_url

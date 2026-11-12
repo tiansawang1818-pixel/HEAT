@@ -158,3 +158,23 @@ def test_one_boundary_confirmation_stands_for_a_year(db):
     db.commit()
     check = next(c for c in published_data_readiness(db)["checks"] if c["code"] == "check.bma-boundaries")
     assert check["status"] == "ready"
+
+
+def _check(report, code):
+    return next(c for c in report["checks"] if c["code"] == code)
+
+
+def test_only_each_areas_newest_score_decides_current_inputs(db):
+    from datetime import timedelta
+    versions, _ = _recorded_pilot(db)
+    current = db.scalar(select(PriorityScore).where(PriorityScore.area_id == "unit-pilot"))
+    current.calculated_at = datetime.now(timezone.utc) - timedelta(days=2)
+    stale = {dataset: {"version_id": "superseded"} for dataset in versions}
+    db.add(PriorityScore(area_id="unit-pilot", score=40, components={}, weights={}, missing_inputs=[], input_versions=stale,
+                         calculated_at=datetime.now(timezone.utc)))
+    db.commit()
+    assert _check(published_data_readiness(db), "priority.current_inputs")["status"] != "ready"
+
+    current.calculated_at = datetime.now(timezone.utc) + timedelta(minutes=1)
+    db.commit()
+    assert _check(published_data_readiness(db), "priority.current_inputs")["status"] == "ready"
