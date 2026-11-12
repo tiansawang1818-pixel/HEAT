@@ -1153,7 +1153,20 @@ function FutureOutlookOverlay({
       {error && <div className="error-box">{error}</div>}
       {result?.status === "insufficient_data" && (
         <div className="outlook-guardrail">
-          <ShieldCheck size={17} /><div><strong>ยังไม่เผยแพร่คำพยากรณ์</strong><p>{result.message_th}</p><small>เวลา {result.available_years ?? 0}/{result.required_years ?? 5} ปี · พื้นที่ผ่านเกณฑ์ {result.eligible_areas ?? 0}/{result.required_areas ?? 5}</small></div>
+          <ShieldCheck size={17} /><div><strong>ยังไม่เผยแพร่คำพยากรณ์</strong><p>{result.message_th}</p><small>เวลา {result.available_years ?? 0}/{result.required_years ?? 5} ปี · พื้นที่ผ่านเกณฑ์ {result.eligible_areas ?? 0}/{result.required_areas ?? 5}</small>
+            {typeof result.metrics?.temporal_model_mae_c === "number" && typeof result.metrics?.temporal_baseline_mae_c === "number" && (
+              <p className="readiness-scope">
+                ทดสอบทายปีล่าสุดที่ซ่อนไว้: แนวโน้มคลาดเคลื่อน {result.metrics.temporal_model_mae_c.toFixed(2)} °C
+                เทียบค่าเฉลี่ยตามฤดูกาล {result.metrics.temporal_baseline_mae_c.toFixed(2)} °C
+                {result.metrics.temporal_model_mae_c >= result.metrics.temporal_baseline_mae_c
+                  ? " — แนวโน้มยังทายได้ไม่ดีกว่าค่าเฉลี่ยธรรมดา จึงไม่แสดงตัวเลขคาดการณ์ที่เชื่อถือไม่ได้"
+                  : ""}
+                {typeof result.metrics.spatial_model_mae_c === "number" && typeof result.metrics.spatial_baseline_mae_c === "number"
+                  ? ` · ทายเขตที่ซ่อนไว้: ${result.metrics.spatial_model_mae_c.toFixed(2)} เทียบ ${result.metrics.spatial_baseline_mae_c.toFixed(2)} °C`
+                  : ""}
+              </p>
+            )}
+          </div>
         </div>
       )}
       {result?.status === "completed" && (
