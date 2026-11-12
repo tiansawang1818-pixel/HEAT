@@ -1,5 +1,8 @@
 # Hostless readiness issue — prepared, not sent
 
+> **Historical draft (8 November 2026).** Superseded: the app has since been deployed on Hostless and runs at <https://heatshift.hostless.app/>. Kept for the record only.
+
+
 This draft contains no passwords, connection URIs, account IDs or personal email.
 It has not been posted or sent to Hostless. Only the account owner, or someone
 explicitly authorized to contact support, should submit it through the signed-in

@@ -1,5 +1,14 @@
 # สถานะ HEAT//SHIFT ก่อน production release
 
+> **อัปเดต 12 พฤศจิกายน 2026:** เนื้อหาด้านล่างเป็นบันทึกหลักฐานของวันที่ 8 พฤศจิกายน เก็บไว้เป็นประวัติ สถานะบนเว็บจริงล่าสุดคือ
+>
+> - เว็บนำร่อง <https://heatshift.hostless.app/> ให้บริการต่อเนื่องบน Hostless + Aiven Free; ระหว่าง deploy รุ่นใหม่อาจตอบ 404 สั้น ๆ
+> - ขอบเขต 50 เขตเผยแพร่แล้ว (provider BMA / data.go.th, validation ผ่าน) ข้อความ "เผยแพร่ 0 เขต" และขั้นตอนข้อ 2 ด้านล่างจึงเสร็จแล้ว
+> - แหล่งข้อมูลทั้ง 7 แหล่ง (BMA, Landsat 8/9, Sentinel-2, Dynamic World, WorldPop, Open-Meteo, OpenStreetMap) เผยแพร่เวอร์ชันที่ผ่าน validation และติดตามอัตโนมัติ
+> - `/api/system/readiness` = `ready` (รวม OIDC/RBAC และ Earth Engine identity), `/api/system/data-readiness` มี `data_ready: true`, `forecast_only: true` แต่ `investment_decisions_ready: false` เพราะต้นทุน/หลักฐานหน้างานยังรออนุมัติ
+> - API รันด้วย gunicorn worker เดียวที่รีไซเคิลทุก ~400 requests; รายละเอียดอยู่ใน [hostless-runtime.md](hostless-runtime.md)
+
+
 ตรวจวันที่ 8 พฤศจิกายน 2026 (Asia/Bangkok); timestamps ใน JSON ใช้ UTC
 
 **แก้ Hostless rollout สำเร็จแล้ว** เว็บนำร่องที่ https://heatshift.hostless.app/ ใช้รุ่นใหม่ `f45573d2fe8977f32061635ca3cd7198215ad109` จริง หน้า Deployments แสดง `Deployed LIVE` สำหรับ deployment `6af080a1cb0b276633784aaf` ตรวจ HTTPS และคำขอพร้อมกัน 8 รายการขณะ SSE เปิดแล้วตอบ 200 ครบ แต่ยังไม่ผ่าน production release ด้านข้อมูล/SSO
