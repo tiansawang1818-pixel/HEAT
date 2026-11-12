@@ -7,7 +7,21 @@ HEAT//SHIFT เป็นระบบ map-first ที่แยกวันที
 
 > **ข้อสำคัญ:** fixture ที่มากับ repository มีไว้ทดสอบ pipeline เท่านั้น ทุก record ระบุ `fixture_kind: synthetic` และห้ามนำไปแสดงเป็นการสังเกตจริง การใช้งานข้อมูลจริงต้องตั้ง credential ของ provider และผ่าน validation ก่อน publish
 
-ขณะนี้เตรียมและทดสอบโค้ดผ่าน GitHub แต่ **ยังไม่ได้ deploy** ผู้ใช้กำหนดไม่เสียเงิน ไม่ใช้บัตร และไม่ใช้เครื่องตนเองเป็นเซิร์ฟเวอร์ ยังไม่มีปลายทางฟรีที่ยืนยันว่ารัน stack และงานเบื้องหลังต่อเนื่องได้ ดู [เงื่อนไข hosting](docs/hosting-constraints.md) ก่อนเริ่มบริการหรือเปิดทรัพยากรใด ๆ คำสั่ง local ด้านล่างมีไว้สำหรับผู้พัฒนาที่อนุญาตสภาพแวดล้อมนั้น ไม่ใช่การให้ agent ใช้เครื่องผู้ใช้แทน cloud
+## สถานะปัจจุบัน (12 พฤศจิกายน 2026)
+
+**เปิดใช้งานแบบนำร่องแล้วที่ <https://heatshift.hostless.app/>** บน Hostless free pool ร่วมกับ PostgreSQL/PostGIS ของ Aiven Free ไม่ผูกบัตรและไม่ใช้เครื่องของผู้ใช้เป็นเซิร์ฟเวอร์ รายละเอียด runtime อยู่ใน [docs/hostless-runtime.md](docs/hostless-runtime.md)
+
+| ส่วน | สถานะบนเว็บจริง |
+|---|---|
+| แหล่งข้อมูล | 7 แหล่งติดตามอัตโนมัติ: ขอบเขต 50 เขตของ กทม. (BMA / data.go.th), Landsat 8/9 LST, Sentinel-2 NDVI, Dynamic World, WorldPop, Open-Meteo และ OpenStreetMap ทุกเวอร์ชันผ่าน validation ก่อน publish |
+| แผนที่ | ชั้นดาวเทียมใช้ภาพล่าสุดที่ไม่มีเมฆของแต่ละเขต พร้อมแนวโน้มอุณหภูมิย้อนหลังและ SSE refresh เฉพาะชั้นที่เปลี่ยน |
+| การวางแผน | ค่าเริ่มต้นเป็น **forecast-only planner**: City Optimizer (OR-Tools เริ่มจาก greedy plan และไม่คืนผลที่แย่กว่า) เปรียบเทียบกลยุทธ์บน candidate ที่มีราคาอ้างอิง ผลพยากรณ์ที่ไม่ผ่าน holdout จะถูกระงับพร้อมแสดงค่า error |
+| ผู้ดูแล | Data Observatory ใช้ SSO (OIDC + PKCE) และตรวจ role ก่อนทุกงาน admin |
+| Runtime | 4 โปรเซสใน container เดียว (CPU 0.3 / RAM 768 MiB); API รันผ่าน gunicorn และรีไซเคิล worker ทุก ~400 requests เพื่อคุมแรม |
+
+`data_ready` ผ่านแล้ว แต่ `investment_decisions_ready` ยังไม่ผ่าน เพราะต้นทุนและหลักฐานหน้างานของแต่ละโครงการยังต้องให้ผู้รับผิดชอบอนุมัติ ผลบนเว็บจึงเป็นการวางแผนเบื้องต้น ไม่ใช่คำแนะนำจัดซื้อ ดูประวัติการ deploy และหลักฐานใน [docs/predeployment-status.md](docs/predeployment-status.md) และเงื่อนไขค่าใช้จ่ายใน [docs/hosting-constraints.md](docs/hosting-constraints.md)
+
+คำสั่ง local ด้านล่างมีไว้สำหรับผู้พัฒนาที่อนุญาตสภาพแวดล้อมนั้น ไม่ใช่การให้ agent ใช้เครื่องผู้ใช้แทน cloud
 
 ## เริ่มใช้งาน
 
@@ -141,7 +155,8 @@ WorldPop Global2 ใช้งานแบบ anonymous ได้ภายใต�
 
 ## เอกสาร
 
-- [สถานะก่อน deploy: งานที่เสร็จ ผล CI และสิ่งที่ยังต้องมีจริง](docs/predeployment-status.md)
+- [สถานะการ deploy: งานที่เสร็จ ผล CI และสิ่งที่ยังต้องมีจริง](docs/predeployment-status.md)
+- [Runtime บน Hostless: โปรเซส, secrets, health check และขีดจำกัดแรม](docs/hostless-runtime.md)
 - [สถาปัตยกรรมและ data lifecycle](docs/architecture.md)
 - [Data sources, freshness และ credentials](docs/data-sources.md)
 - [วิธีคำนวณและข้อจำกัดทางวิทยาศาสตร์](docs/scientific-methodology.md)
