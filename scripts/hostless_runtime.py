@@ -113,7 +113,7 @@ def prepare_environment(source, scratch):
 # fragmentation of the threaded API and Celery workers. Node's heap is capped
 # so the web server collects garbage before it grows into the shared budget.
 PROCESS_ENV = {
-    "api": {"DATABASE_POOL_SIZE": "4", "MALLOC_ARENA_MAX": "2"},
+    "api": {"DATABASE_POOL_SIZE": "4", "MALLOC_ARENA_MAX": "2", "API_RECYCLE_RSS_MB": "280"},
     "ingestion": {"MALLOC_ARENA_MAX": "2"},
     "dispatcher": {"MALLOC_ARENA_MAX": "2"},
     "web": {"NODE_OPTIONS": "--max-old-space-size=256"},

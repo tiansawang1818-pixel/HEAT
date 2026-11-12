@@ -124,6 +124,7 @@ def test_dispatcher_runs_in_process_and_ingestion_recycles_large_children(tmp_pa
 
 def test_api_gets_a_larger_pool_within_the_managed_connection_budget():
     assert runtime.PROCESS_ENV["api"]["DATABASE_POOL_SIZE"] == "4"
+    assert runtime.PROCESS_ENV["api"]["API_RECYCLE_RSS_MB"] == "280"
     # API 4 + ingestion child 2 + dispatcher 2 stays under the 10-connection role limit.
     assert 4 + 2 + 2 < 10
 

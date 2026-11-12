@@ -3,6 +3,7 @@ import logging
 import os
 from pathlib import Path
 import re
+import signal
 import time
 import uuid
 
@@ -117,6 +118,31 @@ app.add_middleware(
 )
 
 
+def _resident_bytes() -> int:
+    try:
+        with open("/proc/self/statm") as statm:
+            return int(statm.read().split()[1]) * os.sysconf("SC_PAGE_SIZE")
+    except (OSError, ValueError, IndexError):
+        return 0
+
+
+_recycle_requested = False
+
+
+def _recycle_if_oversized() -> None:
+    # Python keeps freed heap, so a few large map or area responses left the
+    # single API worker above 400 MB and the container hit its memory limit.
+    # Past the cap the worker asks Gunicorn for a graceful replacement: it
+    # finishes in-flight requests while the master keeps the socket open.
+    global _recycle_requested
+    limit_mb = int(os.environ.get("API_RECYCLE_RSS_MB") or 0)
+    if _recycle_requested or limit_mb <= 0 or _resident_bytes() <= limit_mb * 1024 * 1024:
+        return
+    _recycle_requested = True
+    http_logger.warning("api worker above memory cap; recycling", extra={"limit_mb": limit_mb})
+    os.kill(os.getpid(), signal.SIGTERM)
+
+
 @app.middleware("http")
 async def operational_headers_and_logging(request: Request, call_next):
     candidate = request.headers.get("X-Request-ID", "")
@@ -178,6 +204,7 @@ async def operational_headers_and_logging(request: Request, call_next):
             "duration_ms": round(duration * 1000, 2),
         },
     )
+    _recycle_if_oversized()
     return response
 
 

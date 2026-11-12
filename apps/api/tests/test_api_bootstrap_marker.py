@@ -33,3 +33,27 @@ def test_without_a_marker_every_start_bootstraps(monkeypatch):
     _run_lifespan()
     _run_lifespan()
     assert calls == ["sources", "seed", "sources", "seed"]
+
+
+def test_oversized_worker_asks_for_one_graceful_replacement(monkeypatch):
+    kills = []
+    monkeypatch.setattr(main, "_recycle_requested", False)
+    monkeypatch.setattr(main.os, "kill", lambda pid, sig: kills.append(sig))
+    monkeypatch.setenv("API_RECYCLE_RSS_MB", "280")
+    monkeypatch.setattr(main, "_resident_bytes", lambda: 200 * 1024 * 1024)
+    main._recycle_if_oversized()
+    assert kills == []
+    monkeypatch.setattr(main, "_resident_bytes", lambda: 300 * 1024 * 1024)
+    main._recycle_if_oversized()
+    main._recycle_if_oversized()
+    assert kills == [main.signal.SIGTERM]
+
+
+def test_no_cap_means_no_recycle(monkeypatch):
+    kills = []
+    monkeypatch.setattr(main, "_recycle_requested", False)
+    monkeypatch.setattr(main.os, "kill", lambda pid, sig: kills.append(sig))
+    monkeypatch.delenv("API_RECYCLE_RSS_MB", raising=False)
+    monkeypatch.setattr(main, "_resident_bytes", lambda: 900 * 1024 * 1024)
+    main._recycle_if_oversized()
+    assert kills == []

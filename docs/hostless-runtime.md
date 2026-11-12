@@ -8,6 +8,8 @@
 
 FastAPI รันผ่าน gunicorn worker เดียว ที่ถูกรีไซเคิลทุก 250±50 requests เพื่อคุมแรม (worker โตราว 0.5 MB ต่อ request; ที่ 400 ร่วมกับงาน ingestion เคยชนเพดาน 768 MiB) ไม่ใช้ `--preload` เพราะ master จะถือสำเนาแอปเพิ่มราว 130 MB worker ที่ถูกรีไซเคิลจะข้ามรอบ `create_all`/`ensure_sources`/`seed_demo_data` เมื่อมีไฟล์ `API_BOOTSTRAP_MARKER` (`/tmp/heatshift/api-bootstrapped`) แล้ว เพราะรอบนั้นวิ่งไปฐานข้อมูลระยะไกลหลายรอบ ระหว่างนั้นไม่มี worker รับคำขอ ทำให้ proxy ตัดที่ราว 30 วินาที
 
+นอกจากนับ request แล้ว worker ยังเช็กแรมตัวเองหลังทุก request ถ้าเกิน `API_RECYCLE_RSS_MB` (280 MB) จะส่ง SIGTERM ให้ตัวเองครั้งเดียว ให้ gunicorn เปลี่ยน worker แบบนุ่มนวล เพราะคำขอแผนที่และพื้นที่ไม่กี่ครั้งดันแรมขึ้นครั้งละ 30–50 MB จนเคยถึง 423 MB และทำให้คอนเทนเนอร์รีสตาร์ตซ้ำ
+
 เมื่อโปรเซสใดหยุดแม้ exit code 0 ตัวดูแลหยุดกลุ่มที่เหลือและคืน nonzero เพื่อให้ platform restart ทั้งแอป ส่ง SIGTERM และรอ bounded grace ก่อน SIGKILL การทดสอบ child restart ไม่แทนการพิสูจน์ข้อมูลคิวครบหลัง abrupt crash
 
 ข้อมูล/ประวัติ/สถานะงานอยู่ใน PostGIS และ Redis ภายนอก ไม่เปิด PostgreSQL/Redis ใน app filesystem ไม่ต้องมี paid volume Beat schedule, cache และ CA file อยู่ใน scratch `/tmp/heatshift` ซึ่งสร้างใหม่ได้หลัง restart; cursor และ distributed locks อยู่ใน backends ตามเดิม
