@@ -34,6 +34,7 @@ def test_managed_connections_require_provider_ca_and_override_weaker_uri(tmp_pat
     assert Path(query["sslrootcert"][0]).stat().st_mode & 0o777 == 0o600
     assert prepared["ADMIN_AUTH_MODE"] == "oidc" and prepared["ADMIN_API_KEY"] == ""
     assert prepared["DATABASE_MAX_OVERFLOW"] == "0"
+    assert prepared["API_BOOTSTRAP_MARKER"] == str(tmp_path / "api-bootstrapped")
 
 
 def test_hostless_assigned_port_8000_keeps_web_and_api_separate(tmp_path):
@@ -173,6 +174,8 @@ def test_api_worker_is_recycled_to_cap_memory_growth(tmp_path):
     assert api[api.index("-w") + 1] == "1"
     assert int(api[api.index("--max-requests") + 1]) > 0
     assert api[api.index("-b") + 1] == "127.0.0.1:%d" % runtime.PRIVATE_API_PORT
+    # A recycled worker forks from the preloaded app instead of re-importing it.
+    assert "--preload" in api
 
 
 def test_shutdown_stops_web_before_the_api_it_proxies(tmp_path):

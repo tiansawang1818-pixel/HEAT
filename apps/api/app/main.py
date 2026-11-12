@@ -1,5 +1,7 @@
 from contextlib import asynccontextmanager
 import logging
+import os
+from pathlib import Path
 import re
 import time
 import uuid
@@ -49,13 +51,20 @@ def _rate_limit_rule(method: str, path: str):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    Base.metadata.create_all(bind=engine)
-    db = SessionLocal()
-    try:
-        ensure_sources(db)
-        seed_demo_data(db)
-    finally:
-        db.close()
+    # A recycled worker in the same container skips the schema and seed pass:
+    # it costs many remote database round trips, and while it runs the single
+    # worker serves nothing, so requests time out at the proxy.
+    marker = os.environ.get("API_BOOTSTRAP_MARKER")
+    if not (marker and Path(marker).exists()):
+        Base.metadata.create_all(bind=engine)
+        db = SessionLocal()
+        try:
+            ensure_sources(db)
+            seed_demo_data(db)
+        finally:
+            db.close()
+        if marker:
+            Path(marker).touch()
     yield
 
 

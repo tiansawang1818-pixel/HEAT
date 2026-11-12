@@ -62,7 +62,8 @@ def prepare_environment(source, scratch):
                DASHBOARD_ADMIN_TOKEN="", DATABASE_POOL_SIZE="2", DATABASE_MAX_OVERFLOW="0",
                DATABASE_POOL_TIMEOUT_SECONDS="10", HOSTNAME="0.0.0.0",
                API_INTERNAL_URL=f"http://127.0.0.1:{PRIVATE_API_PORT}", NEXT_PUBLIC_API_URL="",
-               RATE_LIMIT_ENABLED="true", METRICS_REQUIRE_ADMIN="true", XDG_CACHE_HOME=str(scratch / "cache"))
+               RATE_LIMIT_ENABLED="true", METRICS_REQUIRE_ADMIN="true", XDG_CACHE_HOME=str(scratch / "cache"),
+               API_BOOTSTRAP_MARKER=str(scratch / "api-bootstrapped"))
     env["HOSTLESS_COMBINED_RUNTIME"] = "true"
     parsed = urlsplit(env.get("DATABASE_URL", ""))
     if parsed.scheme not in {"postgres", "postgresql", "postgresql+psycopg"} or not parsed.hostname or not parsed.path.strip("/"):
@@ -142,7 +143,9 @@ def runtime_commands(root):
                  # Gunicorn writes to stderr, which the host reports as errors;
                  # its routine worker-recycle INFO lines are not.
                  "--log-level", "warning",
-                 "--keep-alive", "5"], api),
+                 # Recycled workers fork from the preloaded master instead of
+                 # importing the app again, so the gap is milliseconds.
+                 "--preload", "--keep-alive", "5"], api),
         "web": (["node", "server.js"], root / "apps" / "web"),
         "ingestion": (celery + ingestion + ["-Q", "celery", "--hostname=ingestion@%h"], api),
         "dispatcher": (celery + dispatcher + ["-Q", "control", "--hostname=dispatcher@%h"], api),
