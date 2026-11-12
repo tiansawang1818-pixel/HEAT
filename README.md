@@ -3,6 +3,24 @@
 > **Don't Just Map the Heat. Change the City.**
 > แพลตฟอร์มข่าวกรองเชิงพื้นที่เพื่อการตัดสินใจลงทุนลดความร้อนในกรุงเทพฯ
 
+**[Live pilot →](https://heatshift.hostless.app/)** &nbsp;·&nbsp; English summary below, full documentation in Thai.
+
+<details open>
+<summary><b>In English</b></summary>
+
+HEAT//SHIFT is a map-first decision platform for planning urban heat mitigation in Bangkok. It ingests real satellite, weather, population, and OpenStreetMap data, validates every version before publishing it, and keeps each number traceable to the dataset version it came from.
+
+- **Stack:** Next.js + MapLibre, FastAPI, PostgreSQL/PostGIS, Redis/Celery, Google Earth Engine, OR-Tools
+- **Pipeline:** `STAGING → VALIDATION → PROCESSING → PUBLISHING → CACHE INVALIDATION → CLIENT NOTIFICATION`, with live map updates over SSE
+- **Data:** 7 automatically monitored sources: 50 Bangkok district boundaries, Landsat 8/9 LST, Sentinel-2 NDVI, Dynamic World, WorldPop, Open-Meteo, OpenStreetMap
+- **Planning:** a budget optimizer (OR-Tools) and scenario comparison; forecasts that fail holdout validation are withheld and their errors shown
+- **Security:** admin tools behind OIDC single sign-on with role checks; production refuses demo data and shared admin keys
+- **Hosting:** runs on a $0 budget (Hostless free pool + Aiven Free PostgreSQL): four supervised processes in 768 MiB RAM, with CI checks that enforce the same limits
+
+Results are a planning aid, not procurement advice: site costs and field evidence still need human approval before investment decisions.
+
+</details>
+
 HEAT//SHIFT เป็นระบบ map-first ที่แยกวันที่ผู้ให้บริการสังเกตข้อมูลออกจากวันที่ระบบตรวจสอบล่าสุดอย่างชัดเจน ระบบประกอบด้วย Next.js, FastAPI, PostgreSQL/PostGIS และ Redis/Celery พร้อม raster provenance ที่อ้าง Earth Engine asset จริง และ workflow แบบ `STAGING → VALIDATION → PROCESSING → PUBLISHING → CACHE INVALIDATION → CLIENT NOTIFICATION`
 
 > **ข้อสำคัญ:** fixture ที่มากับ repository มีไว้ทดสอบ pipeline เท่านั้น ทุก record ระบุ `fixture_kind: synthetic` และห้ามนำไปแสดงเป็นการสังเกตจริง การใช้งานข้อมูลจริงต้องตั้ง credential ของ provider และผ่าน validation ก่อน publish
