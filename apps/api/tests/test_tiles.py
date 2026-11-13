@@ -141,3 +141,19 @@ def test_shared_tile_key_changes_with_the_processing_recipe():
     spec = tiles.TILE_SPECS["ndvi"]
     other = tiles.TileSpec(**{**spec.__dict__, "connector": type("C", (), {"processing_recipe": {"cloud_mask": "other"}})})
     assert tiles._shared_key(spec, "k") != tiles._shared_key(other, "k")
+
+
+def test_unexpected_render_errors_report_the_layer_unavailable(db, monkeypatch):
+    from app.services import tiles
+    _published_raster(db)
+    monkeypatch.setattr(tiles, "_shared_get", lambda key: None)
+    service = EarthEngineTileService()
+
+    class Broken:
+        processing_recipe = {}
+        def _earth_engine(self):
+            raise RuntimeError("client library not initialized")
+
+    monkeypatch.setitem(tiles.TILE_SPECS, "temperature", tiles.TileSpec(**{**tiles.TILE_SPECS["temperature"].__dict__, "connector": Broken}))
+    result = service.describe(db, "temperature")
+    assert result["available"] is False and "not initialized" in result["reason"]

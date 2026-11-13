@@ -127,20 +127,20 @@ class EarthEngineTileService:
         return value
 
     def _render_url(self, spec: TileSpec, version: DatasetVersion, composite_assets: Optional[List[str]] = None) -> str:
-        connector = spec.connector()
-        ee = connector._earth_engine()
-        if composite_assets:
-            # Each scene covers part of Bangkok and loses pixels to cloud; mosaic
-            # the masked scenes so the newest clear pixel shows everywhere.
-            layers = [connector._analysis(ee, ee.Image(asset))["image"].select(spec.band) for asset in composite_assets]
-            raster = ee.ImageCollection(layers).mosaic()
-        else:
-            image = ee.Image(version.source_asset_id)
-            analysis = connector._analysis(ee, image)
-            raster = analysis["image"].select(spec.band)
-        west, south, east, north = settings.bangkok_bbox
-        raster = raster.clip(ee.Geometry.Rectangle([west, south, east, north]))
         try:
+            connector = spec.connector()
+            ee = connector._earth_engine()
+            if composite_assets:
+                # Each scene covers part of Bangkok and loses pixels to cloud; mosaic
+                # the masked scenes so the newest clear pixel shows everywhere.
+                layers = [connector._analysis(ee, ee.Image(asset))["image"].select(spec.band) for asset in composite_assets]
+                raster = ee.ImageCollection(layers).mosaic()
+            else:
+                image = ee.Image(version.source_asset_id)
+                analysis = connector._analysis(ee, image)
+                raster = analysis["image"].select(spec.band)
+            west, south, east, north = settings.bangkok_bbox
+            raster = raster.clip(ee.Geometry.Rectangle([west, south, east, north]))
             map_id = raster.getMapId(
                 {
                     "min": spec.minimum,
@@ -150,6 +150,8 @@ class EarthEngineTileService:
                 }
             )
             url = map_id["tile_fetcher"].url_format
+        except ConnectorError:
+            raise
         except Exception as exc:
             raise ConnectorError("Earth Engine tile descriptor generation failed: %s" % exc) from exc
         return self._validated_tile_url(str(url))

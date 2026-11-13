@@ -41,10 +41,36 @@ def test_earth_engine_uses_scoped_adc_when_credential_file_is_configured(monkeyp
         return credentials, "test-ee-project"
 
     initialized = []
+    from app.services.connectors import earth_engine
+    monkeypatch.setattr(earth_engine, "_ee_ready", False)
     monkeypatch.setattr(google.auth, "default", get_credentials)
     monkeypatch.setattr(ee, "Initialize", lambda **kwargs: initialized.append(kwargs))
     assert LandsatConnector()._earth_engine() is ee
     assert initialized == [{"credentials": credentials, "project": "test-ee-project"}]
+
+
+def test_earth_engine_initializes_once_across_concurrent_requests(monkeypatch):
+    import threading
+    import time
+    import ee
+    from app.services.connectors import earth_engine
+
+    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+    monkeypatch.setattr(settings, "gee_project", "test-ee-project")
+    monkeypatch.setattr(earth_engine, "_ee_ready", False)
+    calls = []
+
+    def initialize(**kwargs):
+        calls.append(kwargs)
+        time.sleep(0.05)
+
+    monkeypatch.setattr(ee, "Initialize", initialize)
+    threads = [threading.Thread(target=lambda: LandsatConnector()._earth_engine()) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert calls == [{"project": "test-ee-project"}]
 
 
 @pytest.mark.parametrize("missing_stats", [False, True])

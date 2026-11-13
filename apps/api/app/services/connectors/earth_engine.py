@@ -1,10 +1,17 @@
 import os
+import threading
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence
 
 from app.core.config import settings
 from app.services.connectors.base import AreaProcessingRecord, ConnectorError, SourceAsset, SourceConnector
+
+# ee.Initialize resets the client's global state. The map page requests
+# several tile descriptors at once, and one thread re-initialising while
+# another built an image raised outside the error handling (HTTP 500).
+_EE_INIT_LOCK = threading.Lock()
+_ee_ready = False
 
 
 @dataclass(frozen=True)
@@ -139,6 +146,20 @@ class EarthEngineConnector(SourceConnector):
         }
 
     def _earth_engine(self):
+        global _ee_ready
+        if _ee_ready:
+            import ee
+            return ee
+        with _EE_INIT_LOCK:
+            if _ee_ready:
+                import ee
+                return ee
+            ee = self._initialize_earth_engine()
+            _ee_ready = True
+            return ee
+
+    @staticmethod
+    def _initialize_earth_engine():
         try:
             import ee
 
