@@ -214,7 +214,60 @@ def wait_for_port(port, child, stop, timeout_seconds=120):
     return False
 
 
-def supervise(commands, env, stop=None, *, grace_seconds=25, on_started=None, ready_ports=None):
+CGROUP = Path("/sys/fs/cgroup")
+MEMORY_RELIEF_FRACTION = 0.88
+MEMORY_RELIEF_COOLDOWN_SECONDS = 30
+
+
+def anon_memory_fraction(cgroup=CGROUP):
+    """Share of the container memory limit held by anonymous memory, or None."""
+    try:
+        limit = (cgroup / "memory.max").read_text().strip()
+        if limit == "max":
+            return None
+        stat = dict(line.split() for line in (cgroup / "memory.stat").read_text().splitlines())
+        return int(stat["anon"]) / int(limit)
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+def child_pids(parent_pid, proc=Path("/proc")):
+    pids = []
+    for entry in proc.iterdir() if proc.is_dir() else []:
+        if not entry.name.isdigit():
+            continue
+        try:
+            fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
+        except (OSError, IndexError):
+            continue
+        if int(fields[1]) == parent_pid:
+            pids.append(int(entry.name))
+    return pids
+
+
+def relieve_memory(children, fraction, *, kill=os.kill, find_children=child_pids):
+    """Replace the API worker before the container reaches its memory limit.
+
+    A kernel OOM kill ends one process, the supervisor then stops the rest and
+    the host restarts the container (about a minute offline). The API worker
+    holds the most reclaimable heap; Gunicorn replaces it within seconds while
+    the listening socket stays open.
+    """
+    api = children.get("api")
+    if api is None or api.poll() is not None:
+        return []
+    workers = find_children(api.pid)
+    for pid in workers:
+        try:
+            kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    print(json.dumps({"event": "runtime.memory_relief", "anon_fraction": round(fraction, 3), "recycled_workers": len(workers)}), flush=True)
+    return workers
+
+
+def supervise(commands, env, stop=None, *, grace_seconds=25, on_started=None, ready_ports=None,
+              memory_fraction=anon_memory_fraction):
     stop = stop if stop is not None else threading.Event()
     children = {}
     try:
@@ -227,7 +280,15 @@ def supervise(commands, env, stop=None, *, grace_seconds=25, on_started=None, re
                 wait_for_port(ready_ports[name], children[name], stop)
         if on_started:
             on_started(children)
+        next_memory_check = relief_allowed_at = 0.0
         while not stop.wait(0.2):
+            now = time.monotonic()
+            if now >= next_memory_check:
+                next_memory_check = now + 2
+                fraction = memory_fraction()
+                if fraction is not None and fraction >= MEMORY_RELIEF_FRACTION and now >= relief_allowed_at:
+                    relieve_memory(children, fraction)
+                    relief_allowed_at = now + MEMORY_RELIEF_COOLDOWN_SECONDS
             for name, child in children.items():
                 if child.poll() is not None:
                     print(json.dumps({"event": "runtime.child_exited", "component": name, "exit_code": child.returncode}), flush=True)

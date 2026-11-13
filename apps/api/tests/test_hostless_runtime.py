@@ -217,3 +217,43 @@ def test_api_worker_bounds_shutdown_so_event_streams_cannot_stall_a_recycle():
     from app.core.gunicorn_worker import ApiWorker
     assert ApiWorker.CONFIG_KWARGS["timeout_graceful_shutdown"] <= 5
     assert ApiWorker.CONFIG_KWARGS["loop"] == "auto"
+
+
+def test_anon_memory_fraction_reads_the_cgroup(tmp_path):
+    (tmp_path / "memory.max").write_text("1000\n")
+    (tmp_path / "memory.stat").write_text("anon 900\nfile 50\n")
+    assert runtime.anon_memory_fraction(tmp_path) == 0.9
+    (tmp_path / "memory.max").write_text("max\n")
+    assert runtime.anon_memory_fraction(tmp_path) is None
+    assert runtime.anon_memory_fraction(tmp_path / "missing") is None
+
+
+def test_memory_relief_recycles_only_the_api_worker():
+    class Alive:
+        pid = 10
+        def poll(self):
+            return None
+    killed = []
+    workers = runtime.relieve_memory({"api": Alive(), "ingestion": Alive()}, 0.9,
+                                     kill=lambda pid, sig: killed.append((pid, sig)),
+                                     find_children=lambda pid: [pid + 1] if pid == 10 else [])
+    assert workers == [11] and killed == [(11, runtime.signal.SIGTERM)]
+
+
+def test_child_pids_reads_parent_from_proc(tmp_path):
+    for pid, ppid in ((5, 1), (6, 5), (7, 5)):
+        (tmp_path / str(pid)).mkdir()
+        (tmp_path / str(pid) / "stat").write_text("%d (python (x)) S %d 0 0" % (pid, ppid))
+    (tmp_path / "self").mkdir()
+    assert sorted(runtime.child_pids(5, tmp_path)) == [6, 7]
+
+
+def test_supervisor_triggers_memory_relief(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(runtime, "relieve_memory", lambda children, fraction: calls.append(fraction))
+    stop = threading.Event()
+    commands = {"api": ([sys.executable, "-c", "import time; time.sleep(30)"], tmp_path)}
+    timer = threading.Timer(1.0, stop.set)
+    timer.start()
+    runtime.supervise(commands, dict(os.environ), stop, grace_seconds=1, memory_fraction=lambda: 0.95)
+    assert calls == [0.95]
