@@ -586,8 +586,8 @@ def test_forecast_guardrail_returns_versioned_scenario_metadata(client):
     body = response.json()
     assert body["status"] == "insufficient_data"
     assert body["mode"] == "scenario_only"
-    assert body["model_version"] == "scenario-v2"
-    assert body["method"] == "guardrail-validation-v2"
+    assert body["model_version"] == "scenario-v3"
+    assert body["method"] == "guardrail-validation-v3"
     assert body["assumptions"]["spatial_validation"] == "deterministic 20 percent district holdout"
     assert body["metrics"]["validation_passed"] is False
 
@@ -635,7 +635,7 @@ def test_forecast_publishes_only_after_temporal_spatial_and_baseline_validation(
     body = response.json()
     assert body["status"] == "completed"
     assert body["mode"] == "trend_scenario"
-    assert body["method"] == "validated-seasonal-trend-scenario-v2"
+    assert body["method"] == "validated-climatology-trend-scenario-v3"
     assert body["metrics"]["validation_passed"] is True
     assert body["metrics"]["temporal_holdout_samples"] == 30
     assert body["metrics"]["spatial_holdout_samples"] == 21

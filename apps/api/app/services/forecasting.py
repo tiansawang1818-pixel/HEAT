@@ -8,76 +8,84 @@ from app.models.entities import TemperatureObservation
 
 
 SECONDS_PER_YEAR = 365.25 * 24 * 60 * 60
-
-
-@dataclass(frozen=True)
-class Sample:
-    x_year: float
-    seasonal_phase: float
-    value: float
-
-
-@dataclass(frozen=True)
-class HarmonicTrendModel:
-    origin_year: float
-    coefficients: Tuple[float, float, float, float]
-
-    def predict(self, sample: Sample) -> float:
-        angle = 2 * math.pi * sample.seasonal_phase
-        features = (1.0, sample.x_year - self.origin_year, math.sin(angle), math.cos(angle))
-        return sum(coefficient * feature for coefficient, feature in zip(self.coefficients, features))
+SHRINK_GRID = (0.0, 0.25, 0.5, 0.75, 1.0)
 
 
 def _decimal_year(value: datetime) -> float:
     return value.timestamp() / SECONDS_PER_YEAR
 
 
-def _phase(value: datetime) -> float:
-    return (value.timetuple().tm_yday - 1) / 365.25
+def _chronological_split(observations: Sequence[TemperatureObservation]):
+    test_size = max(2, math.ceil(len(observations) * 0.2))
+    return observations[:-test_size], observations[-test_size:]
 
 
-def _solve(matrix: List[List[float]], vector: List[float]) -> Optional[List[float]]:
-    size = len(vector)
-    augmented = [row[:] + [vector[index]] for index, row in enumerate(matrix)]
-    for column in range(size):
-        pivot = max(range(column, size), key=lambda index: abs(augmented[index][column]))
-        if abs(augmented[pivot][column]) < 1e-12:
+@dataclass(frozen=True)
+class ClimatologyTrendModel:
+    """Each area's month-of-year mean plus one city-wide warming rate.
+
+    The rate is the pooled within-(area, month) slope, so seasonal sampling
+    and district differences cannot masquerade as a trend. It is multiplied
+    by a shrink factor chosen on an inner chronological split of the training
+    data only; a factor of 0 reduces the model to the climatology baseline.
+    """
+    group_means: Dict[Tuple[str, Optional[int]], Tuple[float, float]]
+    slope_c_per_year: float
+
+    def predict(self, area_id: str, row: TemperatureObservation) -> Optional[float]:
+        key = (area_id, row.observed_at.month)
+        mean = self.group_means.get(key) or self.group_means.get((area_id, None))
+        if mean is None:
             return None
-        augmented[column], augmented[pivot] = augmented[pivot], augmented[column]
-        divisor = augmented[column][column]
-        augmented[column] = [value / divisor for value in augmented[column]]
-        for row_index in range(size):
-            if row_index == column:
-                continue
-            factor = augmented[row_index][column]
-            augmented[row_index] = [
-                current - factor * pivot_value
-                for current, pivot_value in zip(augmented[row_index], augmented[column])
-            ]
-    return [augmented[index][-1] for index in range(size)]
+        mean_year, mean_value = mean
+        return mean_value + self.slope_c_per_year * (_decimal_year(row.observed_at) - mean_year)
 
 
-def _fit(samples: Sequence[Sample]) -> Optional[HarmonicTrendModel]:
-    if len(samples) < 4:
-        return None
-    origin = min(sample.x_year for sample in samples)
-    features = []
-    for sample in samples:
-        angle = 2 * math.pi * sample.seasonal_phase
-        features.append((1.0, sample.x_year - origin, math.sin(angle), math.cos(angle)))
-    matrix = [[0.0 for _ in range(4)] for _ in range(4)]
-    vector = [0.0 for _ in range(4)]
-    for row, sample in zip(features, samples):
-        for left in range(4):
-            vector[left] += row[left] * sample.value
-            for right in range(4):
-                matrix[left][right] += row[left] * row[right]
-    for index in range(4):
-        matrix[index][index] += 1e-6
-    coefficients = _solve(matrix, vector)
-    if coefficients is None or not all(math.isfinite(value) for value in coefficients):
-        return None
-    return HarmonicTrendModel(origin, tuple(coefficients))
+def _fit_climatology_trend(training: Dict[str, Sequence[TemperatureObservation]], shrink: float) -> ClimatologyTrendModel:
+    means: Dict[Tuple[str, Optional[int]], Tuple[float, float]] = {}
+    numerator = denominator = 0.0
+    for area_id, observations in training.items():
+        if not observations:
+            continue
+        by_month: Dict[int, List[TemperatureObservation]] = {}
+        for row in observations:
+            by_month.setdefault(row.observed_at.month, []).append(row)
+        for month, rows in by_month.items():
+            mean_year = _mean(_decimal_year(row.observed_at) for row in rows)
+            mean_value = _mean(float(row.lst_c_mean) for row in rows)
+            means[(area_id, month)] = (mean_year, mean_value)
+            for row in rows:
+                offset = _decimal_year(row.observed_at) - mean_year
+                numerator += offset * (float(row.lst_c_mean) - mean_value)
+                denominator += offset * offset
+        means[(area_id, None)] = (
+            _mean(_decimal_year(row.observed_at) for row in observations),
+            _mean(float(row.lst_c_mean) for row in observations),
+        )
+    slope = numerator / denominator if denominator > 1e-9 else 0.0
+    return ClimatologyTrendModel(means, slope * shrink)
+
+
+def _mae(model: ClimatologyTrendModel, testing: Dict[str, Sequence[TemperatureObservation]]) -> List[float]:
+    errors = []
+    for area_id, rows in testing.items():
+        for row in rows:
+            predicted = model.predict(area_id, row)
+            if predicted is not None:
+                errors.append(abs(predicted - float(row.lst_c_mean)))
+    return errors
+
+
+def _select_shrink(history: Dict[str, Sequence[TemperatureObservation]]) -> float:
+    """Pick the shrink factor on an inner chronological split of ``history``."""
+    inner_training, inner_testing = {}, {}
+    for area_id, observations in history.items():
+        if len(observations) >= 4:
+            inner_training[area_id], inner_testing[area_id] = _chronological_split(observations)
+    if not inner_testing:
+        return 0.0
+    scores = {shrink: _mean(_mae(_fit_climatology_trend(inner_training, shrink), inner_testing)) for shrink in SHRINK_GRID}
+    return min(SHRINK_GRID, key=lambda shrink: (round(scores[shrink], 9), shrink))
 
 
 def _quantile(values: Sequence[float], probability: float) -> float:
@@ -91,10 +99,6 @@ def _quantile(values: Sequence[float], probability: float) -> float:
 def _mean(values: Iterable[float]) -> float:
     materialized = list(values)
     return sum(materialized) / len(materialized) if materialized else 0.0
-
-
-def _sample(row: TemperatureObservation) -> Sample:
-    return Sample(_decimal_year(row.observed_at), _phase(row.observed_at), float(row.lst_c_mean))
 
 
 def _eligible_groups(rows: Sequence[TemperatureObservation]) -> Dict[str, List[TemperatureObservation]]:
@@ -127,7 +131,8 @@ def evaluate_temperature_scenario(
         "spatial_validation": "deterministic 20 percent district holdout",
         "temporal_baseline": "month-of-year mean from training period",
         "spatial_baseline": "no-change from first valid district observation",
-        "model": "linear trend plus annual sine/cosine seasonality with fixed ridge stabilization",
+        "model": "per-area month-of-year mean plus a pooled city-wide within-month warming rate",
+        "trend_shrinkage": "factor from %s chosen on an inner chronological split of training data only" % (SHRINK_GRID,),
         "uncertainty": "empirical 90th percentile absolute holdout error scaled by square root of horizon",
         "exogenous_climate_or_land_use_scenario": "not included",
     }
@@ -145,51 +150,49 @@ def evaluate_temperature_scenario(
             "assumptions": assumptions,
         }
 
+    # Temporal holdout: the final 20 percent of each area, never seen while
+    # fitting or while choosing the shrink factor.
+    temporal_training, temporal_testing = {}, {}
+    for area_id, observations in groups.items():
+        temporal_training[area_id], temporal_testing[area_id] = _chronological_split(observations)
+    temporal_shrink = _select_shrink(temporal_training)
+    temporal_model = _fit_climatology_trend(temporal_training, temporal_shrink)
+    climatology = _fit_climatology_trend(temporal_training, 0.0)
     temporal_model_errors: List[float] = []
     temporal_baseline_errors: List[float] = []
-    for observations in groups.values():
-        test_size = max(2, math.ceil(len(observations) * 0.2))
-        training, testing = observations[:-test_size], observations[-test_size:]
-        model = _fit([_sample(row) for row in training])
-        if model is None:
-            continue
-        month_means = {
-            month: _mean(row.lst_c_mean for row in training if row.observed_at.month == month and row.lst_c_mean is not None)
-            for month in {row.observed_at.month for row in training}
-        }
-        fallback = _mean(row.lst_c_mean for row in training if row.lst_c_mean is not None)
-        for row in testing:
+    for area_id, rows in temporal_testing.items():
+        for row in rows:
+            predicted = temporal_model.predict(area_id, row)
+            baseline = climatology.predict(area_id, row)
+            if predicted is None or baseline is None:
+                continue
             actual = float(row.lst_c_mean)
-            temporal_model_errors.append(abs(model.predict(_sample(row)) - actual))
-            temporal_baseline_errors.append(abs(month_means.get(row.observed_at.month, fallback) - actual))
+            temporal_model_errors.append(abs(predicted - actual))
+            temporal_baseline_errors.append(abs(baseline - actual))
 
+    # Spatial holdout: districts the model never saw predict their change from
+    # their own first observation using city-wide seasonal offsets and rate.
     area_ids = sorted(groups)
     holdout_ids = {area_id for index, area_id in enumerate(area_ids) if index % 5 == 0}
-    spatial_training: List[Sample] = []
-    for area_id in area_ids:
-        if area_id in holdout_ids:
-            continue
-        first = groups[area_id][0]
-        baseline = float(first.lst_c_mean)
-        first_year = _decimal_year(first.observed_at)
-        spatial_training.extend(
-            Sample(_decimal_year(row.observed_at) - first_year, _phase(row.observed_at), float(row.lst_c_mean) - baseline)
-            for row in groups[area_id][1:]
-        )
-    spatial_model = _fit(spatial_training)
+    spatial_history = {area_id: groups[area_id] for area_id in area_ids if area_id not in holdout_ids}
+    spatial_model = _fit_climatology_trend(spatial_history, _select_shrink(spatial_history))
+    month_offsets: Dict[int, List[float]] = {}
+    for (area_id, month), (_, value) in spatial_model.group_means.items():
+        if month is not None:
+            month_offsets.setdefault(month, []).append(value - spatial_model.group_means[(area_id, None)][1])
+    city_offset = {month: _mean(values) for month, values in month_offsets.items()}
     spatial_model_errors: List[float] = []
     spatial_baseline_errors: List[float] = []
-    if spatial_model:
-        for area_id in holdout_ids:
-            observations = groups[area_id]
-            first = observations[0]
-            baseline = float(first.lst_c_mean)
-            first_year = _decimal_year(first.observed_at)
-            for row in observations[1:]:
-                actual_change = float(row.lst_c_mean) - baseline
-                sample = Sample(_decimal_year(row.observed_at) - first_year, _phase(row.observed_at), actual_change)
-                spatial_model_errors.append(abs(spatial_model.predict(sample) - actual_change))
-                spatial_baseline_errors.append(abs(actual_change))
+    for area_id in sorted(holdout_ids):
+        first, *later = groups[area_id]
+        for row in later:
+            actual_change = float(row.lst_c_mean) - float(first.lst_c_mean)
+            predicted_change = (
+                city_offset.get(row.observed_at.month, 0.0) - city_offset.get(first.observed_at.month, 0.0)
+                + spatial_model.slope_c_per_year * (_decimal_year(row.observed_at) - _decimal_year(first.observed_at))
+            )
+            spatial_model_errors.append(abs(predicted_change - actual_change))
+            spatial_baseline_errors.append(abs(actual_change))
 
     temporal_model_mae = _mean(temporal_model_errors)
     temporal_baseline_mae = _mean(temporal_baseline_errors)
@@ -228,6 +231,8 @@ def evaluate_temperature_scenario(
         "spatial_baseline_improvement_fraction": round(spatial_improvement, 4),
         "empirical_interval_90_c": round(interval_90, 4),
         "empirical_interval_coverage_fraction": round(coverage_90, 4),
+        "temporal_trend_shrink": temporal_shrink,
+        "temporal_trend_c_per_year": round(temporal_model.slope_c_per_year, 4),
     }
     if not validation_passed:
         return {
@@ -243,28 +248,21 @@ def evaluate_temperature_scenario(
             "assumptions": assumptions,
         }
 
-    projections = []
+    full_model = _fit_climatology_trend(groups, _select_shrink(groups))
+    metrics["projection_trend_c_per_year"] = round(full_model.slope_c_per_year, 4)
     uncertainty = interval_90 * math.sqrt(horizon_years)
-    for area_id, observations in groups.items():
-        model = _fit([_sample(row) for row in observations])
-        if model is None:
-            continue
-        last = observations[-1]
-        try:
-            future_date = last.observed_at.replace(year=last.observed_at.year + horizon_years)
-        except ValueError:
-            future_date = last.observed_at.replace(month=2, day=28, year=last.observed_at.year + horizon_years)
-        change = model.predict(Sample(_decimal_year(future_date), _phase(future_date), 0.0)) - model.predict(_sample(last))
-        projections.append(
-            {
-                "area_id": area_id,
-                "horizon_years": horizon_years,
-                "scenario_change_c": round(change, 2),
-                "uncertainty_c": round(uncertainty, 2),
-                "baseline_observed_at": last.observed_at.isoformat(),
-                "label": "validated_historical_trend_scenario_not_forecast",
-            }
-        )
+    change = full_model.slope_c_per_year * horizon_years
+    projections = [
+        {
+            "area_id": area_id,
+            "horizon_years": horizon_years,
+            "scenario_change_c": round(change, 2),
+            "uncertainty_c": round(uncertainty, 2),
+            "baseline_observed_at": observations[-1].observed_at.isoformat(),
+            "label": "validated_historical_trend_scenario_not_forecast",
+        }
+        for area_id, observations in groups.items()
+    ]
     return {
         "status": "completed",
         "mode": "trend_scenario",

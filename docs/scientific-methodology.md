@@ -76,10 +76,11 @@ Scenario A เรียงตาม LST ของ published snapshot ที่�
 
 ถ้า model ไม่ชนะ baseline หรือช่วง uncertainty กว้างจนตัดสินใจไม่ได้ UI ต้องบอกตรง ๆ และแสดง scenario assumptions แทน “prediction map”
 
-Implementation ปัจจุบันใช้ publication gate `scenario-v2` ดังนี้:
+Implementation ปัจจุบันใช้ publication gate `scenario-v3` ดังนี้:
 
 - รับเฉพาะ LST observation ที่ coverage ≥ 25%, อย่างน้อย 8 observation และอย่างน้อย 5 ปีต่อพื้นที่
-- แบบจำลองเป็น linear trend + annual sine/cosine seasonality; ไม่อ้างว่ารวม climate forcing, land-use policy หรือ causal intervention effect
+- แบบจำลองเป็นค่าเฉลี่ยรายเดือนของแต่ละพื้นที่ (ตัวเดียวกับ baseline) บวกอัตราอุ่นขึ้นรวมทั้งเมือง ที่คำนวณจากความชันภายในกลุ่ม (พื้นที่, เดือน) เพื่อไม่ให้ฤดูกาลหรือความต่างระหว่างเขตปนเป็นแนวโน้ม อัตรานี้คูณ shrink factor จาก {0, 0.25, 0.5, 0.75, 1} ที่เลือกด้วย inner chronological split ภายในข้อมูลฝึกเท่านั้น ชุด holdout ไม่ถูกใช้เลือกค่า ถ้าเลือกได้ 0 โมเดลจะเท่ากับ baseline และไม่ผ่าน gate เอง; ไม่อ้างว่ารวม climate forcing, land-use policy หรือ causal intervention effect
+- `scenario-v2` (linear trend + sine/cosine ต่อพื้นที่) ไม่ผ่าน temporal gate บนข้อมูล 13 ปี (MAE 2.56 เทียบ baseline 2.44 °C) เพราะเส้นแนวโน้มรายพื้นที่ไหลตามสัญญาณรบกวนของ LST รายภาพ
 - temporal holdout ใช้ 20% ท้ายตามลำดับเวลาของทุกพื้นที่ และเทียบ seasonal-naive month baseline
 - spatial holdout กัน district 20% แบบ deterministic ออกจากการ fit global change model และเทียบ no-change baseline
 - ต้องมี holdout อย่างน้อย 20 samples ทั้งสองแบบ และ model ต้องชนะ baseline ทั้ง temporal และ spatial

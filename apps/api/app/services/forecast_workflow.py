@@ -43,7 +43,7 @@ def compute_forecast(db, horizon_years, area_ids=None, *, frozen_inputs=None):
 
     def cached():
         return db.scalar(select(ForecastRun).where(
-            ForecastRun.horizon_years == horizon_years, ForecastRun.model_version == "scenario-v2",
+            ForecastRun.horizon_years == horizon_years, ForecastRun.model_version == "scenario-v3",
             ForecastRun.training_versions["history"]["fingerprint"].as_string() == fingerprint,
         ).order_by(desc(ForecastRun.created_at)).limit(1))
 
@@ -60,8 +60,8 @@ def compute_forecast(db, horizon_years, area_ids=None, *, frozen_inputs=None):
         result = evaluate_temperature_scenario(rows, horizon_years)
         run = ForecastRun(
             horizon_years=horizon_years,
-            method="validated-seasonal-trend-scenario-v2" if result["status"] == "completed" else "guardrail-validation-v2",
-            model_version="scenario-v2", training_versions=inputs,
+            method="validated-climatology-trend-scenario-v3" if result["status"] == "completed" else "guardrail-validation-v3",
+            model_version="scenario-v3", training_versions=inputs,
             assumptions=result["assumptions"], metrics=result["metrics"], results=result,
         )
         db.add(run); db.commit()
@@ -91,7 +91,7 @@ def update_scheduled_forecasts(db):
             job.checkpoint = {"input_fingerprint": inputs["history"]["fingerprint"], "run_ids": [r.id for r in results]}
             version = (db.scalar(select(func.max(PipelineEvent.layer_version)).where(PipelineEvent.layer_key == "future-risk")) or 0) + 1
             db.add(PipelineEvent(event_type="layer.published", layer_key="future-risk", layer_version=version, payload={
-                "affected_layers": ["future-risk"], "model_version": "scenario-v2", "forecast_run_ids": [r.id for r in results],
+                "affected_layers": ["future-risk"], "model_version": "scenario-v3", "forecast_run_ids": [r.id for r in results],
                 "projection_available": all(r.results["status"] == "completed" for r in results),
             }))
             db.commit()
