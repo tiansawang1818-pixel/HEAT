@@ -381,14 +381,18 @@ class SentinelConnector(EarthEngineConnector):
     lookback_days = 20
     analysis_scale_m = 10
     processing_recipe = {
-        "cloud_mask": "SCL excludes 3, 8, 9, 10, 11",
+        "cloud_mask": "SCL excludes 3, 9, 10",
         "reflectance_scale": 0.0001,
         "ndvi": "(B8 - B4) / (B8 + B4)",
     }
 
     def _analysis(self, ee: Any, image: Any) -> Dict[str, Any]:
         scl = image.select("SCL")
-        mask = scl.neq(3).And(scl.neq(8)).And(scl.neq(9)).And(scl.neq(10)).And(scl.neq(11))
+        # Sen2Cor labels bright Bangkok roofs and roads as medium-probability
+        # cloud (8) or snow (11): even an 8%-cloud scene left the inner
+        # districts with no pixels. Mask shadow (3), high-probability cloud (9)
+        # and cirrus (10) only.
+        mask = scl.neq(3).And(scl.neq(9)).And(scl.neq(10))
         ndvi = image.normalizedDifference(["B8", "B4"]).rename("ndvi").updateMask(mask)
         return {"image": ndvi, "mask": mask, "reducer": ee.Reducer.mean(), "outputs": ["ndvi"]}
 
