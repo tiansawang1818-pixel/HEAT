@@ -1,3 +1,6 @@
+import hashlib
+import json
+import logging
 import threading
 import time
 from dataclasses import dataclass
@@ -68,6 +71,37 @@ TILE_SPECS = {
         "Built probability",
     ),
 }
+
+
+logger = logging.getLogger(__name__)
+_SHARED_TILE_PREFIX = "heatshift:tiles:"
+
+
+def _shared_key(spec: "TileSpec", cache_key: str) -> str:
+    # The connector recipe is part of the key, so a changed cloud mask or
+    # band never reuses a tile URL rendered with the previous recipe.
+    recipe = json.dumps(getattr(spec.connector, "processing_recipe", {}), sort_keys=True)
+    return _SHARED_TILE_PREFIX + hashlib.sha256((cache_key + "|" + recipe).encode()).hexdigest()
+
+
+def _shared_get(key: str) -> Optional[str]:
+    try:
+        import redis
+        with redis.Redis.from_url(settings.redis_url, socket_connect_timeout=2, socket_timeout=2) as client:
+            value = client.get(key)
+    except Exception as exc:
+        logger.warning("Shared tile cache read failed: %s", type(exc).__name__)
+        return None
+    return value.decode("utf-8", "replace") if value else None
+
+
+def _shared_set(key: str, url: str, seconds: int) -> None:
+    try:
+        import redis
+        with redis.Redis.from_url(settings.redis_url, socket_connect_timeout=2, socket_timeout=2) as client:
+            client.set(key, url, ex=seconds)
+    except Exception as exc:
+        logger.warning("Shared tile cache write failed: %s", type(exc).__name__)
 
 
 # Enough recent scenes that cloud gaps in one are filled by another.
@@ -154,6 +188,21 @@ class EarthEngineTileService:
                 tile_url = cached[1]
             else:
                 tile_url = ""
+        ttl = max(60, settings.gee_tile_descriptor_ttl_seconds)
+        shared_key = _shared_key(spec, cache_key)
+        if not tile_url:
+            # The API worker is replaced every few minutes to bound its memory,
+            # which emptied this cache; a cold multi-scene composite takes
+            # longer than the proxy waits. Workers share rendered URLs in Redis.
+            shared = _shared_get(shared_key)
+            if shared:
+                try:
+                    tile_url = self._validated_tile_url(shared)
+                except ConnectorError:
+                    tile_url = ""
+                if tile_url:
+                    with self._lock:
+                        self._cache[cache_key] = (now + ttl, tile_url)
         if not tile_url:
             try:
                 tile_url = self._render_url(spec, version, composite) if composite else self._render_url(spec, version)
@@ -168,10 +217,8 @@ class EarthEngineTileService:
                 self._cache = {
                     key: value for key, value in self._cache.items() if value[0] > now
                 }
-                self._cache[cache_key] = (
-                    now + max(60, settings.gee_tile_descriptor_ttl_seconds),
-                    tile_url,
-                )
+                self._cache[cache_key] = (now + ttl, tile_url)
+            _shared_set(shared_key, tile_url, ttl)
         return {
             "available": True,
             "layer": layer,

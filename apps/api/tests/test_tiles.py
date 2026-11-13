@@ -114,3 +114,30 @@ def test_current_tiles_mosaic_recent_scenes_newest_on_top(db, monkeypatch):
     assert current["composite_scene_count"] == 2 and current["dataset_version_id"] == newer.id
     service.describe(db, "temperature", older.id)
     assert seen[-1] is None
+
+
+def test_a_replacement_worker_reuses_the_shared_tile_url(db, monkeypatch):
+    from app.services import tiles
+    _published_raster(db)
+    shared = {}
+    monkeypatch.setattr(tiles, "_shared_get", lambda key: shared.get(key))
+    monkeypatch.setattr(tiles, "_shared_set", lambda key, url, seconds: shared.__setitem__(key, url))
+    renders = []
+
+    def render(spec, selected_version):
+        renders.append(selected_version.id)
+        return "https://earthengine.googleapis.com/v1/maps/shared/tiles/{z}/{x}/{y}"
+
+    first_worker, second_worker = EarthEngineTileService(), EarthEngineTileService()
+    monkeypatch.setattr(first_worker, "_render_url", render)
+    monkeypatch.setattr(second_worker, "_render_url", render)
+    assert first_worker.describe(db, "temperature")["available"] is True
+    assert second_worker.describe(db, "temperature")["tiles"] == ["https://earthengine.googleapis.com/v1/maps/shared/tiles/{z}/{x}/{y}"]
+    assert len(renders) == 1
+
+
+def test_shared_tile_key_changes_with_the_processing_recipe():
+    from app.services import tiles
+    spec = tiles.TILE_SPECS["ndvi"]
+    other = tiles.TileSpec(**{**spec.__dict__, "connector": type("C", (), {"processing_recipe": {"cloud_mask": "other"}})})
+    assert tiles._shared_key(spec, "k") != tiles._shared_key(other, "k")
