@@ -8,7 +8,7 @@ from pathlib import Path
 COMPONENTS = ("api", "web", "ingestion", "dispatcher")
 
 
-def _tree_rss_bytes(pid, proc=Path("/proc")):
+def _tree_rss_bytes(pid, proc=Path("/proc"), field="VmRSS:"):
     """Resident memory of a process and its direct children (e.g. a Celery
     prefork child). Shared pages are counted once per process."""
     total = 0
@@ -20,7 +20,7 @@ def _tree_rss_bytes(pid, proc=Path("/proc")):
     for item in pids:
         try:
             for line in (proc / str(item) / "status").read_text().splitlines():
-                if line.startswith("VmRSS:"):
+                if line.startswith(field):
                     total += int(line.split()[1]) * 1024
         except (OSError, ValueError, IndexError):
             continue
@@ -56,6 +56,7 @@ def runtime_status(cgroup=Path("/sys/fs/cgroup"), process_file=Path("/tmp/heatsh
         components = {}
         component_rss = {}
         child_oom_adj = {}
+        component_anon = {}
         for name in COMPONENTS:
             pid = pids.get(name)
             try:
@@ -65,6 +66,9 @@ def runtime_status(cgroup=Path("/sys/fs/cgroup"), process_file=Path("/tmp/heatsh
                 components[name] = True
                 component_rss[name] = _tree_rss_bytes(pid)
                 child_oom_adj[name] = _child_oom_score_adj(pid)
+                # Private (anonymous) memory only: shared library and
+                # copy-on-write pages are not counted once per process.
+                component_anon[name] = _tree_rss_bytes(pid, field="RssAnon:")
             except (OSError, ValueError):
                 components[name] = False
         report.update(
@@ -75,6 +79,7 @@ def runtime_status(cgroup=Path("/sys/fs/cgroup"), process_file=Path("/tmp/heatsh
             oom_kill_count=int(events["oom_kill"]),
             component_rss_bytes=component_rss,
             child_oom_score_adj=child_oom_adj,
+            component_anon_bytes=component_anon,
         )
         try:
             # memory.current includes page cache the kernel reclaims under

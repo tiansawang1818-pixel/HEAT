@@ -60,3 +60,9 @@ def test_child_oom_score_adjustment_is_reported_per_component(tmp_path):
         (tmp_path / str(pid) / "oom_score_adj").write_text("%d\n" % score)
     assert runtime._child_oom_score_adj(10, tmp_path) == 1000
     assert runtime._child_oom_score_adj(99, tmp_path) is None
+
+
+def test_tree_anon_counts_only_private_memory(tmp_path):
+    (tmp_path / "10").mkdir()
+    (tmp_path / "10" / "status").write_text("Name:\tx\nVmRSS:\t1000 kB\nRssAnon:\t400 kB\n")
+    assert runtime._tree_rss_bytes(10, tmp_path, field="RssAnon:") == 400 * 1024
