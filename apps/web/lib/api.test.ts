@@ -363,7 +363,8 @@ describe("Thai presentation helpers", () => {
     expect(String(url)).toContain("layer_version=7");
     expect(String(url)).toContain("refresh_version=9");
     expect(init?.signal).toBe(controller.signal);
-    expect(init?.cache).toBe("force-cache");
+    // Never "force-cache": it replays a stored 500 after an outage ends.
+    expect(init?.cache).toBe("default");
   });
 
   it("searches the lightweight area directory without downloading boundaries", async () => {

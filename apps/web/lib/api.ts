@@ -227,7 +227,10 @@ export async function loadLayerFeatures(
   const version = layerVersion == null ? "" : `&layer_version=${encodeURIComponent(layerVersion)}`;
   const value = await request<FeatureCollection>(
     `/api/map/features?layer=${encodeURIComponent(layer)}&limit=500&bbox=${normalizedBbox}${version}&refresh_version=${refreshVersion}${datasetVersionId ? `&dataset_version_id=${encodeURIComponent(datasetVersionId)}` : ""}`,
-    { signal, cache: "force-cache" },
+    // "default" honours the API's 60 s max-age and ETag revalidation.
+    // "force-cache" reused any stored response regardless of age, including
+    // a 500 saved during an outage, so the map stayed broken afterwards.
+    { signal, cache: "default" },
   );
   return normalizeFeatureCollection(value, layer);
 }
