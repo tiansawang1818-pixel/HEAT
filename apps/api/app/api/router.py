@@ -70,7 +70,7 @@ from app.services.geometry import to_geojson
 from app.services.tiles import earth_engine_tiles
 from app.services.observability import prometheus_metrics
 from app.services.readiness import production_readiness
-from app.services.runtime_status import runtime_status
+from app.services.runtime_status import recent_runtime_events, runtime_status
 from app.services.forecast_workflow import ForecastInProgress, compute_forecast
 from app.services.data_readiness import published_data_readiness
 from app.services.locks import LockBackendUnavailable
@@ -889,11 +889,32 @@ _MAP_FEATURE_CACHE_SECONDS = 60
 _MAP_FEATURE_CACHE_ENTRIES = 16
 
 
+_MAP_FEATURE_SHARED_SECONDS = 600
+_MAP_FEATURE_SHARED_PREFIX = "heatshift:map-features:"
+
+
+def _map_feature_shared_key(key: str) -> str:
+    return _MAP_FEATURE_SHARED_PREFIX + hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
 def _cached_map_features(key: str) -> Optional[tuple]:
     entry = _MAP_FEATURE_CACHE.get(key)
     if entry and entry[0] > time.monotonic():
         return entry
-    return None
+    # A recycled API worker starts empty. The key carries the newest pipeline
+    # event, so a payload another worker stored for it is still current.
+    try:
+        import redis
+        with redis.Redis.from_url(settings.redis_url, socket_connect_timeout=2, socket_timeout=2) as client:
+            etag, body = client.hmget(_map_feature_shared_key(key), "etag", "body")
+    except Exception as exc:
+        logger.warning("Shared map feature cache read failed: %s", type(exc).__name__)
+        return None
+    if not etag or not body:
+        return None
+    entry = (time.monotonic() + _MAP_FEATURE_CACHE_SECONDS, body, etag.decode("utf-8"))
+    _MAP_FEATURE_CACHE[key] = entry
+    return entry
 
 
 def _store_map_features(key: str, body: bytes, etag: str) -> None:
@@ -903,6 +924,14 @@ def _store_map_features(key: str, body: bytes, etag: str) -> None:
     if len(_MAP_FEATURE_CACHE) >= _MAP_FEATURE_CACHE_ENTRIES:
         _MAP_FEATURE_CACHE.pop(min(_MAP_FEATURE_CACHE, key=lambda k: _MAP_FEATURE_CACHE[k][0]), None)
     _MAP_FEATURE_CACHE[key] = (now + _MAP_FEATURE_CACHE_SECONDS, body, etag)
+    try:
+        import redis
+        with redis.Redis.from_url(settings.redis_url, socket_connect_timeout=2, socket_timeout=2) as client:
+            shared = _map_feature_shared_key(key)
+            client.pipeline().hset(shared, mapping={"etag": etag, "body": body}).expire(shared, _MAP_FEATURE_SHARED_SECONDS).execute()
+    except Exception as exc:
+        # The in-process cache still serves this worker.
+        logger.warning("Shared map feature cache write failed: %s", type(exc).__name__)
 
 
 @router.get("/map/features")
@@ -2548,7 +2577,10 @@ async def events_stream(request: Request, after: Optional[str] = None, db: Sessi
 
 @router.get("/system/runtime")
 def system_runtime() -> Dict[str, Any]:
-    return runtime_status()
+    report = runtime_status()
+    if report.get("mode") == "combined":
+        report["recent_events"] = recent_runtime_events()
+    return report
 
 
 @router.get("/system/refresh-schedule")

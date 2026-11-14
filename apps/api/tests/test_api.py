@@ -1339,3 +1339,51 @@ def test_recycled_worker_reuses_a_current_shared_dashboard_payload(client, db, m
     second = api_router._cached_dashboard_response(db, "unit/shared", lambda session: builds.append(2) or {"n": 2})
     assert first.body == second.body == b'{"n":1}'
     assert builds == [1]
+
+
+def test_recycled_worker_reuses_shared_map_features(monkeypatch):
+    import sys
+    import types
+    from app.api import router as api_router
+    store = {}
+
+    class Pipeline:
+        def __init__(self):
+            self.ops = []
+
+        def hset(self, name, mapping):
+            self.ops.append((name, mapping))
+            return self
+
+        def expire(self, name, seconds):
+            assert seconds == api_router._MAP_FEATURE_SHARED_SECONDS
+            return self
+
+        def execute(self):
+            for name, mapping in self.ops:
+                store[name] = {k: v if isinstance(v, bytes) else str(v).encode() for k, v in mapping.items()}
+
+    class FakeRedis:
+        @classmethod
+        def from_url(cls, *_args, **_kwargs):
+            return cls()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def pipeline(self):
+            return Pipeline()
+
+        def hmget(self, name, *fields):
+            return [store.get(name, {}).get(field) for field in fields]
+
+    monkeypatch.setitem(sys.modules, "redis", types.SimpleNamespace(Redis=FakeRedis))
+    api_router._store_map_features("priority|gen-1", b'{"features":[]}', '"etag-1"')
+    api_router._MAP_FEATURE_CACHE.clear()  # a freshly recycled worker
+    _, body, etag = api_router._cached_map_features("priority|gen-1")
+    assert body == b'{"features":[]}' and etag == '"etag-1"'
+    api_router._MAP_FEATURE_CACHE.clear()
+    assert api_router._cached_map_features("priority|gen-2") is None

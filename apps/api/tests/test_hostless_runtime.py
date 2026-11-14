@@ -282,3 +282,49 @@ def test_supervisor_triggers_memory_relief(tmp_path, monkeypatch):
     timer.start()
     runtime.supervise(commands, dict(os.environ), stop, grace_seconds=1, memory_fraction=lambda: 0.95)
     assert calls == [0.95]
+
+
+def test_events_are_printed_and_kept_in_redis_without_failing(monkeypatch, capsys):
+    import types
+    stored = []
+
+    class Pipeline:
+        def lpush(self, key, value):
+            stored.append((key, json.loads(value)))
+            return self
+
+        def ltrim(self, key, start, end):
+            assert (key, start, end) == (runtime.EVENT_LOG_KEY, 0, runtime.EVENT_LOG_LENGTH - 1)
+            return self
+
+        def execute(self):
+            return None
+
+    class FakeRedis:
+        @classmethod
+        def from_url(cls, url, **_):
+            assert url == "rediss://cache.example:6380/0"
+            return cls()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def pipeline(self):
+            return Pipeline()
+
+    monkeypatch.setitem(sys.modules, "redis", types.SimpleNamespace(Redis=FakeRedis))
+    monkeypatch.setattr(runtime, "_event_log_url", "rediss://cache.example:6380/0")
+    runtime.emit({"event": "runtime.child_exited", "component": "api", "exit_code": -9})
+    assert '"runtime.child_exited"' in capsys.readouterr().out
+    assert stored[0][1]["component"] == "api" and stored[0][1]["at"].endswith("Z")
+
+    class Broken(FakeRedis):
+        @classmethod
+        def from_url(cls, url, **_):
+            raise ConnectionError("down")
+
+    monkeypatch.setitem(sys.modules, "redis", types.SimpleNamespace(Redis=Broken))
+    runtime.emit({"event": "runtime.boot", "phase": "configuration"})  # must not raise

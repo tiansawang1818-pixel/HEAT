@@ -66,3 +66,34 @@ def test_tree_anon_counts_only_private_memory(tmp_path):
     (tmp_path / "10").mkdir()
     (tmp_path / "10" / "status").write_text("Name:\tx\nVmRSS:\t1000 kB\nRssAnon:\t400 kB\n")
     assert runtime._tree_rss_bytes(10, tmp_path, field="RssAnon:") == 400 * 1024
+
+
+def test_recent_runtime_events_read_newest_first_and_survive_redis_outage(monkeypatch):
+    import sys
+    import types
+
+    class FakeRedis:
+        @classmethod
+        def from_url(cls, *_args, **_kwargs):
+            return cls()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def lrange(self, key, start, end):
+            assert key == runtime.RUNTIME_EVENT_KEY and (start, end) == (0, 1)
+            return [b'{"event":"runtime.stopped","signal":"SIGTERM"}', b"not json"]
+
+    monkeypatch.setitem(sys.modules, "redis", types.SimpleNamespace(Redis=FakeRedis))
+    assert runtime.recent_runtime_events(limit=2) == [{"event": "runtime.stopped", "signal": "SIGTERM"}]
+
+    class Broken(FakeRedis):
+        @classmethod
+        def from_url(cls, *_args, **_kwargs):
+            raise ConnectionError("down")
+
+    monkeypatch.setitem(sys.modules, "redis", types.SimpleNamespace(Redis=Broken))
+    assert runtime.recent_runtime_events() is None

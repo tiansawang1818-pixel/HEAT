@@ -42,6 +42,27 @@ def _child_oom_score_adj(pid, proc=Path("/proc")):
     return max(scores) if scores else None
 
 
+RUNTIME_EVENT_KEY = "heatshift:runtime:events"
+
+
+def recent_runtime_events(limit=20):
+    """Supervisor events kept in Redis across container restarts."""
+    try:
+        import redis
+        from app.core.config import settings
+        with redis.Redis.from_url(settings.redis_url, socket_connect_timeout=2, socket_timeout=2) as client:
+            raw = client.lrange(RUNTIME_EVENT_KEY, 0, limit - 1)
+    except Exception:
+        return None
+    events = []
+    for item in raw:
+        try:
+            events.append(json.loads(item))
+        except ValueError:
+            continue
+    return events
+
+
 def runtime_status(cgroup=Path("/sys/fs/cgroup"), process_file=Path("/tmp/heatshift/processes.json")):
     report = {"checked_at": datetime.now(timezone.utc).isoformat(), "scope": "runtime_resource_observation",
               "mode": "combined" if os.environ.get("HOSTLESS_COMBINED_RUNTIME") == "true" else "separate_services",

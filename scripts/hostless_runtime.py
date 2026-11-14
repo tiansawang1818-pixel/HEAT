@@ -197,8 +197,33 @@ def run_migrations(root, env, stop, attempts=12, delay_seconds=15, run=subproces
         except subprocess.CalledProcessError:
             if attempt == attempts or stop.is_set():
                 raise
-            print(json.dumps({"event": "runtime.migrations_retry", "attempt": attempt}), flush=True)
+            emit({"event": "runtime.migrations_retry", "attempt": attempt})
             stop.wait(delay_seconds)
+
+
+EVENT_LOG_KEY = "heatshift:runtime:events"
+EVENT_LOG_LENGTH = 50
+_event_log_url = None
+
+
+def emit(event):
+    """Print a runtime event and keep a short copy in Redis.
+
+    The host keeps logs only for the current container, so the events that
+    led to a restart (a stop signal, a component exiting, memory relief) were
+    lost with it. Redis outlives the container; /api/system/runtime shows the
+    last events. Logging must never take the supervisor down.
+    """
+    print(json.dumps(event), flush=True)
+    if not _event_log_url:
+        return
+    try:
+        import redis
+        record = json.dumps({**event, "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+        with redis.Redis.from_url(_event_log_url, socket_connect_timeout=2, socket_timeout=2) as client:
+            client.pipeline().lpush(EVENT_LOG_KEY, record).ltrim(EVENT_LOG_KEY, 0, EVENT_LOG_LENGTH - 1).execute()
+    except Exception:
+        pass
 
 
 def wait_for_port(port, child, stop, timeout_seconds=120):
@@ -263,7 +288,7 @@ def relieve_memory(children, fraction, *, kill=os.kill, find_children=child_pids
             kill(pid, signal.SIGTERM)
         except ProcessLookupError:
             pass
-    print(json.dumps({"event": "runtime.memory_relief", "anon_fraction": round(fraction, 3), "recycled_workers": len(workers)}), flush=True)
+    emit({"event": "runtime.memory_relief", "anon_fraction": round(fraction, 3), "recycled_workers": len(workers)})
     return workers
 
 
@@ -298,7 +323,7 @@ def supervise(commands, env, stop=None, *, grace_seconds=25, on_started=None, re
             for name, child in list(children.items()):
                 if child.poll() is None:
                     continue
-                print(json.dumps({"event": "runtime.child_exited", "component": name, "exit_code": child.returncode}), flush=True)
+                emit({"event": "runtime.child_exited", "component": name, "exit_code": child.returncode})
                 # A kernel OOM kill of one component used to end the supervisor,
                 # and the host then restarted the whole container: one to two
                 # minutes of its 404 page. Restart just that component, unless
@@ -308,7 +333,7 @@ def supervise(commands, env, stop=None, *, grace_seconds=25, on_started=None, re
                     return 1
                 restarts[name] = recent + [now]
                 spawn(name)
-                print(json.dumps({"event": "runtime.child_restarted", "component": name, "restarts_in_window": len(restarts[name])}), flush=True)
+                emit({"event": "runtime.child_restarted", "component": name, "restarts_in_window": len(restarts[name])})
                 if on_started:
                     on_started(children)
         return 0
@@ -320,29 +345,42 @@ def main():
     root = Path(__file__).resolve().parents[1]
     scratch = Path("/tmp/heatshift")
     stop = threading.Event()
+    received = []
+
+    def request_stop(signum, _frame):
+        received.append(signum)
+        stop.set()
+
     for sig in (signal.SIGTERM, signal.SIGINT):
-        signal.signal(sig, lambda *_: stop.set())
+        signal.signal(sig, request_stop)
     phase = "configuration"
     try:
-        print(json.dumps({"event": "runtime.boot", "phase": phase}), flush=True)
+        emit({"event": "runtime.boot", "phase": phase})
         env = prepare_environment(os.environ, scratch)
+        global _event_log_url
+        _event_log_url = env.get("REDIS_URL")
         scratch.mkdir(mode=0o700, parents=True, exist_ok=True)
         phase = "migrations"
         migration_started = time.monotonic()
-        print(json.dumps({"event": "runtime.boot", "phase": phase}), flush=True)
+        emit({"event": "runtime.boot", "phase": phase})
         run_migrations(root, env, stop)
-        print(json.dumps({"event": "runtime.migrations_completed", "duration_ms": round((time.monotonic() - migration_started) * 1000)}), flush=True)
+        emit({"event": "runtime.migrations_completed", "duration_ms": round((time.monotonic() - migration_started) * 1000)})
         phase = "processes"
 
         def announce(children):
             state = {name: child.pid for name, child in children.items()}
             (scratch / "processes.json").write_text(json.dumps(state))
-            print(json.dumps({"event": "runtime.started", "components": list(state)}), flush=True)
+            emit({"event": "runtime.started", "components": list(state)})
 
-        return supervise(runtime_commands(root), env, stop, on_started=announce, ready_ports={"api": PRIVATE_API_PORT})
+        result = supervise(runtime_commands(root), env, stop, on_started=announce, ready_ports={"api": PRIVATE_API_PORT})
+        # A stop signal means the host ended the container (deploy, restart
+        # or memory limit); without one a component kept failing.
+        emit({"event": "runtime.stopped", "signal": signal.Signals(received[0]).name if received else None,
+              "exit_code": result})
+        return result
     except Exception as error:
         # Never print configuration, URI arguments, CA contents or exceptions.
-        print(json.dumps({"event": "runtime.startup_failed", "phase": phase, "error_type": type(error).__name__}), flush=True)
+        emit({"event": "runtime.startup_failed", "phase": phase, "error_type": type(error).__name__})
         return 1
 
 
