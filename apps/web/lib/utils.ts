@@ -348,6 +348,7 @@ export interface ObservatorySnapshot {
     discovered_assets_latest_checks: number;
     processed_assets_latest_checks: number;
     failed_jobs_total: number;
+    failed_jobs_last_24h?: number;
     sources_with_errors: number;
   };
   coverage: {

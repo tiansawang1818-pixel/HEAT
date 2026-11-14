@@ -1296,3 +1296,46 @@ def test_priority_map_features_use_only_each_districts_latest_score(client, db):
     assert [feature["properties"]["value"] for feature in features] == [40.0]
     trend = client.get("/api/map/features?layer=historical").json()["features"]
     assert trend[0]["properties"]["value"] == 0.4
+
+
+def test_ingestion_status_separates_recent_failures_from_the_all_time_total(client, db):
+    from app.models.entities import IngestionJob
+    now = datetime.now(timezone.utc)
+    db.add_all([IngestionJob(job_type="ingest", status="failed", stage="failed", created_at=now - timedelta(days=3)),
+                IngestionJob(job_type="ingest", status="failed", stage="failed", created_at=now - timedelta(hours=2))])
+    db.commit()
+    summary = client.get("/api/ingestion/status").json()["summary"]
+    assert summary["failed_jobs_total"] == 2
+    assert summary["failed_jobs_last_24h"] == 1
+
+
+def test_recycled_worker_reuses_a_current_shared_dashboard_payload(client, db, monkeypatch):
+    import sys
+    import types
+    from app.api import router as api_router
+    store = {}
+
+    class FakeRedis:
+        @classmethod
+        def from_url(cls, *_args, **_kwargs):
+            return cls()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def mget(self, *keys):
+            return [store.get(key) for key in keys]
+
+        def mset(self, mapping):
+            store.update({key: value if isinstance(value, bytes) else str(value).encode() for key, value in mapping.items()})
+
+    monkeypatch.setitem(sys.modules, "redis", types.SimpleNamespace(Redis=FakeRedis))
+    builds = []
+    first = api_router._cached_dashboard_response(db, "unit/shared", lambda session: builds.append(1) or {"n": 1})
+    api_router._RESPONSE_CACHE.clear()  # a freshly recycled worker
+    second = api_router._cached_dashboard_response(db, "unit/shared", lambda session: builds.append(2) or {"n": 2})
+    assert first.body == second.body == b'{"n":1}'
+    assert builds == [1]

@@ -371,9 +371,11 @@ def _cached_dashboard_response(db: Session, name: str, build, seconds: int = _RE
     """
     key = "%s|%s" % (name, _dashboard_generation(db))
     entry = _RESPONSE_CACHE.get(name)
-    if stale_while_revalidate and not entry:
+    if not entry:
         # A recycled API worker starts with an empty memory cache; reuse the
         # last payload any worker stored in Redis instead of a cold rebuild.
+        # Without stale-while-revalidate only a payload for the current
+        # generation is served as fresh; an older one is rebuilt as before.
         entry = _shared_dashboard_entry(name, key, seconds)
     if entry and entry[0] == key and entry[1] > time.monotonic():
         body = entry[2]
@@ -392,6 +394,7 @@ def _cached_dashboard_response(db: Session, name: str, build, seconds: int = _RE
             try:
                 body = _encode_dashboard(build(db))
                 _RESPONSE_CACHE[name] = (key, time.monotonic() + seconds, body)
+                _store_shared_dashboard(name, key, body)
             finally:
                 lock.release()
         else:
@@ -406,7 +409,7 @@ def _cached_dashboard_response(db: Session, name: str, build, seconds: int = _RE
                     _RESPONSE_CACHE[name] = (key, time.monotonic() + seconds, body)
                     if stale_while_revalidate:
                         logger.info("Dashboard %s built without a cached payload in %.1fs", name, time.monotonic() - started)
-                        _store_shared_dashboard(name, key, body)
+                    _store_shared_dashboard(name, key, body)
     return Response(content=body, media_type="application/json", headers={"Cache-Control": "no-cache"})
 
 
@@ -2316,6 +2319,9 @@ def ingestion_jobs(
 def ingestion_status(job_id: Optional[str] = None, db: Session = Depends(get_db)) -> Dict[str, Any]:
     raw_counts = dict(db.execute(select(IngestionJob.status, func.count()).group_by(IngestionJob.status)).all())
     counts = {status: int(raw_counts.get(status, 0)) for status in ["queued", "running", "completed", "failed"]}
+    recent_failed = int(db.scalar(select(func.count()).select_from(IngestionJob).where(
+        IngestionJob.status == "failed", IngestionJob.created_at >= datetime.now(timezone.utc) - timedelta(hours=24),
+    )) or 0)
     last_event = db.scalar(select(PipelineEvent).order_by(desc(PipelineEvent.created_at)).limit(1))
     job = db.get(IngestionJob, job_id) if job_id else None
     recent_jobs = db.scalars(select(IngestionJob).order_by(desc(IngestionJob.created_at)).limit(20)).all()
@@ -2349,6 +2355,9 @@ def ingestion_status(job_id: Optional[str] = None, db: Session = Depends(get_db)
             "discovered_assets_latest_checks": sum(item["discovered_count"] for item in source_checks),
             "processed_assets_latest_checks": sum(item["processed_count"] for item in source_checks),
             "failed_jobs_total": counts["failed"],
+            # The all-time total keeps every early setup failure; the current
+            # health signal is the recent window.
+            "failed_jobs_last_24h": recent_failed,
             "sources_with_errors": sum(1 for item in source_checks if item["status"] in {"failed", "degraded"}),
         },
         "coverage": {

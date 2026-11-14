@@ -1791,7 +1791,7 @@ function ObservatoryOverlay({ datasets, snapshot, readiness, readinessError, loa
       <div className="pipeline-summary-grid">
         <Card><span>กำลังรอ / ทำงาน</span><strong>{queue.queued} / {queue.running}</strong><small>durable job queue</small></Card>
         <Card><span>Asset ที่พบ / ประมวลผล</span><strong>{summary.discovered_assets_latest_checks} / {summary.processed_assets_latest_checks}</strong><small>จาก source check ล่าสุด</small></Card>
-        <Card className={summary.failed_jobs_total ? "has-error" : ""}><span>งานล้มเหลว</span><strong>{summary.failed_jobs_total}</strong><small>เก็บเหตุผลไว้ตรวจสอบ</small></Card>
+        <Card className={(summary.failed_jobs_last_24h ?? summary.failed_jobs_total) ? "has-error" : ""}><span>งานล้มเหลว 24 ชม.</span><strong>{summary.failed_jobs_last_24h ?? summary.failed_jobs_total}</strong><small>ทั้งหมด {summary.failed_jobs_total} งาน · เก็บเหตุผลไว้ตรวจสอบ</small></Card>
         <Card><span>พื้นที่ที่มี indicator</span><strong>{formatNumber(coverage.percent, 1)}%</strong><small>{coverage.areas_with_indicators} / {coverage.geographic_areas} พื้นที่</small></Card>
       </div>
       <div className="refresh-controls">
