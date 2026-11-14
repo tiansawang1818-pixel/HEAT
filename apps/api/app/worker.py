@@ -7,11 +7,13 @@ from pathlib import Path
 from typing import Optional
 
 from celery import Celery
+from celery.signals import worker_process_init
 from billiard.exceptions import SoftTimeLimitExceeded
 
 from sqlalchemy import text
 
 from app.core.config import settings
+from app.core.oom import INGESTION_CHILD_OOM_SCORE_ADJ, prefer_as_oom_victim
 from app.core.redis_tls import celery_redis_tls_settings
 from app.db.session import SessionLocal
 from app.models.entities import IngestionJob
@@ -32,6 +34,13 @@ from app.services.historical import dispatch_backfills, execute_backfill_step
 
 
 celery_app = make_celery()
+
+
+@worker_process_init.connect
+def _prefer_prefork_child_as_oom_victim(**_):
+    # Sent only in prefork children (ingestion), never in the solo dispatcher,
+    # whose loss would end the supervisor and restart the container.
+    prefer_as_oom_victim(INGESTION_CHILD_OOM_SCORE_ADJ)
 
 
 def connector_for(source: str, fixture_path: Optional[str] = None):

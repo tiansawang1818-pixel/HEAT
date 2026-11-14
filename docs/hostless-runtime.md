@@ -12,6 +12,8 @@ FastAPI รันผ่าน gunicorn worker เดียว ที่ถูก
 
 ตัว supervisor (`scripts/hostless_runtime.py`) อ่าน anon memory ของ cgroup ทุก 2 วินาที ถ้าเกิน 88% ของเพดานจะส่ง SIGTERM ให้ API worker (ไม่เกินครั้งละ 30 วินาที) และพิมพ์ event `runtime.memory_relief` เพราะถ้าเคอร์เนล OOM kill โปรเซสใดโปรเซสหนึ่ง supervisor จะปิดทุกโปรเซสและ Hostless รีสตาร์ตทั้งคอนเทนเนอร์ (เว็บหายไปราว 1 นาทีเป็นหน้า 404) ส่วนการเปลี่ยน API worker ใช้เวลาไม่กี่วินาทีและ socket ยังเปิดอยู่
 
+ถ้าแรมพุ่งเร็วกว่ารอบตรวจ 2 วินาที เคอร์เนลจะเลือกฆ่าโปรเซสที่คะแนนสูงสุด หลัง API worker เพิ่ง recycle (ราว 146 MB) dispatcher (~223 MB) หรือโปรเซสหลักของ ingestion อาจใหญ่ที่สุด และการเสียโปรเซสระดับบนจะรีสตาร์ตทั้งคอนเทนเนอร์ จึงให้ API worker ตั้ง `oom_score_adj` เป็น 1000 และ prefork child ของ ingestion เป็น 500 (`app/core/oom.py`) ส่วนโปรเซสระดับบนคงค่า 0 เคอร์เนลจึงฆ่าโปรเซสที่ Gunicorn/Celery สร้างใหม่ได้ในไม่กี่วินาทีก่อนเสมอ `/api/system/runtime` รายงานค่านี้ใน `child_oom_score_adj`
+
 worker ใช้คลาส `app.core.gunicorn_worker.ApiWorker` ที่จำกัดการปิดแบบนุ่มนวลไว้ 3 วินาที (`--graceful-timeout 10` เป็นเพดานสำรอง) เพราะ gunicorn จะเริ่ม worker ใหม่หลังตัวเก่าปิดเสร็จ และช่อง `/api/events/stream` (SSE) ของเบราว์เซอร์ไม่เคยปิดเอง ทำให้ทุกการรีไซเคิลเคยค้าง 30 วินาที คำขอช่วงนั้นได้ 500 ที่ proxy
 
 เมื่อโปรเซสใดหยุดแม้ exit code 0 ตัวดูแลหยุดกลุ่มที่เหลือและคืน nonzero เพื่อให้ platform restart ทั้งแอป ส่ง SIGTERM และรอ bounded grace ก่อน SIGKILL การทดสอบ child restart ไม่แทนการพิสูจน์ข้อมูลคิวครบหลัง abrupt crash

@@ -27,6 +27,21 @@ def _tree_rss_bytes(pid, proc=Path("/proc")):
     return total
 
 
+def _child_oom_score_adj(pid, proc=Path("/proc")):
+    """Highest OOM score adjustment among a component's direct children."""
+    scores = []
+    try:
+        children = (proc / str(pid) / "task" / str(pid) / "children").read_text().split()
+    except OSError:
+        return None
+    for child in children:
+        try:
+            scores.append(int((proc / child / "oom_score_adj").read_text()))
+        except (OSError, ValueError):
+            continue
+    return max(scores) if scores else None
+
+
 def runtime_status(cgroup=Path("/sys/fs/cgroup"), process_file=Path("/tmp/heatshift/processes.json")):
     report = {"checked_at": datetime.now(timezone.utc).isoformat(), "scope": "runtime_resource_observation",
               "mode": "combined" if os.environ.get("HOSTLESS_COMBINED_RUNTIME") == "true" else "separate_services",
@@ -40,6 +55,7 @@ def runtime_status(cgroup=Path("/sys/fs/cgroup"), process_file=Path("/tmp/heatsh
         pids = json.loads(process_file.read_text())
         components = {}
         component_rss = {}
+        child_oom_adj = {}
         for name in COMPONENTS:
             pid = pids.get(name)
             try:
@@ -48,6 +64,7 @@ def runtime_status(cgroup=Path("/sys/fs/cgroup"), process_file=Path("/tmp/heatsh
                 os.kill(pid, 0)
                 components[name] = True
                 component_rss[name] = _tree_rss_bytes(pid)
+                child_oom_adj[name] = _child_oom_score_adj(pid)
             except (OSError, ValueError):
                 components[name] = False
         report.update(
@@ -57,6 +74,7 @@ def runtime_status(cgroup=Path("/sys/fs/cgroup"), process_file=Path("/tmp/heatsh
             cpu_limit_cores=None if quota == "max" else round(int(quota) / int(period), 6),
             oom_kill_count=int(events["oom_kill"]),
             component_rss_bytes=component_rss,
+            child_oom_score_adj=child_oom_adj,
         )
         try:
             # memory.current includes page cache the kernel reclaims under

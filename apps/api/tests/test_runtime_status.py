@@ -50,3 +50,13 @@ def test_tree_rss_counts_a_process_and_its_children(tmp_path):
     (tmp_path / "10" / "task" / "10").mkdir(parents=True)
     (tmp_path / "10" / "task" / "10" / "children").write_text("11")
     assert runtime._tree_rss_bytes(10, tmp_path) == 1500 * 1024
+
+
+def test_child_oom_score_adjustment_is_reported_per_component(tmp_path):
+    (tmp_path / "10" / "task" / "10").mkdir(parents=True)
+    (tmp_path / "10" / "task" / "10" / "children").write_text("11 12")
+    for pid, score in ((11, 0), (12, 1000)):
+        (tmp_path / str(pid)).mkdir()
+        (tmp_path / str(pid) / "oom_score_adj").write_text("%d\n" % score)
+    assert runtime._child_oom_score_adj(10, tmp_path) == 1000
+    assert runtime._child_oom_score_adj(99, tmp_path) is None
