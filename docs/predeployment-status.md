@@ -6,7 +6,7 @@
 > - ขอบเขต 50 เขตเผยแพร่แล้ว (provider BMA / data.go.th, validation ผ่าน) ข้อความ "เผยแพร่ 0 เขต" และขั้นตอนข้อ 2 ด้านล่างจึงเสร็จแล้ว
 > - แหล่งข้อมูลทั้ง 7 แหล่ง (BMA, Landsat 8/9, Sentinel-2, Dynamic World, WorldPop, Open-Meteo, OpenStreetMap) เผยแพร่เวอร์ชันที่ผ่าน validation และติดตามอัตโนมัติ
 > - `/api/system/readiness` = `ready` (รวม OIDC/RBAC และ Earth Engine identity), `/api/system/data-readiness` มี `data_ready: true`, `forecast_only: true` แต่ `investment_decisions_ready: false` เพราะต้นทุน/หลักฐานหน้างานยังรออนุมัติ
-> - API รันด้วย gunicorn worker เดียวที่รีไซเคิลทุก ~400 requests; รายละเอียดอยู่ใน [hostless-runtime.md](hostless-runtime.md)
+> - API รันด้วย gunicorn worker เดียวที่รีไซเคิลเมื่อเกิน 250 MB หรือ ~250 requests; รายละเอียดอยู่ใน [hostless-runtime.md](hostless-runtime.md)
 
 
 ตรวจวันที่ 8 พฤศจิกายน 2026 (Asia/Bangkok); timestamps ใน JSON ใช้ UTC

@@ -968,10 +968,19 @@ def map_features(
         forecast = None
         projection_by_area: Dict[str, Dict[str, Any]] = {}
         if layer in ("priority", "historical") and area_ids:
+            # Only each district's newest score. Scores are recalculated after
+            # every publication, so loading the full history built thousands of
+            # ORM objects per request and pushed the API worker past 300 MB.
+            latest = (
+                select(PriorityScore.area_id, func.max(PriorityScore.calculated_at).label("latest"))
+                .where(PriorityScore.area_id.in_(area_ids))
+                .group_by(PriorityScore.area_id)
+                .subquery()
+            )
             for score in db.scalars(
                 select(PriorityScore)
-                .where(PriorityScore.area_id.in_(area_ids))
-                .order_by(PriorityScore.area_id, desc(PriorityScore.calculated_at))
+                .join(latest, (PriorityScore.area_id == latest.c.area_id) & (PriorityScore.calculated_at == latest.c.latest))
+                .order_by(PriorityScore.area_id, desc(PriorityScore.id))
             ).all():
                 score_by_area.setdefault(score.area_id, score)
         elif layer == "future-risk":

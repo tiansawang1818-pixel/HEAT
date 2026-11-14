@@ -1280,3 +1280,19 @@ def test_recycled_worker_reuses_the_shared_readiness_payload(db, monkeypatch):
     api_router._RESPONSE_CACHE.clear()  # a new worker process
     response = api_router._cached_dashboard_response(db, "unit/shared", build, stale_while_revalidate=True)
     assert _json.loads(response.body) == {"audit": "ok"} and len(calls) == 1
+
+
+def test_priority_map_features_use_only_each_districts_latest_score(client, db):
+    from datetime import datetime, timedelta, timezone
+    from app.models.entities import GeographicArea, PriorityScore
+    shape = {"type": "MultiPolygon", "coordinates": [[[[100.5, 13.7], [100.51, 13.7], [100.51, 13.71], [100.5, 13.71], [100.5, 13.7]]]]}
+    db.add(GeographicArea(id="district", name_th="เขต", name_en="District", geometry=shape))
+    now = datetime.now(timezone.utc)
+    db.add_all([PriorityScore(area_id="district", score=value, components={"historical_change": value / 100}, weights={},
+                              missing_inputs=[], input_versions={}, formula_version="test",
+                              calculated_at=now - timedelta(days=age)) for value, age in ((90.0, 3), (40.0, 0), (70.0, 1))])
+    db.commit()
+    features = client.get("/api/map/features?layer=priority").json()["features"]
+    assert [feature["properties"]["value"] for feature in features] == [40.0]
+    trend = client.get("/api/map/features?layer=historical").json()["features"]
+    assert trend[0]["properties"]["value"] == 0.4

@@ -15,7 +15,7 @@ HEAT//SHIFT is a map-first decision platform for planning urban heat mitigation 
 - **Data:** 7 automatically monitored sources: 50 Bangkok district boundaries, Landsat 8/9 LST, Sentinel-2 NDVI, Dynamic World, WorldPop, Open-Meteo, OpenStreetMap
 - **Planning:** a budget optimizer (OR-Tools) and scenario comparison; forecasts that fail holdout validation are withheld and their errors shown
 - **Security:** admin tools behind OIDC single sign-on with role checks; production refuses demo data and shared admin keys
-- **Hosting:** runs on a $0 budget (Hostless free pool + Aiven Free PostgreSQL): four supervised processes in 768 MiB RAM, with CI checks that enforce the same limits
+- **Hosting:** runs on a $0 budget (Hostless free pool + Aiven Free PostgreSQL): three supervised processes (Next.js, FastAPI, one Celery worker with embedded Beat) in 768 MiB RAM, with CI checks that enforce the same limits
 
 Results are a planning aid, not procurement advice: site costs and field evidence still need human approval before investment decisions.
 
@@ -25,7 +25,7 @@ HEAT//SHIFT เป็นระบบ map-first ที่แยกวันที
 
 > **ข้อสำคัญ:** fixture ที่มากับ repository มีไว้ทดสอบ pipeline เท่านั้น ทุก record ระบุ `fixture_kind: synthetic` และห้ามนำไปแสดงเป็นการสังเกตจริง การใช้งานข้อมูลจริงต้องตั้ง credential ของ provider และผ่าน validation ก่อน publish
 
-## สถานะปัจจุบัน (12 พฤศจิกายน 2026)
+## สถานะปัจจุบัน (14 พฤศจิกายน 2026)
 
 **เปิดใช้งานแบบนำร่องแล้วที่ <https://heatshift.hostless.app/>** บน Hostless free pool ร่วมกับ PostgreSQL/PostGIS ของ Aiven Free ไม่ผูกบัตรและไม่ใช้เครื่องของผู้ใช้เป็นเซิร์ฟเวอร์ รายละเอียด runtime อยู่ใน [docs/hostless-runtime.md](docs/hostless-runtime.md)
 
@@ -35,7 +35,8 @@ HEAT//SHIFT เป็นระบบ map-first ที่แยกวันที
 | แผนที่ | ชั้นดาวเทียมใช้ภาพล่าสุดที่ไม่มีเมฆของแต่ละเขต พร้อมแนวโน้มอุณหภูมิย้อนหลังและ SSE refresh เฉพาะชั้นที่เปลี่ยน |
 | การวางแผน | ค่าเริ่มต้นเป็น **forecast-only planner**: City Optimizer (OR-Tools เริ่มจาก greedy plan และไม่คืนผลที่แย่กว่า) เปรียบเทียบกลยุทธ์บน candidate ที่มีราคาอ้างอิง ผลพยากรณ์ที่ไม่ผ่าน holdout จะถูกระงับพร้อมแสดงค่า error |
 | ผู้ดูแล | Data Observatory ใช้ SSO (OIDC + PKCE) และตรวจ role ก่อนทุกงาน admin |
-| Runtime | 4 โปรเซสใน container เดียว (CPU 0.3 / RAM 768 MiB); API รันผ่าน gunicorn และรีไซเคิล worker ทุก ~400 requests เพื่อคุมแรม |
+| Runtime | 3 โปรเซสใน container เดียว (CPU 0.3 / RAM 768 MiB): Next.js, FastAPI (gunicorn) และ Celery worker ที่ฝัง Beat; API worker รีไซเคิลเมื่อเกิน 250 MB หรือ ~250 requests และ supervisor คุมแรมรวมไม่ให้ถึงเพดาน |
+| พยากรณ์ | scenario-v3 (climatology รายเขต-เดือน + แนวโน้มอุ่นขึ้นที่ผ่าน shrinkage) ผ่าน holdout ทั้งตามเวลาและตามพื้นที่: MAE 2.40 °C เทียบ baseline 2.47 °C และ 4.26 °C เทียบ 8.59 °C, interval 90% ครอบคลุม 0.90 |
 
 `data_ready` ผ่านแล้ว แต่ `investment_decisions_ready` ยังไม่ผ่าน เพราะต้นทุนและหลักฐานหน้างานของแต่ละโครงการยังต้องให้ผู้รับผิดชอบอนุมัติ ผลบนเว็บจึงเป็นการวางแผนเบื้องต้น ไม่ใช่คำแนะนำจัดซื้อ ดูประวัติการ deploy และหลักฐานใน [docs/predeployment-status.md](docs/predeployment-status.md) และเงื่อนไขค่าใช้จ่ายใน [docs/hosting-constraints.md](docs/hosting-constraints.md)
 
