@@ -134,9 +134,8 @@ def test_shutdown_event_reaps_children(tmp_path):
     assert all(child.poll() is not None for child in children.values())
 
 
-def test_dispatcher_runs_in_process_and_ingestion_recycles_large_children(tmp_path):
+def test_ingestion_recycles_large_children(tmp_path):
     commands = runtime.runtime_commands(tmp_path)
-    assert "--pool=solo" in commands["dispatcher"][0]
     ingestion = commands["ingestion"][0]
     assert "--pool=prefork" in ingestion and "--max-memory-per-child=150000" in ingestion
 
@@ -144,12 +143,12 @@ def test_dispatcher_runs_in_process_and_ingestion_recycles_large_children(tmp_pa
 def test_api_gets_a_larger_pool_within_the_managed_connection_budget():
     assert runtime.PROCESS_ENV["api"]["DATABASE_POOL_SIZE"] == "4"
     assert runtime.PROCESS_ENV["api"]["API_RECYCLE_RSS_MB"] == "250"
-    # API 4 + ingestion child 2 + dispatcher 2 stays under the 10-connection role limit.
-    assert 4 + 2 + 2 < 10
+    # API 4 + ingestion child 2 stays under the 10-connection role limit.
+    assert 4 + 2 < 10
 
 
 def test_python_processes_limit_malloc_arenas_and_web_caps_its_heap():
-    for name in ("api", "ingestion", "dispatcher"):
+    for name in ("api", "ingestion"):
         assert runtime.PROCESS_ENV[name]["MALLOC_ARENA_MAX"] == "2"
     assert runtime.PROCESS_ENV["web"]["NODE_OPTIONS"] == "--max-old-space-size=256"
 
@@ -181,11 +180,18 @@ def test_web_starts_only_after_the_api_listens(tmp_path, monkeypatch):
     assert len(spawned) == 2
 
 
-def test_beat_runs_embedded_in_the_dispatcher(tmp_path):
+def test_beat_and_dispatch_run_in_the_single_celery_worker(tmp_path):
     commands = runtime.runtime_commands(tmp_path)
-    assert "beat" not in commands
-    dispatcher = commands["dispatcher"][0]
-    assert "-B" in dispatcher and "--pool=solo" in dispatcher and "-Q" in dispatcher
+    assert set(commands) == {"api", "web", "ingestion"}
+    ingestion = commands["ingestion"][0]
+    assert "-B" in ingestion and ingestion[ingestion.index("-Q") + 1] == "celery,control"
+
+
+def test_stale_dispatch_ticks_expire_instead_of_piling_up():
+    from app.celery_config import celery_settings
+    from app.core.config import settings
+    entry = celery_settings()["beat_schedule"]["dispatch-due-source-checks"]
+    assert entry["options"]["expires"] == settings.scheduler_tick_seconds
 
 
 def test_api_worker_is_recycled_to_cap_memory_growth(tmp_path):

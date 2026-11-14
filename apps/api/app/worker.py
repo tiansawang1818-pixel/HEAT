@@ -38,8 +38,8 @@ celery_app = make_celery()
 
 @worker_process_init.connect
 def _prefer_prefork_child_as_oom_victim(**_):
-    # Sent only in prefork children (ingestion), never in the solo dispatcher,
-    # whose loss would end the supervisor and restart the container.
+    # Sent only in prefork pool children, never in the Celery main process or
+    # its embedded Beat, whose loss would stop scheduling.
     prefer_as_oom_victim(INGESTION_CHILD_OOM_SCORE_ADJ)
 
 

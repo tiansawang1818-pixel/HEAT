@@ -106,7 +106,7 @@ def prepare_environment(source, scratch):
 
 
 # The managed role allows 10 connections. Each process has its own pool:
-# API 4 + ingestion child 2 + dispatcher 2 = 8, leaving room for migrations.
+# API 4 + ingestion child 2 = 6, leaving room for migrations.
 # The API serves every browser at ~0.5-1 s per remote query, so two
 # connections queued past the 10 s pool timeout during restarts (HTTP 500).
 # glibc gives each thread its own malloc arena; two arenas bound the
@@ -115,7 +115,6 @@ def prepare_environment(source, scratch):
 PROCESS_ENV = {
     "api": {"DATABASE_POOL_SIZE": "4", "MALLOC_ARENA_MAX": "2", "API_RECYCLE_RSS_MB": "250"},
     "ingestion": {"MALLOC_ARENA_MAX": "2"},
-    "dispatcher": {"MALLOC_ARENA_MAX": "2"},
     "web": {"NODE_OPTIONS": "--max-old-space-size=256"},
 }
 
@@ -124,14 +123,15 @@ def runtime_commands(root):
     api = root / "apps" / "api"
     celery = [sys.executable, "-m", "celery", "-A", "app.worker.celery_app"]
     worker = ["worker", "--loglevel=INFO", "--concurrency=1", "--without-gossip", "--without-mingle"]
-    # 768 MiB holds six Python processes plus Node. Ingestion keeps a prefork
-    # child so hard time limits still apply, and replaces it after any task
-    # that leaves it above 150 MB. The dispatcher only runs a short bounded
-    # dispatch task, so it runs in-process instead of forking a second copy.
-    ingestion = worker + ["--pool=prefork", "--max-memory-per-child=150000"]
-    # Beat runs embedded in the dispatcher (-B): it only publishes two task
-    # names on a timetable, and a separate process cost about 90 MB.
-    dispatcher = worker + ["--pool=solo", "-B", "--schedule=/tmp/heatshift/celerybeat-schedule"]
+    # 768 MiB holds the API, one Celery worker and Node. Ingestion keeps a
+    # prefork child so hard time limits still apply, and replaces it after any
+    # task that leaves it above 150 MB. Beat runs embedded (-B) and the worker
+    # also consumes the control queue: a separate dispatcher process held
+    # about 180 MB of private memory just to run a one-minute dispatch tick,
+    # and the host stopped the service at its memory limit. Stale ticks expire
+    # in the queue, so a long task delays dispatch but never piles it up.
+    ingestion = worker + ["--pool=prefork", "--max-memory-per-child=150000",
+                          "-B", "--schedule=/tmp/heatshift/celerybeat-schedule"]
     return {
         # Python never returns freed heap to the OS, so the API grew past 300 MB
         # and pushed the container into its memory limit. Gunicorn keeps the
@@ -147,15 +147,14 @@ def runtime_commands(root):
                  # app (~130 MB) that this 768 MiB container cannot spare.
                  "--keep-alive", "5"], api),
         "web": (["node", "server.js"], root / "apps" / "web"),
-        "ingestion": (celery + ingestion + ["-Q", "celery", "--hostname=ingestion@%h"], api),
-        "dispatcher": (celery + dispatcher + ["-Q", "control", "--hostname=dispatcher@%h"], api),
+        "ingestion": (celery + ingestion + ["-Q", "celery,control", "--hostname=ingestion@%h"], api),
     }
 
 
 def stop_children(children, grace_seconds=25, step_seconds=8):
     """Stop children in reverse start order, letting each exit before the next.
 
-    Start order is api, web, ingestion, dispatcher, so the public web server
+    Start order is api, web, ingestion, so the public web server
     stops before the private API it proxies to; signalling both at once let
     the API close while the web was still forwarding a request ("socket hang
     up"). Anything still running at the overall deadline is killed.

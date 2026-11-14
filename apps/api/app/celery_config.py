@@ -40,7 +40,9 @@ def celery_settings() -> dict:
         redis_retry_on_timeout=True,
         task_routes={"app.worker.dispatch_ingestion": {"queue": "control"}},
         beat_schedule={
-            "dispatch-due-source-checks": {"task": "app.worker.dispatch_ingestion", "schedule": settings.scheduler_tick_seconds},
+            # A tick that waits behind a long task is superseded by the next one.
+            "dispatch-due-source-checks": {"task": "app.worker.dispatch_ingestion", "schedule": settings.scheduler_tick_seconds,
+                                           "options": {"expires": settings.scheduler_tick_seconds}},
             "update-temperature-scenarios": {"task": "app.worker.update_forecast_models", "schedule": 3600},
         },
     )

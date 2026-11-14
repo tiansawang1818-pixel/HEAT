@@ -2,7 +2,7 @@
 
 When the 768 MiB container reaches its limit the kernel kills the process
 with the highest badness score, roughly its share of memory. Right after the
-API worker recycles, the Celery dispatcher or the ingestion main process can
+API worker recycles, a Celery main process can
 be the largest, and losing either used to end the supervisor and restart the
 whole container (one to two minutes of the host's 404 page). Gunicorn replaces its
 worker and Celery its prefork child within seconds, so those processes raise

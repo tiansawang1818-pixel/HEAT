@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 
-COMPONENTS = ("api", "web", "ingestion", "dispatcher")
+COMPONENTS = ("api", "web", "ingestion")
 
 
 def _tree_rss_bytes(pid, proc=Path("/proc"), field="VmRSS:"):
