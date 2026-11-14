@@ -217,6 +217,8 @@ def wait_for_port(port, child, stop, timeout_seconds=120):
 CGROUP = Path("/sys/fs/cgroup")
 MEMORY_RELIEF_FRACTION = 0.88
 MEMORY_RELIEF_COOLDOWN_SECONDS = 30
+MAX_RESTARTS_PER_WINDOW = 3
+RESTART_WINDOW_SECONDS = 600
 
 
 def anon_memory_fraction(cgroup=CGROUP):
@@ -271,15 +273,20 @@ def supervise(commands, env, stop=None, *, grace_seconds=25, on_started=None, re
     stop = stop if stop is not None else threading.Event()
     children = {}
     try:
-        for name, (command, cwd) in commands.items():
+        def spawn(name):
+            command, cwd = commands[name]
             children[name] = subprocess.Popen(command, cwd=cwd, env={**env, **PROCESS_ENV.get(name, {})},
                                               start_new_session=True)
             # Start the public web server only after the private API listens, so
             # health checks during a deploy are not proxied to a closed port.
             if ready_ports and name in ready_ports:
                 wait_for_port(ready_ports[name], children[name], stop)
+
+        for name in commands:
+            spawn(name)
         if on_started:
             on_started(children)
+        restarts = {name: [] for name in commands}
         next_memory_check = relief_allowed_at = 0.0
         while not stop.wait(0.2):
             now = time.monotonic()
@@ -289,10 +296,22 @@ def supervise(commands, env, stop=None, *, grace_seconds=25, on_started=None, re
                 if fraction is not None and fraction >= MEMORY_RELIEF_FRACTION and now >= relief_allowed_at:
                     relieve_memory(children, fraction)
                     relief_allowed_at = now + MEMORY_RELIEF_COOLDOWN_SECONDS
-            for name, child in children.items():
-                if child.poll() is not None:
-                    print(json.dumps({"event": "runtime.child_exited", "component": name, "exit_code": child.returncode}), flush=True)
+            for name, child in list(children.items()):
+                if child.poll() is None:
+                    continue
+                print(json.dumps({"event": "runtime.child_exited", "component": name, "exit_code": child.returncode}), flush=True)
+                # A kernel OOM kill of one component used to end the supervisor,
+                # and the host then restarted the whole container: one to two
+                # minutes of its 404 page. Restart just that component, unless
+                # it keeps failing, which needs the host's attention.
+                recent = [at for at in restarts[name] if now - at < RESTART_WINDOW_SECONDS]
+                if len(recent) >= MAX_RESTARTS_PER_WINDOW:
                     return 1
+                restarts[name] = recent + [now]
+                spawn(name)
+                print(json.dumps({"event": "runtime.child_restarted", "component": name, "restarts_in_window": len(restarts[name])}), flush=True)
+                if on_started:
+                    on_started(children)
         return 0
     finally:
         stop_children(list(children.values()), grace_seconds)

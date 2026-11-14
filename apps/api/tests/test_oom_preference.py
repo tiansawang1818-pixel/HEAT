@@ -26,4 +26,4 @@ def test_only_prefork_children_raise_their_score(monkeypatch):
     worker_process_init.send(sender=None)
     assert calls == [oom.INGESTION_CHILD_OOM_SCORE_ADJ]
     # Top-level processes, whose exit restarts the container, keep the default.
-    assert oom.API_WORKER_OOM_SCORE_ADJ > oom.INGESTION_CHILD_OOM_SCORE_ADJ > 0
+    assert oom.API_WORKER_OOM_SCORE_ADJ == oom.INGESTION_CHILD_OOM_SCORE_ADJ == 1000

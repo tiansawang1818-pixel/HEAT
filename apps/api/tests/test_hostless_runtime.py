@@ -91,6 +91,25 @@ def test_only_explicit_isolated_ci_can_use_private_compose_backends(tmp_path):
     assert prepared["DATABASE_URL"].startswith("postgresql+psycopg://postgres/heatshift_ci")
 
 
+def test_a_failed_component_is_restarted_without_stopping_the_others(tmp_path, capsys):
+    marker = tmp_path / "runs"
+    script = "import pathlib,time; p=pathlib.Path(%r); n=len(p.read_text()) if p.exists() else 0; p.write_text('x'*(n+1)); time.sleep(0 if n == 0 else 30)" % str(marker)
+    commands = {
+        "waiting": ([sys.executable, "-c", "import time; time.sleep(30)"], tmp_path),
+        "flaky": ([sys.executable, "-c", script], tmp_path),
+    }
+    stop = threading.Event()
+    snapshots = []
+    timer = threading.Timer(3.0, stop.set)
+    timer.start()
+    assert runtime.supervise(commands, dict(os.environ), stop, grace_seconds=1,
+                             on_started=lambda c: snapshots.append({k: v.pid for k, v in c.items()})) == 0
+    assert marker.read_text() == "xx"
+    assert len(snapshots) == 2 and snapshots[0]["waiting"] == snapshots[1]["waiting"]
+    assert snapshots[0]["flaky"] != snapshots[1]["flaky"]
+    assert '"event": "runtime.child_restarted", "component": "flaky"' in capsys.readouterr().out
+
+
 def test_child_exit_stops_all_other_processes(tmp_path, capsys):
     commands = {
         "waiting": ([sys.executable, "-c", "import time; time.sleep(30)"], tmp_path),
