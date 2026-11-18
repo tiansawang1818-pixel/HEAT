@@ -387,6 +387,9 @@ def supervise(commands, env, stop=None, *, grace_seconds=25, on_started=None, re
                 emit({"event": "runtime.child_restarted", "component": name, "restarts_in_window": len(restarts[name])})
                 if on_started:
                     on_started(children)
+        # Record the stop before the children's grace period: the host may
+        # kill the container before a later event could be written.
+        emit({"event": "runtime.stop_requested"})
         return 0
     finally:
         stop_children(list(children.values()), grace_seconds)

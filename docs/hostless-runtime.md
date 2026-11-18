@@ -34,7 +34,7 @@ worker ใช้คลาส `app.core.gunicorn_worker.ApiWorker` ที่จ�
 
 ตัวเริ่มระบบบังคับ production/OIDC, ปิด demo/fixture ingestion, ล้าง legacy admin keys และจำกัด pool 2 / overflow 0 / timeout 10 ต่อ process หาก OIDC ยังไม่ครบ admin operations ยังคงปฏิเสธ และ production/data readiness ยัง blocked ตามจริง ไม่แก้ readiness ให้ผ่านเพื่อเปิด container
 
-Health check ของ platform ใช้ `/api/health/live` ผ่าน Next proxy ไป API หลัง startup สำเร็จ โดยไม่รอ DB เนื่องจาก [Hostless ให้เวลาแต่ละ probe 1 วินาที](https://docs.hostless.cloud/app/healthcheck) ส่วน `/api/health` ยังตรวจ DB, `/api/health/ready` ยังคืน 503 เมื่อ DB ใช้ไม่ได้ และ `/api/system/readiness`, data-readiness และ release audit ยังคงตรวจ configuration/ข้อมูล/SSO ห้ามใช้ platform Running แทนหลักฐานว่าข้อมูลจริงครบแล้ว
+Health check ของ platform ใช้ `/api/health/live` ซึ่ง Next.js ตอบเองโดยไม่ proxy ไป API (เดิม proxy ไป API แล้ว probe หมดเวลาระหว่าง API worker รีไซเคิลหรือ CPU ไม่ว่าง จน Hostless kill คอนเทนเนอร์ที่ยังทำงานปกติ exit 137 วันที่ 18 พ.ย.) และไม่รอ DB เนื่องจาก [Hostless ให้เวลาแต่ละ probe 1 วินาที](https://docs.hostless.cloud/app/healthcheck) ส่วน `/api/health` ยังตรวจ DB, `/api/health/ready` ยังคืน 503 เมื่อ DB ใช้ไม่ได้ และ `/api/system/readiness`, data-readiness และ release audit ยังคงตรวจ configuration/ข้อมูล/SSO ห้ามใช้ platform Running แทนหลักฐานว่าข้อมูลจริงครบแล้ว
 
 ตัวเริ่มระบบบันทึก phase ของ configuration/migrations/processes พร้อมระยะเวลาของ migrations และชื่อชนิดข้อผิดพลาดเท่านั้น ไม่บันทึก exception message, URI หรือ secrets เพื่อแยกปัญหาก่อน API เริ่มฟังพอร์ตได้
 
