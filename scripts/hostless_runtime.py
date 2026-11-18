@@ -218,12 +218,55 @@ def emit(event):
     if not _event_log_url:
         return
     try:
-        import redis
         record = json.dumps({**event, "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
-        with redis.Redis.from_url(_event_log_url, socket_connect_timeout=2, socket_timeout=2) as client:
+        with _redis_client() as client:
             client.pipeline().lpush(EVENT_LOG_KEY, record).ltrim(EVENT_LOG_KEY, 0, EVENT_LOG_LENGTH - 1).execute()
     except Exception:
         pass
+
+
+SAMPLE_KEY = "heatshift:runtime:last_sample"
+SAMPLE_INTERVAL_SECONDS = 30
+
+
+def _redis_client():
+    import redis
+    return redis.Redis.from_url(_event_log_url, socket_connect_timeout=2, socket_timeout=2)
+
+
+def record_sample(fraction, peak):
+    """Overwrite the latest memory sample in Redis (never raises).
+
+    The host has stopped the container without a stop signal; the sample
+    a killed container left behind shows how full memory was beforehand.
+    """
+    if not _event_log_url:
+        return
+    try:
+        sample = {"anon_fraction": None if fraction is None else round(fraction, 3),
+                  "peak_anon_fraction": None if peak is None else round(peak, 3),
+                  "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+        with _redis_client() as client:
+            client.set(SAMPLE_KEY, json.dumps(sample), ex=7 * 86400)
+    except Exception:
+        pass
+
+
+def carry_previous_sample():
+    """Move the previous container's last memory sample into the event log."""
+    if not _event_log_url:
+        return
+    try:
+        with _redis_client() as client:
+            previous = client.get(SAMPLE_KEY)
+            client.delete(SAMPLE_KEY)
+    except Exception:
+        return
+    if previous:
+        try:
+            emit({"event": "runtime.previous_container_last_sample", **json.loads(previous)})
+        except ValueError:
+            pass
 
 
 def wait_for_port(port, child, stop, timeout_seconds=120):
@@ -312,11 +355,19 @@ def supervise(commands, env, stop=None, *, grace_seconds=25, on_started=None, re
             on_started(children)
         restarts = {name: [] for name in commands}
         next_memory_check = relief_allowed_at = 0.0
+        next_sample = time.monotonic() + SAMPLE_INTERVAL_SECONDS
+        peak = None
         while not stop.wait(0.2):
             now = time.monotonic()
             if now >= next_memory_check:
                 next_memory_check = now + 2
                 fraction = memory_fraction()
+                if fraction is not None:
+                    peak = fraction if peak is None else max(peak, fraction)
+                if now >= next_sample:
+                    # Off the supervision loop: a slow Redis must not delay it.
+                    threading.Thread(target=record_sample, args=(fraction, peak), daemon=True).start()
+                    next_sample, peak = now + SAMPLE_INTERVAL_SECONDS, None
                 if fraction is not None and fraction >= MEMORY_RELIEF_FRACTION and now >= relief_allowed_at:
                     relieve_memory(children, fraction)
                     relief_allowed_at = now + MEMORY_RELIEF_COOLDOWN_SECONDS
@@ -359,6 +410,7 @@ def main():
         env = prepare_environment(os.environ, scratch)
         global _event_log_url
         _event_log_url = env.get("REDIS_URL")
+        carry_previous_sample()
         scratch.mkdir(mode=0o700, parents=True, exist_ok=True)
         phase = "migrations"
         migration_started = time.monotonic()

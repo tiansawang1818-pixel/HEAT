@@ -328,3 +328,54 @@ def test_events_are_printed_and_kept_in_redis_without_failing(monkeypatch, capsy
 
     monkeypatch.setitem(sys.modules, "redis", types.SimpleNamespace(Redis=Broken))
     runtime.emit({"event": "runtime.boot", "phase": "configuration"})  # must not raise
+
+
+def test_memory_sample_is_carried_into_the_next_containers_events(monkeypatch):
+    import types
+    values, events = {}, []
+
+    class FakeRedis:
+        @classmethod
+        def from_url(cls, *_args, **_kwargs):
+            return cls()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def set(self, key, value, ex):
+            assert ex == 7 * 86400
+            values[key] = value
+
+        def get(self, key):
+            return values.get(key)
+
+        def delete(self, key):
+            values.pop(key, None)
+
+    monkeypatch.setitem(sys.modules, "redis", types.SimpleNamespace(Redis=FakeRedis))
+    monkeypatch.setattr(runtime, "_event_log_url", "rediss://cache.example:6380/0")
+    monkeypatch.setattr(runtime, "emit", events.append)
+    runtime.record_sample(0.912, 0.97)
+    runtime.carry_previous_sample()  # next container boots
+    assert events[0]["event"] == "runtime.previous_container_last_sample"
+    assert events[0]["anon_fraction"] == 0.912 and events[0]["peak_anon_fraction"] == 0.97
+    assert runtime.SAMPLE_KEY not in values
+    runtime.carry_previous_sample()
+    assert len(events) == 1
+
+
+def test_supervisor_records_memory_samples(tmp_path, monkeypatch):
+    samples = []
+    monkeypatch.setattr(runtime, "SAMPLE_INTERVAL_SECONDS", 0)
+    monkeypatch.setattr(runtime, "record_sample", lambda fraction, peak: samples.append((fraction, peak)))
+    stop = threading.Event()
+    timer = threading.Timer(0.6, stop.set)
+    timer.start()
+    commands = {"api": ([sys.executable, "-c", "import time; time.sleep(30)"], tmp_path)}
+    runtime.supervise(commands, dict(os.environ), stop, grace_seconds=1, memory_fraction=lambda: 0.5)
+    import time
+    time.sleep(0.2)
+    assert samples and samples[0] == (0.5, 0.5)
